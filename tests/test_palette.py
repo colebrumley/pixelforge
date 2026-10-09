@@ -109,6 +109,11 @@ def test_median_cut_keeps_small_features_of_a_dominant_color_image():
 def test_mcda_does_not_spend_the_palette_on_coincident_colors():
     pixels, features = _dominant_color_pixels()
     found = palette.mcda(pixels, 8, Config())
-    # With the spec's split test alone neither of these was within ΔE 24 of a palette color.
-    assert color.delta_e(found, features[0]).min() < 1.0     # highlight
-    assert color.delta_e(found, features[2]).min() < 1.0     # pink
+    assert len(found) == 8
+    # With the spec's split test the palette held coincident entries and missed every
+    # feature by ΔE 14-49.
+    for feature in features:
+        assert color.delta_e(found, feature).min() < 1.0
+    distances = color.palette_distance_matrix(found)
+    np.fill_diagonal(distances, np.inf)
+    assert distances.min() > 3.0

@@ -14,6 +14,8 @@ import numpy as np
 from . import Downscaled
 
 PERTURB_DELTA = 0.5      # sub-cluster offset along the principal axis, LAB units
+SPLIT_GROWTH = 3.0       # a pair splits once it is this many times further apart than placed
+EXHAUSTED_T_FRACTION = 1e-3   # backstop: stop annealing below this fraction of g_T_final
 _MAX_SEARCH_RADIUS = 6   # grid cells searched around a pixel's home cell (safety bound)
 
 
@@ -98,56 +100,79 @@ class PaletteAnnealer:
         self.T *= cfg.g_alpha
         if self.has_sub:
             n_before = len(self.clusters) // 2
+            first, second = self.clusters[0::2], self.clusters[1::2]
+            p_first, p_second = self.prob[0::2], self.prob[1::2]
+            separation = np.sqrt(((first - second) ** 2).sum(axis=1))
+            # DEVIATION: Section 7 — a pair splits only once it is SPLIT_GROWTH times further
+            # apart than the 2δ it was placed at (and beyond g_eps_cluster), and a pair that
+            # is moving apart but not there yet is left alone instead of being re-centered.
+            # The perturbation alone (1.0) already exceeds g_eps_cluster (0.25), and a
+            # convergence event usually comes one iteration after it, so the spec's test
+            # splits pairs that are still collapsing back together or drifting by a few
+            # percent. Those "colors" coincide and, once K is reached and sub-clusters are
+            # dropped, never separate: a sprite with one dominant color ended with 16
+            # palette entries of which 4 were distinct. Requiring real growth alone is not
+            # enough either: re-centering every pair at every event would undo the slow
+            # divergence of a small cluster (a thin line holding 1.5% of the pixels never
+            # split off at all), so growth has to be allowed to accumulate.
+            growing = separation > self.placed
+            ready = growing & (separation > cfg.g_eps_cluster) & (
+                separation > SPLIT_GROWTH * self.placed)
+            # DEVIATION: Section 7 — when more pairs are ready than palette slots remain, the
+            # slots go to the pairs whose split removes the most error (mass-weighted squared
+            # separation), not to the lowest k. In ascending-k order the last slots went to
+            # pairs a few ΔE apart while a pair 40 ΔE apart was left merged.
+            gain = p_first * p_second / np.maximum(p_first + p_second, 1e-300) * separation ** 2
+            candidates = sorted(np.nonzero(ready)[0].tolist(), key=lambda k: (-gain[k], k))
+            chosen = set(candidates[:self.K - n_before])
+
             n_colors = n_before
             colors, probs, extra_colors, extra_probs = [], [], [], []
             remap = np.empty(2 * n_before, dtype=np.int64)
-            split_any = False
             for k in range(n_before):
-                c1, c2 = self.clusters[2 * k], self.clusters[2 * k + 1]
-                p1, p2 = self.prob[2 * k], self.prob[2 * k + 1]
-                # DEVIATION: Section 7 — besides exceeding g_eps_cluster, the pair must have
-                # moved further apart than the 2δ it was placed at. The perturbation alone
-                # (1.0) already exceeds g_eps_cluster (0.25), and a convergence event can
-                # come before a pair above its critical temperature has collapsed again, so
-                # the spec's test alone splits pairs that are merely still on their way back
-                # together. Those "colors" coincide and, once K is reached and sub-clusters
-                # are dropped, never separate: a sprite with one dominant color ended with
-                # 16 palette entries of which 4 were distinct. A pair that grew apart is
-                # the actual phase transition.
-                separation = np.linalg.norm(c1 - c2)
-                if (n_colors < self.K and separation > cfg.g_eps_cluster
-                        and separation > self.placed[k]):
-                    colors.append(c1)
-                    probs.append(p1)
-                    extra_colors.append(c2)
-                    extra_probs.append(p2)
+                if k in chosen:
+                    colors.append(first[k])
+                    probs.append(p_first[k])
+                    extra_colors.append(second[k])
+                    extra_probs.append(p_second[k])
                     remap[2 * k], remap[2 * k + 1] = k, n_colors
                     n_colors += 1
-                    split_any = True
                 else:
-                    colors.append(0.5 * (c1 + c2))
-                    probs.append(p1 + p2)
+                    colors.append(0.5 * (first[k] + second[k]))
+                    probs.append(p_first[k] + p_second[k])
                     remap[2 * k] = remap[2 * k + 1] = k
             colors = np.array(colors + extra_colors)
             probs = np.array(probs + extra_probs)
             self.assign = remap[sub_assign]
 
+            keep = [k < n_before and k not in chosen and bool(growing[k])
+                    for k in range(n_colors)]
+
             # DEVIATION: Section 7 — the spec only breaks once K_current == K. An image with
             # fewer than K separable colors would then cool forever (T → 0) until
             # g_max_iters, so annealing also ends when the final temperature has been
-            # reached and a convergence event produces no split; the palette keeps
-            # K_current < K colors.
-            exhausted = self.T <= cfg.g_T_final and not split_any
+            # reached and a convergence event leaves no pair split or still moving apart
+            # (or, as a backstop, when T has fallen far below the final temperature); the
+            # palette keeps K_current < K colors.
+            exhausted = ((self.T <= cfg.g_T_final and not chosen and not any(keep))
+                         or self.T < EXHAUSTED_T_FRACTION * cfg.g_T_final)
             if n_colors == self.K or exhausted:
                 self.clusters, self.prob, self.has_sub = colors, probs, False
                 if exhausted:
                     self.done = True
                     return
             else:
+                old_clusters, old_prob, old_placed = self.clusters, self.prob, self.placed
                 self.clusters = np.empty((2 * n_colors, 3))
                 self.placed = np.empty(n_colors)
                 self.prob = np.repeat(0.5 * probs, 2)
                 for k in range(n_colors):
+                    if keep[k]:
+                        # still moving apart: let the divergence accumulate
+                        self.clusters[2 * k:2 * k + 2] = old_clusters[2 * k:2 * k + 2]
+                        self.prob[2 * k:2 * k + 2] = old_prob[2 * k:2 * k + 2]
+                        self.placed[k] = old_placed[k]
+                        continue
                     axis, _ = principal_axis(points[self.assign == k])
                     delta = PERTURB_DELTA
                     if self.rng is not None:

@@ -200,11 +200,16 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
   produces no split, even if fewer than K colors exist. Otherwise an image with fewer than K
   separable colors would cool forever until `g_max_iters`. `stats.final_palette_size` reports
   the actual count.
-- A sub-cluster pair only splits if it has also moved further apart than the 2δ it was
-  placed at. The perturbation alone (1.0) already exceeds `g_eps_cluster` (0.25), so the
+- A sub-cluster pair only splits once it is three times further apart than the 2δ it was
+  placed at, and a pair that is moving apart but not there yet is left alone rather than
+  re-centered. The perturbation alone (1.0) already exceeds `g_eps_cluster` (0.25), so the
   spec's test also splits pairs that are still collapsing back together. Those colors
   coincide and never separate once K is reached: a single-color sprite ended with 16 palette
-  entries of which 4 were distinct.
+  entries of which 4 were distinct. Letting growth accumulate matters for small clusters,
+  which diverge slowly: with re-centering, a thin line holding 1.5% of the pixels never split
+  off.
+- When more pairs are ready to split than palette slots remain, the slots go to the pairs
+  whose split removes the most error, not to the lowest index.
 - Transparent input pixels are never assigned, so `small_mask` attributes each one to its
   spatially nearest superpixel to compute the opaque fraction, and the prior P(p_s) is
   uniform over the superpixels that hold opaque pixels.
@@ -236,10 +241,6 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
   Install), and the sprite preset sets `key_bg=True`. The gallery runs the fixtures with
   `key_bg=False` because they are test patterns, not sprites; images in `samples/` use the
   preset as-is.
-
-**Known weakness.** Gerstner can still end with a few near-duplicate palette entries on an
-image dominated by one color (13 distinct colors out of 16 on the slime test sprite, where
-it was 4 before the split fix).
 
 **Tests (Section 12).**
 
