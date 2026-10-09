@@ -54,6 +54,7 @@ class PaletteAnnealer:
         # matters for a single-color input, where Tc is 0.
         self.T = max(1.1 * 2.0 * variance, config.g_T_final)
         self.clusters = np.stack([mean, mean])
+        self.placed = np.zeros(1)    # separation each sub-cluster pair was last placed at
         self.prob = np.array([0.5, 0.5])
         self.has_sub = True
         self.assign = None       # palette index per point from the latest ASSOCIATE
@@ -104,7 +105,18 @@ class PaletteAnnealer:
             for k in range(n_before):
                 c1, c2 = self.clusters[2 * k], self.clusters[2 * k + 1]
                 p1, p2 = self.prob[2 * k], self.prob[2 * k + 1]
-                if n_colors < self.K and np.linalg.norm(c1 - c2) > cfg.g_eps_cluster:
+                # DEVIATION: Section 7 — besides exceeding g_eps_cluster, the pair must have
+                # moved further apart than the 2δ it was placed at. The perturbation alone
+                # (1.0) already exceeds g_eps_cluster (0.25), and a convergence event can
+                # come before a pair above its critical temperature has collapsed again, so
+                # the spec's test alone splits pairs that are merely still on their way back
+                # together. Those "colors" coincide and, once K is reached and sub-clusters
+                # are dropped, never separate: a sprite with one dominant color ended with
+                # 16 palette entries of which 4 were distinct. A pair that grew apart is
+                # the actual phase transition.
+                separation = np.linalg.norm(c1 - c2)
+                if (n_colors < self.K and separation > cfg.g_eps_cluster
+                        and separation > self.placed[k]):
                     colors.append(c1)
                     probs.append(p1)
                     extra_colors.append(c2)
@@ -133,6 +145,7 @@ class PaletteAnnealer:
                     return
             else:
                 self.clusters = np.empty((2 * n_colors, 3))
+                self.placed = np.empty(n_colors)
                 self.prob = np.repeat(0.5 * probs, 2)
                 for k in range(n_colors):
                     axis, _ = principal_axis(points[self.assign == k])
@@ -142,6 +155,7 @@ class PaletteAnnealer:
                         delta *= self.rng.uniform(0.9, 1.1)
                     self.clusters[2 * k] = colors[k] + delta * axis
                     self.clusters[2 * k + 1] = colors[k] - delta * axis
+                    self.placed[k] = 2.0 * delta
         if self.T <= cfg.g_T_final and not self.has_sub:
             self.done = True
 

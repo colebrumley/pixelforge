@@ -200,17 +200,23 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
   produces no split, even if fewer than K colors exist. Otherwise an image with fewer than K
   separable colors would cool forever until `g_max_iters`. `stats.final_palette_size` reports
   the actual count.
+- A sub-cluster pair only splits if it has also moved further apart than the 2δ it was
+  placed at. The perturbation alone (1.0) already exceeds `g_eps_cluster` (0.25), so the
+  spec's test also splits pairs that are still collapsing back together. Those colors
+  coincide and never separate once K is reached: a single-color sprite ended with 16 palette
+  entries of which 4 were distinct.
 - Transparent input pixels are never assigned, so `small_mask` attributes each one to its
   spatially nearest superpixel to compute the opaque fraction, and the prior P(p_s) is
   uniform over the superpixels that hold opaque pixels.
 
 **Palette and post-processing (Section 8).**
 
-- Median cut splits by value at the lower median (never through a run of equal values),
-  never splits a box spanning less than ΔE 2.3 (one just-noticeable difference) and so
-  returns fewer than K colors when the image has fewer distinguishable colors. Choosing
-  boxes purely by pixel count otherwise spends the palette on imperceptible variations of a
-  flat background and averages small features (a thin dark line) into it.
+- "Median cut" picks the box with the largest summed squared error (not the most pixels)
+  and cuts it where the two halves' summed squared error is smallest (not at the median).
+  The spec's rule keeps halving a dominant color while the few pixels of every small feature
+  share one leftover box and are averaged into a color none of them has. It also never
+  splits a box spanning less than ΔE 2.3 (one just-noticeable difference), so it returns
+  fewer than K colors when the image has fewer distinguishable ones.
 - `regularize_ramps` reaches the 6° maximum at an L distance of 30 from the bin's mean L.
 - Ramp regularization and saturation are skipped when a named palette is used.
 - With `tileset=True` the outline pass does not pad the canvas.
@@ -231,11 +237,9 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
   `key_bg=False` because they are test patterns, not sprites; images in `samples/` use the
   preset as-is.
 
-**Known weakness, not a deviation.** When one flat color dominates the opaque pixels, both
-palette builders spend entries on it: Gerstner's split rule yields duplicate palette colors,
-and median cut averages small features (highlights, a mouth) into unrelated colors. Keying
-the background removes the most common cause; a subject that is itself mostly one flat color
-still shows it.
+**Known weakness.** Gerstner can still end with a few near-duplicate palette entries on an
+image dominated by one color (13 distinct colors out of 16 on the slime test sprite, where
+it was 4 before the split fix).
 
 **Tests (Section 12).**
 

@@ -83,3 +83,32 @@ def test_load_hex_and_gpl_files(tmp_path):
     assert palette.load_palette(str(gpl_path)).tolist() == [[255, 0, 0], [0, 128, 255]]
     with pytest.raises(ValueError):
         palette.load_palette("no-such-palette")
+
+
+def _dominant_color_pixels():
+    """94% shades of one green plus four small features, like a single-color sprite."""
+    t = np.linspace(-1.0, 1.0, 940)
+    green = np.stack([70 + 6 * t, -55 + 4 * np.sin(7 * t), 60 + 4 * np.cos(5 * t)], axis=1)
+    features = color.rgb8_to_lab(np.array([[250, 250, 240], [20, 40, 20], [240, 90, 120],
+                                           [40, 110, 40]]))
+    counts = (20, 20, 10, 10)
+    pixels = np.concatenate([green] + [np.repeat(f[None], n, axis=0)
+                                       for f, n in zip(features, counts)])
+    return pixels, features
+
+
+def test_median_cut_keeps_small_features_of_a_dominant_color_image():
+    pixels, features = _dominant_color_pixels()
+    found = palette.median_cut(pixels, 8)
+    assert len(found) == 8
+    # Splitting by pixel count at the median averaged these into colors ΔE 24-90 away.
+    for feature in features:
+        assert color.delta_e(found, feature).min() < 1.0
+
+
+def test_mcda_does_not_spend_the_palette_on_coincident_colors():
+    pixels, features = _dominant_color_pixels()
+    found = palette.mcda(pixels, 8, Config())
+    # With the spec's split test alone neither of these was within ΔE 24 of a palette color.
+    assert color.delta_e(found, features[0]).min() < 1.0     # highlight
+    assert color.delta_e(found, features[2]).min() < 1.0     # pink
