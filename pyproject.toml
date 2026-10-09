@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pixelforge"
+version = "0.1.0"
+description = "Deterministic conversion of raster images into 16-bit-style pixel art"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "Pillow>=10.0",
+    "scipy>=1.11",
+    "scikit-image>=0.22",
+    "click>=8.1",
+]
+
+[project.optional-dependencies]
+bg = ["rembg>=2.0", "onnxruntime>=1.16"]
+dev = ["pytest>=7.4"]
+
+[dependency-groups]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+pixelforge = "pixelforge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pixelforge*"]
+
+[tool.setuptools.package-data]
+pixelforge = ["palettes/*.hex"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
