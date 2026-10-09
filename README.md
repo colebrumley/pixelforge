@@ -1,8 +1,7 @@
 # pixelforge
 
-Deterministic conversion of raster images (especially AI-generated ones) into 16-bit-style
-pixel art: sprites and backgrounds/tiles. Same input + same config = byte-identical PNG,
-every run.
+Deterministic conversion of raster images into 16-bit-style pixel art: sprites and
+backgrounds/tiles. Same input + same config = the same PNG, every run.
 
 Three downscalers, selectable per run:
 
@@ -18,15 +17,29 @@ palettes: NES, Game Boy, Genesis, SNES, PICO-8.
 
 ## Install
 
-Python 3.11+.
+Python 3.11+. Not published to PyPI; install straight from GitHub:
 
 ```bash
+uv tool install git+https://github.com/colebrumley/pixelforge
+```
+
+or `pip install git+https://github.com/colebrumley/pixelforge`.
+
+Optional AI background removal via `rembg`:
+
+```bash
+pip install 'pixelforge[bg] @ git+https://github.com/colebrumley/pixelforge'
+```
+
+Without it the sprite preset still keys out flat opaque backdrops (`--no-key-bg` to disable).
+
+To work on it:
+
+```bash
+git clone https://github.com/colebrumley/pixelforge && cd pixelforge
 uv sync
 uv run pytest -q
 ```
-
-Optional AI background removal: `pip install 'pixelforge[bg]'` (adds `rembg`). Without it the
-sprite preset still keys out flat opaque backdrops (`--no-key-bg` to disable).
 
 ## CLI
 
@@ -68,7 +81,7 @@ res.indices            # (H, W) palette index, -1 = transparent
 
 No unseeded randomness, no thread scheduling or wall-clock dependence, float64 throughout.
 Each output PNG carries the canonical config JSON and the input SHA-256 as `tEXt` chunks.
-`tests/test_determinism.py` enforces byte-identical output for every method and preset.
+`tests/test_determinism.py` enforces identical output bytes for every method and preset.
 Cross-machine reproducibility additionally assumes the pinned numpy/scipy/scikit-image/Pillow
 versions in `uv.lock`.
 
