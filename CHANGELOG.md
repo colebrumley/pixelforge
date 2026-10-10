@@ -16,6 +16,8 @@ All notable changes to this project are documented here. The format follows
 - `compare --prepass` and `compare --sweep FIELD=V1,V2,...` write a labelled proof sheet
   (methods × settings) and report the `convert` flags for each cell; `--method` limits the
   sheet to one row. Plain `compare` is unchanged.
+- README: a photo sample (`docs/sample_photo.png`, from an AI-generated portrait) and guidance
+  on source photos.
 
 ### Fixed
 

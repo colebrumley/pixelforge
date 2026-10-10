@@ -65,7 +65,7 @@ FIELD_HELP = MappingProxyType({
     "prereduce_max_ratio": "Box-reduce inputs larger than this many times the output first "
                            "(0 = never).",
     "enhance": "Exaggerate features before downscaling: levels stretch plus local contrast "
-               "(0 = off; for photos, try 1).",
+               "(0 = off; for photos, try 0.5 to 1).",
     "enhance_radius": "Feature size the local contrast acts on, in output pixels.",
     "ink": "Darken thin dark features (lines, lashes, creases) before downscaling, 0..1.",
     "method": "Downscaling algorithm.",

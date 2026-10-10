@@ -36,6 +36,13 @@ to the nearest palette color instead.)
 
 ![Town background before and after](docs/sample_background.png)
 
+`pixelforge convert portrait.png --preset sprite --outline none --no-key-bg`, without (middle)
+and with `--enhance 0.5` (right): 1024×1024 → 64×64, 16 colors. The pre-pass keeps the eyes,
+brows and mouth that plain downscaling averages away (see [Photos](#photos---enhance-and---ink)).
+The source photo is AI-generated.
+
+![Photo portrait: source, without and with the pre-pass](docs/sample_photo.png)
+
 ## Install
 
 Python 3.11+. Not published to PyPI; install straight from GitHub:
@@ -121,17 +128,25 @@ to every frame inline, so the frames' metadata carries the colors, not the outpu
 ### Photos: `--enhance` and `--ink`
 
 Photos have soft gradients and no lines, so features smaller than an output pixel (eyes, a
-mouth, a chain) get averaged away. `--enhance 1` exaggerates them before downscaling: it
+mouth, a chain) get averaged away. `--enhance` exaggerates them before downscaling: it
 stretches the subject's luminance to the full range and adds local contrast at
-`--enhance-radius` (2) output pixels. `--ink 0.6` also darkens thin dark features into lines;
-it adds blots on some images, so check it on a proof sheet. Both are off by default and in
+`--enhance-radius` (2) output pixels. Start at `--enhance 0.5`; `1` is stronger and keeps
+more in dim or low-contrast photos, but blows light skin out to near white in bright ones.
+`--ink 0.6` also darkens thin dark features into lines; it adds blots on some images. The
+right values depend on the photo, so pick them from a [proof sheet](#proof-sheets). Both are off by default and in
 every preset: sources that already have outlines and full contrast (illustrations, pixel art)
 lose their mid-tone shading to them.
 
 Source photos convert best when the subject fills the frame (a feature needs 3–4 output pixels
 to survive), the light is flat and frontal, the backdrop is one flat color that differs from
-hair and skin, and adjacent parts differ in tone. A mottled studio backdrop is not flat:
-`key_bg` will not key it, so cut the subject out first (`--remove-bg`, or an input with alpha).
+hair and skin, and adjacent parts differ in tone.
+
+`key_bg` only keys a backdrop that covers at least 90 % of the image border within
+`--key-bg-tolerance`. A mottled studio backdrop is not flat, and a head-and-shoulders shot
+cut off by the bottom edge has too little backdrop on the border; in both cases the backdrop
+stays in the picture and takes part in the levels stretch. Cut the subject out first
+(`--remove-bg`, or an input with an alpha channel) to get a sprite with a transparent
+background.
 
 ### Proof sheets
 
@@ -183,6 +198,8 @@ res.save("out/hero")   # out/hero.png, hero_preview.png, hero_palette.json, ...
 res.image              # numpy RGBA (H, W, 4) uint8
 res.palette            # numpy (K, 3) uint8
 res.indices            # (H, W) palette index, -1 = transparent
+
+run("photo.png", cfg.replace(enhance=0.5))   # the photo pre-pass; ink=0.6 adds lines
 
 run(Image.open("hero.png"), cfg)   # a PIL image
 run(rgba, cfg)                     # (H, W, 3|4) numpy array: uint8, or float in [0, 1]
