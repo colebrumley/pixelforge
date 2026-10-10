@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from scipy import ndimage
 
 from pixelforge import Config, color
@@ -117,6 +118,26 @@ def test_line_near_silhouette_not_worse_than_box():
     box_l = np.where(baseline.small_mask, baseline.small_lab[..., 0], np.inf)
     assert kopf_l.min() <= box_l.min() + 2
     assert (kopf_l.min(axis=1) < DARK_L).all()   # the line is visible on every row
+
+
+@pytest.mark.parametrize("out_size, edge", [(16, 4), (8, 4), (8, 6), (8, 9)])
+def test_line_two_px_inside_silhouette_shows_on_every_row(out_size, edge):
+    # A kernel whose cell is mostly transparent used to claim the line's pixels and then be
+    # dropped from the mask, so at 64→8 the line vanished (pure fill color on every row).
+    lab, mask = _line_near_silhouette(edge=edge, offset=2)
+    config = Config(method="kopf", out_width=out_size, out_height=out_size)
+    out = kopf.run(lab, mask, out_size, out_size, config)
+    baseline = box.run(lab, mask, out_size, out_size, config)
+    kopf_l = np.where(out.small_mask, out.small_lab[..., 0], np.inf)
+    box_l = np.where(baseline.small_mask, baseline.small_lab[..., 0], np.inf)
+    assert (kopf_l.min(axis=1) < box_l.min() + 2).all()
+
+
+def test_silhouette_mask_matches_box(preprocessed):
+    pre, config = preprocessed("circle_alpha", method="kopf", out_width=32, out_height=32,
+                               crop_to_alpha=False)
+    out = kopf.run(pre.lab, pre.mask, 32, 32, config)
+    assert np.array_equal(out.small_mask, box.run(pre.lab, pre.mask, 32, 32, config).small_mask)
 
 
 def test_silhouette_does_not_saturate_sigma(preprocessed):

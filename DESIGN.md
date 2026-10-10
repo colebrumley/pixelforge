@@ -114,13 +114,20 @@ The algorithmic deviations are marked with `# DEVIATION:` comments in the code.
   at the σ cap, and a dark line 4 px inside the edge came out fainter than with box. Such
   kernels keep their σ, and the orientation test also needs a non-zero overlap `f` (no shared
   pixels, no edge between the pair). No kernel now reaches the cap there, and the run
-  converges in 15 iterations. Residual: a line within ~3 px of the silhouette can still be
-  claimed by a mostly transparent kernel that `small_mask` then drops.
+  converges in 14 iterations.
+- *Ghost kernels.* A kernel whose own output cell is less than half opaque (the box filter's
+  rule) takes no part in the E-step, the shape constraints or the starved re-seeding, and is
+  transparent in the output. Left in, it kept its tiny initial σ, claimed a dark line 2–3 px
+  inside the silhouette, and was then dropped from `small_mask`, so the line vanished (13 of
+  24 placements at 256→32 showed it on every row; now all 24 do). Its opaque neighbors take
+  those pixels instead.
 - *Laplacian smoothing* averages displacements from the grid position rather than raw
   positions. Identical for interior kernels; it stops border kernels from being dragged
   inward every iteration.
-- *`small_mask`* is computed from spatial-only responsibilities, because transparent pixels
-  are excluded from the EM and the specified ratio would always be 1.
+- *`small_mask`* is the cell rule above (identical to box's mask), because transparent
+  pixels are excluded from the EM and the specified ratio would always be 1. A coverage
+  measured with spatial-only responsibilities kept cells only 19 % opaque and flickered row
+  by row on cells exactly half opaque; it is still used for the color of starved kernels.
 
 - *Convergence.* The spec's test (max |Δμ| and max |Δν| < `kopf_tol`, no σ change) was never
   met on real content: border truncation and non-integer ratios keep a few centroids

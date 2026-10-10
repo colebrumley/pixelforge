@@ -42,7 +42,9 @@ All notable changes to this project are documented here. The format follows
 - The package version is single-sourced from `pixelforge/version.py`.
 - README: byte identity across machines requires `git clone && uv sync --locked`.
 - Kopf no longer grows σ for kernels cut by the alpha silhouette or the image border, which
-  blurred features near sprite edges below the box filter's sharpness.
+  blurred features near sprite edges below the box filter's sharpness, and kernels whose
+  cell is mostly transparent no longer claim (and then drop) pixels near the silhouette, which
+  erased lines 2–3 px inside it. Kopf's alpha mask is now the box filter's cell rule.
 
 ### Removed
 
