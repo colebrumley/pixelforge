@@ -34,15 +34,8 @@ class Result:
     def save(self, prefix) -> dict:
         """Write <prefix>.png, _preview.png, _palette.json, _palette.hex, _meta.json and, for
         tilesets, _tileset.png and _tilemap.json. Returns {name: path}."""
-        prefix = Path(prefix)
-        prefix.parent.mkdir(parents=True, exist_ok=True)
-
-        def sibling(suffix: str) -> Path:
-            return prefix.parent / (prefix.name + suffix)
-
-        paths = {"image": sibling(".png"), "preview": sibling("_preview.png"),
-                 "palette": sibling("_palette.json"), "palette_hex": sibling("_palette.hex"),
-                 "meta": sibling("_meta.json")}
+        paths = output_paths(prefix, tileset=self.tilemap is not None)
+        Path(prefix).parent.mkdir(parents=True, exist_ok=True)
         text = self.png_text()
         io.save_png(paths["image"], self.indices, self.palette, text)
         io.save_png(paths["preview"], self.indices, self.palette, text,
@@ -57,11 +50,25 @@ class Result:
                 "stats": self.stats}
         paths["meta"].write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
         if self.tilemap is not None:
-            paths["tileset"] = sibling("_tileset.png")
-            paths["tilemap"] = sibling("_tilemap.json")
             io.save_png(paths["tileset"], self.tileset_indices, self.palette, text)
             paths["tilemap"].write_text(json.dumps(self.tilemap, separators=(",", ":")) + "\n")
         return {name: str(path) for name, path in paths.items()}
+
+
+def output_paths(prefix, tileset: bool) -> dict:
+    """{name: Path} of every file Result.save(prefix) writes, in write order."""
+    prefix = Path(prefix)
+
+    def sibling(suffix: str) -> Path:
+        return prefix.parent / (prefix.name + suffix)
+
+    paths = {"image": sibling(".png"), "preview": sibling("_preview.png"),
+             "palette": sibling("_palette.json"), "palette_hex": sibling("_palette.hex"),
+             "meta": sibling("_meta.json")}
+    if tileset:
+        paths["tileset"] = sibling("_tileset.png")
+        paths["tilemap"] = sibling("_tilemap.json")
+    return paths
 
 
 def uses_gerstner_palette(config: Config) -> bool:
