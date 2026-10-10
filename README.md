@@ -59,6 +59,8 @@ license is the model's own; `_meta.json` records the rembg and onnxruntime versi
 
 The sprite preset keys out flat opaque backdrops without it (`--no-key-bg` to disable),
 including the anti-aliased fringe where the subject blends into them (`key_bg_fringe`).
+Pixels at or above `alpha_threshold` are opaque, but each counts in the downscaled colors in
+proportion to its alpha, so a semi-transparent fringe pulls its neighbors less.
 
 To work on it, or to reproduce outputs exactly:
 

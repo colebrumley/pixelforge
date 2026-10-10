@@ -285,3 +285,40 @@ def test_pipeline_reports_prereduce_factor():
     rgba[:, :128, :3] = 40
     result = run_loaded(io.from_rgba(rgba, "test"), _reduce_config(method="box"))
     assert result.stats["prereduce_factor"] == 2
+
+
+def test_opaque_input_has_unit_weight():
+    rgb = np.random.default_rng(0).random((40, 24, 3))
+    pre = preprocess.run(rgb, np.full((40, 24), 255, dtype=np.uint8),
+                         Config(out_width=16, out_height=16, key_bg=False, seamless=True))
+    assert pre.weight.dtype == np.float64 and pre.weight.shape == pre.mask.shape
+    assert np.array_equal(pre.weight, np.ones(pre.mask.shape))
+
+
+def test_weight_is_alpha_on_the_mask_through_repeat_and_prereduce():
+    rgb = np.full((8, 8, 3), 0.5)
+    alpha = np.full((8, 8), 255, dtype=np.uint8)
+    alpha[:, 6:] = 200
+    alpha[:, 7] = 100                          # below alpha_threshold: transparent
+    pre = preprocess.run(rgb, alpha, Config(out_width=16, out_height=16, denoise="none",
+                                            crop_to_alpha=False, outline="none"))
+    assert pre.mask.shape == (16, 16)          # repeated 2x
+    assert np.array_equal(pre.weight[:, :12], np.ones((16, 12)))
+    assert np.allclose(pre.weight[:, 12:14], 200 / 255) and not pre.weight[:, 14:].any()
+    assert not pre.weight[~pre.mask].any()
+    big = np.repeat(np.repeat(alpha, 32, axis=0), 32, axis=1)
+    reduced = preprocess.run(np.full((256, 256, 3), 0.5), big, _reduce_config())
+    assert reduced.prereduce_factor == 2
+    assert np.array_equal(reduced.weight[:, :96], np.ones((128, 96)))
+    assert np.allclose(reduced.weight[:, 96:112], 200 / 255)
+    assert not reduced.weight[:, 112:].any()
+
+
+def test_prereduce_weight_is_the_block_mean():
+    mask = np.ones((2, 4), dtype=bool)
+    mask[:, 3] = False
+    weight = np.where(mask, 0.5, 0.0)
+    weight[:, 0] = 1.0
+    _, small_mask, small_weight = preprocess.prereduce(np.zeros((2, 4, 3)), mask, 2, weight)
+    assert small_mask.all()
+    assert np.allclose(small_weight, [[0.75, 0.25]])

@@ -363,7 +363,27 @@ def _assign(grid: _Grid, cx, cy, radius: int, candidate_ok=None, channels=None, 
     return best_s
 
 
-def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, config) -> Downscaled:
+def _weighted(values: np.ndarray, w: np.ndarray | None) -> np.ndarray:
+    return values if w is None else w * values
+
+
+def palette_prior(coverage: np.ndarray) -> np.ndarray:
+    """P(p_s) over the active superpixels from their mean pixel weight (alpha).
+
+    Uniform (exactly 1/N) when every superpixel is fully opaque, as in the spec; otherwise
+    proportional to the coverage, so a superpixel of semi-transparent fringe pixels holds
+    less palette mass. Superpixels lying entirely in the transparent region are not active.
+    """
+    # DEVIATION: Section 7 — the spec's uniform prior is weighted by alpha coverage. It is
+    # the mean weight, not the total, so that equal-alpha superpixels of different pixel
+    # counts keep the spec's equal mass (and an opaque input is bit-identical).
+    if np.all(coverage == 1.0):
+        return np.full(len(coverage), 1.0 / len(coverage))
+    return coverage / coverage.sum()
+
+
+def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, config,
+        weight: np.ndarray | None = None) -> Downscaled:
     if not mask.any():
         raise PixelforgeError("no opaque pixels")
     hi, wi = mask.shape
@@ -377,16 +397,29 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
     col = np.ascontiguousarray(lab[ys, xs], dtype=np.float64)
     channels = [np.ascontiguousarray(lab[..., c], dtype=np.float64) for c in range(3)]
     all_opaque = bool(mask.all())
+    # Pixel weight (alpha) of the opaque pixels: superpixel means and centers are weighted by
+    # it, and so is each superpixel's share of the palette prior. None when it is all ones.
+    pix_w = None
+    if weight is not None:
+        pix_w = np.asarray(weight, dtype=np.float64)[ys, xs]
+        if np.all(pix_w == 1.0):
+            pix_w = None
 
     # INITIALIZE: regular grid of centers, every pixel assigned to the nearest center.
     cx, cy = grid.cx0.copy(), grid.cy0.copy()
     assign = grid.home_y[ys] * wo + grid.home_x[xs]
     count = np.bincount(assign, minlength=n_sp)
     has_color = count > 0
+    mass = count if pix_w is None else np.bincount(assign, weights=pix_w, minlength=n_sp)
+    # Mean pixel weight of each superpixel (1 for an opaque input), kept for those that
+    # lose all their pixels in an iteration, like their color.
+    coverage = np.ones(n_sp)
+    if pix_w is not None:
+        coverage[has_color] = mass[has_color] / count[has_color]
     mean = np.zeros((n_sp, 3))
     for c in range(3):
-        sums = np.bincount(assign, weights=col[:, c], minlength=n_sp)
-        mean[has_color, c] = sums[has_color] / count[has_color]
+        sums = np.bincount(assign, weights=_weighted(col[:, c], pix_w), minlength=n_sp)
+        mean[has_color, c] = sums[has_color] / mass[has_color]
 
     annealer = PaletteAnnealer(col, config.palette_size, config)
     k = np.zeros(n_sp, dtype=np.int64)
@@ -403,17 +436,23 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         # Masked (transparent) input pixels are never assigned and never contribute.
         assign = assigned_to.ravel() if all_opaque else assigned_to[mask]
         assigned = assign >= 0
+        a_w = pix_w
         if assigned.all():
             a, a_px, a_py, a_col = assign, px, py, col
         else:
             a, a_px, a_py, a_col = assign[assigned], px[assigned], py[assigned], col[assigned]
+            if pix_w is not None:
+                a_w = pix_w[assigned]
         count = np.bincount(a, minlength=n_sp)
         got = count > 0   # superpixels with zero pixels keep their previous center and color
+        mass = count if a_w is None else np.bincount(a, weights=a_w, minlength=n_sp)
         for c in range(3):
-            sums = np.bincount(a, weights=a_col[:, c], minlength=n_sp)
-            mean[got, c] = sums[got] / count[got]
-        cx[got] = np.bincount(a, weights=a_px, minlength=n_sp)[got] / count[got]
-        cy[got] = np.bincount(a, weights=a_py, minlength=n_sp)[got] / count[got]
+            sums = np.bincount(a, weights=_weighted(a_col[:, c], a_w), minlength=n_sp)
+            mean[got, c] = sums[got] / mass[got]
+        cx[got] = np.bincount(a, weights=_weighted(a_px, a_w), minlength=n_sp)[got] / mass[got]
+        cy[got] = np.bincount(a, weights=_weighted(a_py, a_w), minlength=n_sp)[got] / mass[got]
+        if a_w is not None:
+            coverage[got] = mass[got] / count[got]
         has_color |= got
 
         cx = _laplacian_smooth(cx.reshape(ho, wo), config.g_laplacian).ravel()
@@ -427,9 +466,7 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         # 2-4. ASSOCIATE, REFINE, CONVERGENCE CHECK / EXPAND on the active superpixels.
         active = np.nonzero(has_color)[0]
         points = smooth.reshape(-1, 3)[active]
-        # P(p_s) is uniform over the superpixels that hold opaque pixels (1/N for an opaque
-        # input); superpixels lying entirely in the transparent region have no color.
-        annealer.step(points, np.full(len(active), 1.0 / len(active)))
+        annealer.step(points, palette_prior(coverage[active]))
         k[active] = annealer.assign
         sp_color = annealer.colors[k]
         iterations += 1

@@ -24,6 +24,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Downscalers weight colors by input alpha; semi-transparent fringes pull less (opaque
+  inputs are unchanged).
 - `Config.hash()` covers the palette's colors, so editing a palette file changes the hash.
 - `batch` passes its shared palette to frames inline; frame metadata no longer holds `--outdir`.
 - The sprite preset no longer enables `remove_bg` when rembg is installed; use `--remove-bg`.

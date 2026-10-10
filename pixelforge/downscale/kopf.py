@@ -143,7 +143,8 @@ def _shift(grid: np.ndarray, dy: int, dx: int, fill=0.0) -> np.ndarray:
     return out
 
 
-def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, config) -> Downscaled:
+def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, config,
+        weight: np.ndarray | None = None) -> Downscaled:
     hi, wi = mask.shape
     wo, ho = int(out_width), int(out_height)
     layout = _Layout(hi, wi, ho, wo)
@@ -152,6 +153,11 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
     cube = to_unit_cube(lab)
     channels = [np.ascontiguousarray(cube[..., c]) for c in range(3)]
     pixel_mask = None if mask.all() else mask
+    # Per-pixel weight (alpha) multiplied into γ after the E-step, so semi-transparent pixels
+    # pull the kernels less. Skipped when it is 1 on every opaque pixel (γ is 0 elsewhere).
+    pixel_weight = None
+    if weight is not None and not np.all(weight[mask] == 1.0):
+        pixel_weight = np.where(mask, weight, 0.0)
 
     # INITIALIZE
     grid_x, grid_y = np.meshgrid(np.arange(wo) + 0.5, np.arange(ho) + 0.5)
@@ -232,6 +238,8 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         pixel_sum = gamma.sum(axis=0)
         pixel_sum[pixel_sum == 0] = 1.0    # guard div-by-0 → γ = 0
         gamma /= pixel_sum
+        if pixel_weight is not None:
+            gamma *= pixel_weight
 
         # ------------------------------------------------------------------ M-STEP
         sums = {name: np.zeros((ho, wo)) for name in
@@ -402,16 +410,21 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         opaque = mask.astype(np.float64)
         all_w, opaque_w = np.zeros((ho, wo)), np.zeros((ho, wo))
         color_w = [np.zeros((ho, wo)) for _ in range(3)]
+        mass_w = opaque_w if pixel_weight is None else np.zeros((ho, wo))
         for s, (jy, jx) in enumerate(slots):
             layout.reduce(gamma[s], jy, jx, all_w)
             g = gamma[s] * opaque
             layout.reduce(g, jy, jx, opaque_w)
+            if pixel_weight is not None:
+                # Coverage counts opaque pixels; colors are weighted by alpha.
+                g = gamma[s] * pixel_weight
+                layout.reduce(g, jy, jx, mass_w)
             for c in range(3):
                 layout.reduce(g * channels[c], jy, jx, color_w[c])
         small_mask = (opaque_w > 0) & (opaque_w * 2 >= all_w)
-        refill = starved & (opaque_w > 0)
+        refill = starved & (mass_w > 0)
         for c in range(3):
-            nu[refill, c] = color_w[c][refill] / opaque_w[refill]
+            nu[refill, c] = color_w[c][refill] / mass_w[refill]
 
     return Downscaled(small_lab=from_unit_cube(nu), small_mask=small_mask,
                       stats={"iterations": iterations, "converged": converged})

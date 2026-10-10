@@ -39,6 +39,13 @@ class Preprocessed:
     layout: tuple[int, int, int, int] | None = None   # canvas: (inner w, inner h, left, top)
     fit: str | None = None   # fit_mode(config): how the size was reconciled with tile_size
     prereduce_factor: int = 1        # integer box pre-reduction applied to the input (1 = none)
+    # (H, W) float64 in [0, 1]: how much each pixel counts in the downscalers' averages (its
+    # alpha / 255 inside the mask, 0 outside); None is read as 1 over the mask.
+    weight: np.ndarray | None = None
+
+    def __post_init__(self):
+        if self.weight is None:
+            self.weight = self.mask.astype(np.float64)
 
     @property
     def inner_width(self) -> int:
@@ -295,19 +302,25 @@ def prereduce_factor(h: int, w: int, out_h: int, out_w: int, max_ratio: int) -> 
     return max(1, int(min(h // out_h, w // out_w) // max_ratio))
 
 
-def prereduce(rgb: np.ndarray, mask: np.ndarray,
-              factor: int) -> tuple[np.ndarray, np.ndarray]:
+def prereduce(rgb: np.ndarray, mask: np.ndarray, factor: int,
+              weight: np.ndarray | None = None
+              ) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Exact area mean over factor×factor blocks; trailing partial blocks are dropped.
 
     Transparent pixels first take the nearest opaque color so their arbitrary RGB does not
-    bleed into edge blocks. A block is opaque when at least half of its pixels are.
+    bleed into edge blocks. A block is opaque when at least half of its pixels are. With
+    ``weight`` its area mean (0 on transparent blocks) is returned as a third array.
     """
     h, w = (mask.shape[0] // factor) * factor, (mask.shape[1] // factor) * factor
     hb, wb = h // factor, w // factor
     filled = _fill_transparent(rgb, mask)[:h, :w]
     small = filled.reshape(hb, factor, wb, factor, 3).mean(axis=(1, 3))
     coverage = mask[:h, :w].reshape(hb, factor, wb, factor).mean(axis=(1, 3))
-    return small, coverage >= 0.5
+    small_mask = coverage >= 0.5
+    if weight is None:
+        return small, small_mask
+    small_weight = weight[:h, :w].reshape(hb, factor, wb, factor).mean(axis=(1, 3))
+    return small, small_mask, np.where(small_mask, small_weight, 0.0)
 
 
 def denoise(rgb: np.ndarray, config: Config) -> np.ndarray:
@@ -329,7 +342,10 @@ def denoise(rgb: np.ndarray, config: Config) -> np.ndarray:
 
 
 def _subject(rgb: np.ndarray, alpha: np.ndarray, config: Config):
-    """(rgb, mask, background_keyed, crop box (y0, y1, x0, x1)) before any denoising."""
+    """(rgb, mask, weight, background_keyed, crop box (y0, y1, x0, x1)) before any denoising.
+
+    ``weight`` is alpha / 255 on the mask and 0 elsewhere (see Preprocessed.weight).
+    """
     rgb = np.asarray(rgb, dtype=np.float64)
     alpha = np.asarray(alpha, dtype=np.uint8)
 
@@ -349,23 +365,29 @@ def _subject(rgb: np.ndarray, alpha: np.ndarray, config: Config):
             mask = ~background
             background_keyed = True
 
+    # Membership stays binary (mask), but semi-transparent pixels count in proportion to their
+    # alpha, so an anti-aliased fringe just above alpha_threshold does not come out as a solid
+    # band of its own color. The floor of 1/255 keeps every opaque pixel's weight positive
+    # (alpha_threshold=0 admits alpha-0 pixels).
+    weight = np.where(mask, np.maximum(alpha, 1).astype(np.float64) / 255.0, 0.0)
+
     box = (0, mask.shape[0], 0, mask.shape[1])
     if config.crop_to_alpha and not mask.all():
         ys, xs = np.nonzero(mask)
         y0, y1 = max(int(ys.min()) - 1, 0), min(int(ys.max()) + 2, mask.shape[0])
         x0, x1 = max(int(xs.min()) - 1, 0), min(int(xs.max()) + 2, mask.shape[1])
         box = (y0, y1, x0, x1)
-    return rgb, mask, background_keyed, box
+    return rgb, mask, weight, background_keyed, box
 
 
 def subject_bbox(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> tuple[int, int, int, int]:
     """The crop box (y0, y1, x0, x1) run() would use: after keying, before denoising."""
-    return _subject(rgb, alpha, config)[3]
+    return _subject(rgb, alpha, config)[4]
 
 
 def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
-    rgb, mask, background_keyed, (y0, y1, x0, x1) = _subject(rgb, alpha, config)
-    rgb, mask = rgb[y0:y1, x0:x1], mask[y0:y1, x0:x1]
+    rgb, mask, weight, background_keyed, (y0, y1, x0, x1) = _subject(rgb, alpha, config)
+    rgb, mask, weight = rgb[y0:y1, x0:x1], mask[y0:y1, x0:x1], weight[y0:y1, x0:x1]
 
     h, w = mask.shape
     out_w, out_h, layout = resolve_layout(w, h, config)
@@ -374,6 +396,7 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
         # removed from the input instead (centered, to the canvas aspect).
         cy0, cy1, cx0, cx1 = fit_crop(w, h, out_w, out_h)
         rgb, mask = rgb[cy0:cy1, cx0:cx1], mask[cy0:cy1, cx0:cx1]
+        weight = weight[cy0:cy1, cx0:cx1]
         h, w = mask.shape
         if not mask.any():
             raise PixelforgeError("no opaque pixels left after fit='crop'")
@@ -394,6 +417,7 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
                 f"{factor}x per axis would exceed {MAX_INPUT_PIXELS} pixels")
         rgb = np.repeat(np.repeat(rgb, factor, axis=0), factor, axis=1)
         mask = np.repeat(np.repeat(mask, factor, axis=0), factor, axis=1)
+        weight = np.repeat(np.repeat(weight, factor, axis=0), factor, axis=1)
         h, w = mask.shape
 
     # DEVIATION: Section 5 — inputs far larger than the output are first box-reduced by an
@@ -403,9 +427,9 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
     # factor − 1 trailing rows/columns that do not fill a block are dropped.
     reduce_by = prereduce_factor(h, w, out_h, out_w, config.prereduce_max_ratio)
     if reduce_by > 1:
-        small_rgb, small_mask = prereduce(rgb, mask, reduce_by)
+        small_rgb, small_mask, small_weight = prereduce(rgb, mask, reduce_by, weight)
         if small_mask.any():     # else a sparse subject would vanish: keep full resolution
-            rgb, mask = small_rgb, small_mask
+            rgb, mask, weight = small_rgb, small_mask, small_weight
             h, w = mask.shape
         else:
             reduce_by = 1
@@ -417,10 +441,12 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
         pad_y = math.ceil(pad_out * h / inner_h)
         rgb = np.pad(rgb, ((pad_y, pad_y), (pad_x, pad_x), (0, 0)), mode="wrap")
         mask = np.pad(mask, ((pad_y, pad_y), (pad_x, pad_x)), mode="wrap")
+        weight = np.pad(weight, ((pad_y, pad_y), (pad_x, pad_x)), mode="wrap")
 
     rgb = denoise(_fill_transparent(rgb, mask), config)
     lab = color.rgb_to_lab(rgb)
     return Preprocessed(lab=np.ascontiguousarray(lab), mask=np.ascontiguousarray(mask),
                         out_width=out_w, out_height=out_h, pad_out=pad_out,
                         background_keyed=background_keyed, outline_margin=margin,
-                        layout=layout, fit=fit_mode(config), prereduce_factor=reduce_by)
+                        layout=layout, fit=fit_mode(config), prereduce_factor=reduce_by,
+                        weight=np.ascontiguousarray(weight))
