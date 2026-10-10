@@ -1,5 +1,7 @@
 # pixelforge
 
+[![CI](https://github.com/colebrumley/pixelforge/actions/workflows/ci.yml/badge.svg)](https://github.com/colebrumley/pixelforge/actions/workflows/ci.yml)
+
 Deterministic conversion of raster images into 16-bit-style pixel art: sprites and
 backgrounds/tiles. Same input + same config = the same PNG, every run.
 
@@ -137,3 +139,7 @@ Renders every method × preset on the test fixtures plus any PNGs in `samples/`.
 - [DESIGN.md](DESIGN.md) — how each method works, the full determinism contract, timings,
   and every deliberate deviation from the spec.
 - [REQUIREMENTS.md](REQUIREMENTS.md) — the specification the prototype was built from.
+
+## License
+
+MIT; see [LICENSE](LICENSE). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
