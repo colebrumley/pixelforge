@@ -63,7 +63,10 @@ needs.
    `pixelforge:palette_sha256` and `pixelforge:palette` (the lines, newline-joined).
    `batch` passes its shared palette as an inline `palette_name="hex:rrggbb,…"`, not as the
    path of `shared_palette.hex`, so frame metadata never depends on `--outdir`.
-5. Running the CLI twice on the same input and config produces byte-identical PNGs;
+5. Nothing in a config depends on the environment: `remove_bg` is `False` unless asked for,
+   whether or not rembg is installed. A `remove_bg=True` run depends on the rembg model,
+   which is outside this contract; `_meta.json` records the rembg and onnxruntime versions.
+6. Running the CLI twice on the same input and config produces byte-identical PNGs;
    `pytest tests/test_determinism.py` enforces this for every method and preset.
 
 Byte-identical output across *different machines* additionally assumes the same versions of
@@ -179,6 +182,8 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
   uses `mode="edge"` for the bilateral filter, and repeats inputs that are smaller than the
   output by an integer factor.
 - `convert` writes a fifth file, `NAME_palette.hex`.
+- The sprite preset has `remove_bg=False` instead of the spec's `None` ("True if rembg is
+  installed"), so the same command gives the same config hash on every machine.
 - `scale` and `canvas` are not in the spec. Without them `batch` sizes each frame from its own
   crop box, so frames of one animation came out at different scales; it now sets one `scale`
   from the union of the frames' crop boxes and a shared `canvas` (`cli.shared_scale`).

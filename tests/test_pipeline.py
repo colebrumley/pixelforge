@@ -281,3 +281,18 @@ def test_tileset_outline_is_clipped_not_padded():
     result = run_loaded(_opaque_square(), config)
     assert result.indices.shape == (32, 32)
     assert result.stats["outline_margin"] == 0 and result.stats["outline_clipped"] is True
+
+
+def test_meta_records_matting_versions_only_with_remove_bg(fixture_path, tmp_path):
+    import dataclasses
+
+    config = Config(method="box", out_height=16, palette_size=4)
+    result = run(fixture_path("circle_alpha"), config)
+    result.save(tmp_path / "plain")
+    assert "remove_bg_versions" not in json.loads((tmp_path / "plain_meta.json").read_text())
+    # Saving does not run rembg, so a result relabelled remove_bg=True exercises the meta.
+    result = dataclasses.replace(result, config=config.replace(remove_bg=True))
+    result.save(tmp_path / "matted")
+    versions = json.loads((tmp_path / "matted_meta.json").read_text())["remove_bg_versions"]
+    assert set(versions) == {"rembg", "onnxruntime"}
+    assert all(v is None or isinstance(v, str) for v in versions.values())

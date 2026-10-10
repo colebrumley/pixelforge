@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import time
 from dataclasses import dataclass, field
@@ -56,11 +57,23 @@ class Result:
                 "palette": provenance["palette"],
                 "width": int(self.indices.shape[1]), "height": int(self.indices.shape[0]),
                 "stats": self.stats}
+        if self.config.remove_bg:
+            # The matting model is outside the determinism contract; record what ran.
+            meta["remove_bg_versions"] = {name: package_version(name)
+                                          for name in ("rembg", "onnxruntime")}
         paths["meta"].write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
         if self.tilemap is not None:
             io.save_png(paths["tileset"], self.tileset_indices, self.palette, text)
             paths["tilemap"].write_text(json.dumps(self.tilemap, separators=(",", ":")) + "\n")
         return {name: str(path) for name, path in paths.items()}
+
+
+def package_version(name: str) -> str | None:
+    """Installed version of a distribution, or None if it is not installed."""
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
 
 
 def output_paths(prefix, tileset: bool) -> dict:

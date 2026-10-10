@@ -16,8 +16,11 @@ DENOISERS = ("none", "bilateral", "median")
 DITHERS = ("none", "bayer4", "bayer8", "auto")
 PALETTE_SOURCES = ("auto", "median_cut", "mcda")
 
+# DEVIATION: Section 4 — the spec's sprite preset has remove_bg=None ("True if rembg is
+# importable"), so one command gave different hashes and alpha on different machines and
+# silently downloaded a model. remove_bg is opt-in (--remove-bg) in every preset.
 PRESETS = {
-    "sprite": dict(remove_bg=None, key_bg=True, crop_to_alpha=True, method="gerstner",
+    "sprite": dict(remove_bg=False, key_bg=True, crop_to_alpha=True, method="gerstner",
                    palette_size=16, dither="none", outline="auto", tileset=False,
                    denoise="bilateral"),
     "background": dict(remove_bg=False, key_bg=False, crop_to_alpha=False, method="kopf",
@@ -38,6 +41,7 @@ UPPER_BOUNDS = {"out_width": 4096, "out_height": 4096, "scale": 4096, "scale_pre
 
 
 def rembg_available() -> bool:
+    """Whether rembg is importable (used for the error message; never changes a default)."""
     return importlib.util.find_spec("rembg") is not None
 
 
@@ -50,7 +54,7 @@ class Config:
     scale: float | None = None        # fixed downscale: output = round(cropped input / scale)
     canvas: str | None = None         # "WxH": fit the subject inside, centered (outline inside)
     # --- preprocess ---
-    remove_bg: bool = False           # sprite preset default True if rembg installed, else False
+    remove_bg: bool = False           # rembg AI matting; opt-in only (never environment-derived)
     key_bg: bool = False              # key out a flat opaque background (sprite default True)
     key_bg_tolerance: float = 0.08    # max per-channel sRGB distance from the background color
     key_bg_fringe: int = 3            # max passes keying out the anti-aliased edge (0 = off)
@@ -112,8 +116,6 @@ class Config:
         values = {name: f.default for name, f in specs.items()}
         values.update(PRESETS[preset])
         values.update(kwargs)
-        if values["remove_bg"] is None:
-            values["remove_bg"] = rembg_available()
         for name, f in specs.items():
             object.__setattr__(self, name, _coerce(name, f.type, values[name]))
         # Not a dataclass field: invisible to to_dict(), hashing and equality. replace() uses it

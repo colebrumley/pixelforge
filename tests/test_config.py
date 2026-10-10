@@ -14,7 +14,7 @@ def test_defaults_then_preset_then_explicit():
     for key, value in PRESETS["background"].items():
         assert getattr(background, key) == value
     assert Config(preset="background", method="box", dither="bayer8").method == "box"
-    assert isinstance(sprite.remove_bg, bool)
+    assert sprite.remove_bg is False      # opt-in only, whatever is installed
 
 
 def test_hash_is_stable_and_sensitive():
