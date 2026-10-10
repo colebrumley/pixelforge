@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,6 +8,17 @@ version = "0.1.0"
 description = "Deterministic conversion of raster images into 16-bit-style pixel art"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Cole Brumley"}]
+keywords = ["pixel-art", "image-processing", "downscaling", "palette", "sprites", "tileset"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics",
+]
 dependencies = [
     "numpy>=1.26",
     "Pillow>=10.0",
@@ -18,10 +29,12 @@ dependencies = [
 
 [project.optional-dependencies]
 bg = ["rembg>=2.0", "onnxruntime>=1.16"]
-dev = ["pytest>=7.4"]
-
 [dependency-groups]
 dev = ["pytest>=7.4"]
+
+[project.urls]
+Homepage = "https://github.com/colebrumley/pixelforge"
+Repository = "https://github.com/colebrumley/pixelforge"
 
 [project.scripts]
 pixelforge = "pixelforge.cli:main"
