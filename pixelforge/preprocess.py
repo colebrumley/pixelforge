@@ -16,6 +16,7 @@ from .io import MAX_INPUT_PIXELS
 
 # Output pixels of wrapped context added on every side in seamless mode (Section 9:
 # the input is wrap-padded by 2·r input pixels, i.e. 2 output pixels).
+# DEVIATION: Section 9 — the pad is fixed in output pixels (2·rx × 2·ry input pixels).
 SEAMLESS_PAD_OUT = 2
 
 

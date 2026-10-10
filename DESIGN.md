@@ -74,7 +74,12 @@ went from 204 s + 5 s preprocessing (50 × 4.1 s, 554 MiB) to 27 s + 1.6 s (31 �
    whether or not rembg is installed. A `remove_bg=True` run depends on the rembg model,
    which is outside this contract; `_meta.json` records the rembg and onnxruntime versions.
 6. Running the CLI twice on the same input and config produces byte-identical PNGs;
-   `pytest tests/test_determinism.py` enforces this for every method and preset.
+   `pytest tests/test_determinism.py` enforces this for every method and preset, in-process
+   and across fresh interpreters with different `PYTHONHASHSEED` and BLAS/OpenMP thread
+   counts (every output file; `_meta.json` minus `stats.timings` and `environment`).
+   `tests/test_golden.py` pins the decoded pixels and `config_hash` per fixture, method and
+   preset to `tests/golden.json`; after an intentional output change, regenerate it with
+   `python scripts/update_golden.py` and commit the diff with the change.
 
 Byte-identical output across *different machines* additionally assumes the same versions of
 numpy, scipy, scikit-image and Pillow, which only `git clone && uv sync --locked` (same Python
@@ -276,8 +281,9 @@ The R_k half-width stays at the specified 2 output units.
 - The box baseline does not produce a *broken* line on `line_diag.png`; it produces an
   unbroken but gray one (L ≈ 66, nothing below L = 50). The test asserts exactly that, and
   that the Kopf line is dark (L < 50) and 8-connected along the whole diagonal.
-- `test_determinism.py` runs the background preset at 64×64 instead of 256×256 to keep the
-  suite at about two minutes.
+- `test_determinism.py` runs the background preset at 64×64 instead of 256×256. Its kopf cases
+  at preset size, and kopf on the 256-px golden fixtures, are marked `slow`; 32-px variants
+  with `kopf_max_iters=10` run in their place under `-m "not slow"`. CI runs everything.
 - `test_converges` uses an 8×8 output.
 
 ## Troubleshooting

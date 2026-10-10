@@ -67,7 +67,8 @@ To work on it, or to reproduce outputs exactly:
 ```bash
 git clone https://github.com/colebrumley/pixelforge && cd pixelforge
 uv sync --locked
-uv run pytest -q
+uv run pytest -q                    # full suite, as CI runs it
+uv run pytest -q -m "not slow"      # skip the full-size kopf cases while iterating
 ```
 
 ## CLI

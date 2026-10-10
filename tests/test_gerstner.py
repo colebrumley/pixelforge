@@ -160,3 +160,23 @@ def test_semi_transparent_superpixels_get_less_palette_mass(monkeypatch):
     assert np.allclose(first[:, 6:] / first[:, :6].max(), 0.2)
     assert np.allclose(first[:, :6], first[0, 0])
     assert out.small_mask.all()
+
+
+def test_shared_grid_helpers():
+    from pixelforge.downscale import box, kopf, neighbor_mean4
+
+    grid = np.arange(12, dtype=np.float64).reshape(3, 4) ** 1.5
+    expected = np.empty_like(grid)
+    for y in range(3):
+        for x in range(4):
+            near = [grid[y + dy, x + dx] for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1))
+                    if 0 <= y + dy < 3 and 0 <= x + dx < 4]
+            expected[y, x] = sum(near) / len(near)
+    assert np.allclose(neighbor_mean4(grid), expected)
+    if hasattr(kopf, "_neighbor_mean4"):     # until kopf uses the shared helper
+        assert np.array_equal(neighbor_mean4(grid), kopf._neighbor_mean4(grid))
+    smoothed = gerstner._laplacian_smooth(grid, 0.4)
+    assert np.array_equal(smoothed, grid + 0.4 * (neighbor_mean4(grid) - grid))
+    g = gerstner._Grid(30, 20, 7, 5)
+    assert np.array_equal(g.home_x, box.cell_index(20, 5))
+    assert np.array_equal(g.home_y, box.cell_index(30, 7))

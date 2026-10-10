@@ -23,6 +23,7 @@ RAMP_BIN_DEGREES = 30.0
 RAMP_MAX_SHIFT_DEGREES = 6.0
 RAMP_ACHROMATIC_CHROMA = 8.0
 # L distance from the bin's mean L at which the hue shift reaches its 6° maximum.
+# DEVIATION: Section 8.1 — the spec gives the 6° maximum but no L scale for it.
 RAMP_FULL_SHIFT_L = 30.0
 RAMP_DARK_HUE = 270.0    # blue/purple
 RAMP_LIGHT_HUE = 90.0    # yellow

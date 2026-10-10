@@ -28,10 +28,22 @@ All notable changes to this project are documented here. The format follows
 - A warning when `key_bg` finds no flat background on an opaque input, suggesting
   `--remove-bg` or an alpha channel.
 - `--help` text, per-preset defaults and allowed values for every flag (`config.FIELD_HELP`).
+- Tests: determinism across fresh processes with varied `PYTHONHASHSEED` and BLAS/OpenMP
+  threads, comparing every output file; golden pixel hashes in `tests/golden.json`
+  (regenerate with `scripts/update_golden.py` after an intentional output change); coverage
+  of mcda with box/kopf, the RGBA PNG fallback, median denoise, missing rembg, seamless
+  gerstner, empty batch directories, bayer8 and zero dither strength, tile size errors and
+  every config validation message; a seed test that can fail; committed fixtures checked
+  against `scripts/make_fixtures.py`.
+- A `slow` pytest marker on the full-size kopf cases; `pytest -m "not slow"` skips them.
 
 ### Changed
 
 - `--g-T-final` is now `--g-t-final`; the old spelling remains as a hidden alias.
+- The test suite fails with a pointer to `scripts/make_fixtures.py` when a fixture is missing
+  instead of regenerating it inside the repository.
+- gerstner uses the shared `downscale.neighbor_mean4` and `box.cell_index` helpers (output
+  unchanged); the remaining spec deviations carry `# DEVIATION:` comments.
 
 - Downscalers weight colors by input alpha; semi-transparent fringes pull less (opaque
   inputs are unchanged).
