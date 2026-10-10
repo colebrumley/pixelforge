@@ -510,3 +510,21 @@ def test_downscaler_receives_alpha_weight(monkeypatch):
     (mask, weight), = seen
     assert weight.shape == mask.shape and np.array_equal(weight > 0, mask)
     assert np.allclose(np.unique(weight), [0.0, 128 / 255, 1.0])
+
+
+def test_run_loaded_logs_one_info_record_per_stage(fixture_path, caplog):
+    loaded = io.load(fixture_path("checker_tiles"))
+    config = Config(preset="background", method="kopf", out_width=32, out_height=32,
+                    tile_size=8, kopf_max_iters=5)
+    with caplog.at_level("INFO", logger="pixelforge"):
+        logged = run_loaded(loaded, config)
+    stages = [r.getMessage().split()[0] for r in caplog.records
+              if r.name == "pixelforge.pipeline" and r.levelname == "INFO"]
+    assert stages == ["preprocess", "downscale", "palette/quantize", "postprocess", "tiles"]
+    caplog.clear()
+    with caplog.at_level("DEBUG", logger="pixelforge"):
+        verbose = run_loaded(loaded, config)
+    assert any(r.getMessage().startswith("kopf iter 1/5") for r in caplog.records)
+    # Logging never changes the result.
+    assert np.array_equal(logged.indices, verbose.indices)
+    assert np.array_equal(logged.palette, verbose.palette)
