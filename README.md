@@ -66,7 +66,9 @@ pixelforge palettes                                         # list bundled palet
 ```
 
 Every `Config` field is a `--kebab-case` flag (`--flag/--no-flag` for booleans); `--config
-file.json` loads a config. Precedence: defaults ← preset ← JSON ← flags.
+file.json` loads a config. Precedence: defaults ← preset ← JSON ← flags. Inputs much larger
+than the output are box-reduced to 8–16× the output size before denoising
+(`--prereduce-max-ratio`, 0 disables).
 
 `convert` writes to `OUTDIR` (default `out/`):
 
