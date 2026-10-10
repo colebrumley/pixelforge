@@ -112,8 +112,10 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
     timings["palette_quantize"] = clock() - t
 
     t = clock()
+    post_stats: dict = {}
     indices, palette_lab = postprocess.run(indices, palette_lab, config, saturated=own_palette,
-                                           fixed_palette=config.palette_name is not None)
+                                           fixed_palette=config.palette_name is not None,
+                                           stats=post_stats)
     timings["postprocess"] = clock() - t
 
     tile_result = None
@@ -131,6 +133,7 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
              "colors_used": int(len(np.unique(indices[indices >= 0]))),
              "config_hash": config.hash(),
              "background_keyed": bool(pre.background_keyed),
+             "outline_index": post_stats["outline_index"],
              "method": dict(small.stats),
              "timings": {name: round(seconds, 4) for name, seconds in timings.items()}}
     result = Result(image=io.indices_to_rgba(indices, palette_rgb8), palette=palette_rgb8,
