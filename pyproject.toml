@@ -51,6 +51,9 @@ pixelforge = ["palettes/*.hex"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "slow: kopf at full fixture size (deselect with -m \"not slow\"; CI runs everything)",
+]
 
 [tool.ruff]
 line-length = 100
