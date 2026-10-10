@@ -16,6 +16,7 @@ DENOISERS = ("none", "bilateral", "median")
 DITHERS = ("none", "bayer4", "bayer8", "auto")
 PALETTE_SOURCES = ("auto", "median_cut", "mcda")
 TRANSPARENT_INDICES = ("last", "first")
+FITS = ("pad", "stretch", "crop")
 
 PRESETS = {
     "sprite": dict(remove_bg=None, key_bg=True, crop_to_alpha=True, method="gerstner",
@@ -95,6 +96,9 @@ class Config:
     # --- tiles (background only) ---
     tile_size: int = 16
     tileset: bool = False             # emit tileset.png + tilemap.json
+    fit: str = "pad"                  # how a derived output size is reconciled with tile_size:
+                                      # "pad" (keep aspect, pad transparent, centered) |
+                                      # "stretch" (round up, aspect changes) | "crop" (centered)
     tile_dedupe_tolerance: float = 2.0  # mean LAB distance between tiles to consider identical
     seamless: bool = False            # wrap-around filtering so output tiles seamlessly
     tileset_columns: int = 0          # tiles per tileset row; 0 = ceil(sqrt(tile count))
@@ -175,6 +179,7 @@ class Config:
         _choice("dither", self.dither, DITHERS)
         _choice("palette_source", self.palette_source, PALETTE_SOURCES)
         _choice("transparent_index", self.transparent_index, TRANSPARENT_INDICES)
+        _choice("fit", self.fit, FITS)
         if self.outline not in ("none", "auto") and not _HEX_COLOR.fullmatch(self.outline):
             raise ValueError(f'outline must be "none", "auto" or "#rrggbb", got {self.outline!r}')
         if not 0.0 < self.g_alpha < 1.0:

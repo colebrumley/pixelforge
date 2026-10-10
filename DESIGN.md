@@ -182,6 +182,16 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
   so an opaque image's tileset with a padded last row carries one extra trailing entry; the K
   color indices agree either way. `_palette.json` marks each entry `"used"` and
   `stats.colors_unused` counts the unused ones; they are kept so named palettes stay whole.
+- With `tileset=True` the spec rounds both derived dims up to a multiple of `tile_size`, which
+  stretched the image (160×96 at width 64 became 64×48, +26 % vertically) and could exceed
+  the target edge (`tile_size=24` gave 264). Now the target edge (preset longest edge or the
+  one given `out_width`/`out_height`) is rounded *down* to a multiple, the other axis is
+  derived from it and the canvas is rounded up; `fit` decides how the image fills it:
+  `"pad"` (default) centers it, aspect kept, with transparent pixels, `"stretch"` is the
+  spec behaviour (warns when the aspect changes by > 2 %), `"crop"` crops the input centered
+  to the canvas aspect before downscaling, so the downscalers stay untouched. Seamless mode
+  always stretches (padding or cropping would break the wrap). `tile_size` larger than the
+  longest derived edge is a `ValueError`. `stats.fit` and `stats.content_size` record it.
 - Seamless padding is 2 output pixels per side, i.e. `2·rx` × `2·ry` input pixels per axis.
 - Preprocessing fills transparent pixels with the nearest opaque color before denoising,
   uses `mode="edge"` for the bilateral filter, and repeats inputs that are smaller than the
