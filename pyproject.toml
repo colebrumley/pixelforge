@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pixelforge"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Deterministic conversion of raster images into 16-bit-style pixel art"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -41,6 +41,9 @@ pixelforge = "pixelforge.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["pixelforge*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "pixelforge.version.__version__"}
 
 [tool.setuptools.package-data]
 pixelforge = ["palettes/*.hex"]
