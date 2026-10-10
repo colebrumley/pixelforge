@@ -67,6 +67,10 @@ class _Axis:
         self.valid = ((kern >= 0) & (kern < n_out)
                       & (np.abs(self.pos[None, :] - (kern + 0.5)) < RK_HALF_WIDTH))
         self.kern = np.clip(kern, 0, n_out - 1)
+        # Pixels each kernel's window would span on an unbounded pixel lattice.
+        lattice = (np.arange(-n_in, 2 * n_in) + 0.5) * (n_out / n_in)
+        self.window = np.count_nonzero(
+            np.abs(lattice[None, :] - (np.arange(n_out)[:, None] + 0.5)) < RK_HALF_WIDTH, axis=1)
         self.repeats = [np.bincount(k, minlength=n_out) for k in self.kern]
         # Runs of equal `base`: within a slot, each run is the block of one kernel.
         self.starts = np.concatenate([[0], np.nonzero(np.diff(self.base))[0] + 1])
@@ -172,8 +176,13 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
     cos_limit = math.cos(math.radians(ORIENTATION_MAX_DEGREES))
     starve_below = STARVED_FRACTION * (hi / ho) * (wi / wo)
     has_pixels = np.zeros((ho, wo))
+    in_image = np.zeros((ho, wo))
     for jy, jx in slots:
         layout.reduce(layout.slot_valid(jy, jx, pixel_mask).astype(np.float64), jy, jx, has_pixels)
+        layout.reduce(layout.slot_valid(jy, jx, None).astype(np.float64), jy, jx, in_image)
+    # A kernel is truncated when its R_k window holds transparent pixels or reaches past the
+    # image border (fewer in-image pixels than the window spans); see the shape constraints.
+    truncated = (has_pixels < in_image) | (in_image < np.outer(layout.y.window, layout.x.window))
     has_pixels = has_pixels > 0
 
     def offsets(cx: np.ndarray, cy: np.ndarray, jy: int, jx: int) -> None:
@@ -326,9 +335,21 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         # exact after five iterations. The integral it stands for is the net normal of the
         # boundary between the two kernels' pixel sets, which is what the centroid direction
         # measures robustly.
+        #
+        # DEVIATION: Section 6 — both tests are skipped for kernels whose R_k window is
+        # truncated by transparent pixels or the image border, and the orientation test is
+        # skipped for pairs that share no pixels (f == 0: there is no edge between them).
+        # A truncated window gives the kernel a lopsided footprint, so the one-sided variance
+        # toward the cut side and the centroid direction are set by the cut, not by the
+        # content, and growing σ never changes that geometry: on circle_alpha 256→32 the same
+        # ~340 kernels in a 2–4-kernel band along the silhouette fired on every iteration,
+        # 248 ended at SIGMA_CAP, and those kernels lost their color selectivity (a dark line
+        # 4 px inside the silhouette came out fainter than with the box filter).
         fires = np.zeros((ho, wo), dtype=np.int64)
+        whole = fed & ~truncated
         for ndy, ndx in _NEIGHBORS8:
             exists = _shift(np.ones((ho, wo), dtype=bool), ndy, ndx, fill=False)
+            pair = exists & whole & _shift(~truncated, ndy, ndx, fill=False)
             s_dir = toward[(ndy, ndx)] / wsafe
             f = overlap[(ndy, ndx)] / wsafe
             norm = math.hypot(ndx, ndy)
@@ -338,8 +359,8 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
             o_len = np.hypot(o_x, o_y)
             cos_angle = (d_x * o_x + d_y * o_y) / np.where(o_len > 0, o_len, 1.0)
             misaligned = (o_len > 0) & (cos_angle < cos_limit)
-            fire = exists & fed & ((s_dir > DIRECTIONAL_VARIANCE_MAX)
-                                   | ((f < OVERLAP_MIN) & misaligned))
+            fire = ((exists & whole & (s_dir > DIRECTIONAL_VARIANCE_MAX))
+                    | (pair & (f > 0) & (f < OVERLAP_MIN) & misaligned))
             fires += fire                               # σ_k *= 1.1
             fires += _shift(fire, -ndy, -ndx, fill=False)  # σ_n *= 1.1
         sigma = np.minimum(sigma * SIGMA_GROWTH ** fires, SIGMA_CAP)
@@ -414,4 +435,5 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
             nu[refill, c] = color_w[c][refill] / opaque_w[refill]
 
     return Downscaled(small_lab=from_unit_cube(nu), small_mask=small_mask,
-                      stats={"iterations": iterations, "converged": converged})
+                      stats={"iterations": iterations, "converged": converged,
+                             "sigma_capped": int(np.count_nonzero(sigma >= SIGMA_CAP))})

@@ -30,6 +30,8 @@ All notable changes to this project are documented here. The format follows
 - `_palette.json` LAB values are rounded to 6 decimals.
 - The package version is single-sourced from `pixelforge/version.py`.
 - README: byte identity across machines requires `git clone && uv sync --locked`.
+- Kopf no longer grows σ for kernels cut by the alpha silhouette or the image border, which
+  blurred features near sprite edges below the box filter's sharpness.
 
 ### Removed
 

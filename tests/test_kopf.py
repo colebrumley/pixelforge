@@ -67,3 +67,34 @@ def test_thin_line_converges(preprocessed):
                                key_bg=False)
     out = kopf.run(pre.lab, pre.mask, 32, 32, config)
     assert out.stats["converged"] and out.stats["iterations"] < config.kopf_max_iters
+
+
+def _line_near_silhouette(edge: int, offset: int, n: int = 64):
+    """Orange (L≈68) right of a transparent margin of `edge` px, with a 2-px dark (L≈6)
+    vertical line `offset` px inside the silhouette."""
+    x = np.broadcast_to(np.arange(n), (n, n))
+    rgb = np.empty((n, n, 3))
+    rgb[:] = np.array([240, 140, 30]) / 255
+    rgb[(x >= edge + offset) & (x < edge + offset + 2)] = 20 / 255
+    return color.rgb_to_lab(rgb), x >= edge
+
+
+def test_line_near_silhouette_not_worse_than_box():
+    # Kernels whose window the silhouette cuts used to fire the shape constraint on every
+    # iteration and saturate σ, so a line 4 px inside the edge came out fainter than with box.
+    lab, mask = _line_near_silhouette(edge=4, offset=4)
+    config = Config(method="kopf", out_width=16, out_height=16)
+    out = kopf.run(lab, mask, 16, 16, config)
+    baseline = box.run(lab, mask, 16, 16, config)
+    kopf_l = np.where(out.small_mask, out.small_lab[..., 0], np.inf)
+    box_l = np.where(baseline.small_mask, baseline.small_lab[..., 0], np.inf)
+    assert kopf_l.min() <= box_l.min() + 2
+    assert (kopf_l.min(axis=1) < DARK_L).all()   # the line is visible on every row
+
+
+def test_silhouette_does_not_saturate_sigma(preprocessed):
+    pre, config = preprocessed("circle_alpha", method="kopf", out_width=16, out_height=16,
+                               crop_to_alpha=False, prereduce_max_ratio=4)
+    assert pre.mask.shape == (64, 64)
+    out = kopf.run(pre.lab, pre.mask, 16, 16, config)
+    assert out.stats["sigma_capped"] < 0.1 * 16 * 16
