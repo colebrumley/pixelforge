@@ -104,6 +104,9 @@ class Config:
             values["remove_bg"] = rembg_available()
         for name, f in specs.items():
             object.__setattr__(self, name, _coerce(name, f.type, values[name]))
+        # Not a dataclass field: invisible to to_dict(), hashing and equality. replace() uses it
+        # so that a changed preset is re-applied to every field the caller did not set.
+        object.__setattr__(self, "_explicit", frozenset(kwargs))
         self._validate()
 
     # ------------------------------------------------------------------ helpers
@@ -123,7 +126,8 @@ class Config:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def replace(self, **changes) -> "Config":
-        values = self.to_dict()
+        """A copy with `changes` applied; a changed preset re-applies to non-explicit fields."""
+        values = {name: getattr(self, name) for name in self._explicit}
         values.update(changes)
         return Config(**values)
 

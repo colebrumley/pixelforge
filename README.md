@@ -68,6 +68,7 @@ pixelforge palettes                                         # list bundled palet
 
 Every `Config` field is a `--kebab-case` flag (`--flag/--no-flag` for booleans); `--config
 file.json` loads a config. Precedence: defaults ← preset ← JSON ← flags.
+`Config.replace(preset=...)` re-applies the new preset to every field not set explicitly.
 
 `convert`, `batch` and `compare` refuse (exit 2) to write an output over an input file, and `batch`
 refuses inputs that share a name (`a.png`, `a.bmp`); `--force` overrides both. `batch` skips
