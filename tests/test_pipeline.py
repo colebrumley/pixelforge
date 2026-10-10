@@ -113,3 +113,43 @@ def test_named_palette_and_dither(fixture_path):
         assert len(np.unique(result.indices)) >= 6
     assert (plain.indices != dithered.indices).any()
     assert plain.stats["final_palette_size"] == 16
+
+
+def _gameboy_convert(src, outdir, palette_name="gameboy"):
+    result = CliRunner().invoke(cli, ["convert", str(src), "-o", str(outdir), "--preset",
+                                      "sprite", "--method", "box", "--out-height", "16",
+                                      "--palette-name", str(palette_name)])
+    assert result.exit_code == 0, result.output
+    return _last_json(result.output)
+
+
+def test_named_palette_outline_stays_in_palette(fixture_path, tmp_path):
+    payload = _gameboy_convert(fixture_path("circle_alpha"), tmp_path)
+    gameboy = ["#" + h for h in palette.parse_hex_lines("gameboy")]
+    entries = json.loads((tmp_path / "circle_alpha_palette.json").read_text())
+    assert [e["hex"] for e in entries] == gameboy
+    rgba = np.asarray(Image.open(tmp_path / "circle_alpha.png").convert("RGBA"))
+    used = {color.rgb8_to_hex(c) for c in rgba[rgba[..., 3] > 0][:, :3]}
+    assert used and used <= set(gameboy)
+    with Image.open(tmp_path / "circle_alpha.png") as png:
+        indices = np.unique(np.asarray(png)[rgba[..., 3] > 0])
+    assert all(0 <= i < len(gameboy) for i in indices.tolist())
+    stats = payload["stats"]
+    assert stats["final_palette_size"] == 4
+    assert isinstance(stats["outline_index"], int) and 0 <= stats["outline_index"] < 4
+
+
+def test_palette_hex_round_trip_is_stable(fixture_path, tmp_path):
+    _gameboy_convert(fixture_path("circle_alpha"), tmp_path / "a")
+    first = tmp_path / "a" / "circle_alpha_palette.hex"
+    _gameboy_convert(fixture_path("circle_alpha"), tmp_path / "b", palette_name=first)
+    assert (tmp_path / "b" / "circle_alpha_palette.hex").read_text() == first.read_text()
+
+
+def test_outline_index_in_stats(fixture_path):
+    base = dict(preset="sprite", method="box", out_height=16)
+    result = run(fixture_path("circle_alpha"), Config(**base))
+    assert result.stats["outline_index"] == len(result.palette) - 1
+    json.dumps(result.stats)
+    plain = run(fixture_path("circle_alpha"), Config(outline="none", **base))
+    assert plain.stats["outline_index"] is None

@@ -85,3 +85,30 @@ def test_run_applies_passes_in_order():
     assert out[3, 3] == 1 and len(palette_lab) == 3
     assert (out == 2).sum() == 16 and out.shape == (8, 8)
     assert np.allclose(palette_lab[1, 1:], PALETTE[1, 1:] * 1.1)
+
+
+def test_outline_fixed_palette_snaps_to_nearest_entry():
+    sprite = np.full((6, 6), -1, dtype=np.int64)
+    sprite[2:4, 2:4] = 1
+    stats = {}
+    out, palette_lab = postprocess.add_outline(sprite, PALETTE, "auto", 0.55,
+                                               fixed_palette=True, stats=stats)
+    assert np.array_equal(palette_lab, PALETTE)                    # nothing appended
+    assert stats["outline_index"] == 0 and (out == 0).sum() == 8   # darkest entry
+    # An explicit color snaps too: dark orange → the red entry.
+    out, palette_lab = postprocess.add_outline(sprite, PALETTE, "#b04010", 0.55,
+                                               fixed_palette=True)
+    assert np.array_equal(palette_lab, PALETTE) and (out == 2).sum() == 8
+
+
+def test_outline_full_palette_overwritten_only_when_not_fixed():
+    full = color.rgb8_to_lab(np.array([[i, i, i] for i in range(256)], dtype=np.uint8))
+    sprite = np.full((6, 6), -1, dtype=np.int64)
+    sprite[2:4, 2:4] = 200
+    out, palette_lab = postprocess.add_outline(sprite, full, "#c82828", 0.55,
+                                               fixed_palette=True)
+    assert np.array_equal(palette_lab, full)
+    # Non-fixed full palette: the nearest entry is replaced by the outline color (documented).
+    out, palette_lab = postprocess.add_outline(sprite, full, "#c82828", 0.55)
+    assert len(palette_lab) == 256 and not np.array_equal(palette_lab, full)
+    assert np.allclose(palette_lab[out[1, 2]], color.rgb8_to_lab(color.hex_to_rgb8("#c82828")))

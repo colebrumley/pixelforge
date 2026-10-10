@@ -156,15 +156,31 @@ def outline_color_lab(palette_lab: np.ndarray, outline: str, darken: float) -> n
     return color.rgb8_to_lab(color.hex_to_rgb8(outline))
 
 
+def _nearest_entry(lab: np.ndarray, palette_lab: np.ndarray) -> int:
+    """Nearest palette entry to one LAB color (CIE76); ties → lowest index."""
+    return int(np.argmin(color.delta_e(palette_lab, lab[None, :])))
+
+
 def add_outline(idx: np.ndarray, palette_lab: np.ndarray, outline: str, darken: float = 0.55,
-                allow_pad: bool = True) -> tuple[np.ndarray, np.ndarray]:
+                allow_pad: bool = True, *, fixed_palette: bool = False,
+                stats: dict | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Set every transparent pixel with an opaque 4-neighbor to the outline color.
 
     The outline is drawn outside the silhouette; the canvas is padded by 1 px first if any
     opaque pixel touches its edge.
+
+    The outline color ("auto": the darkest entry blended toward black; or an explicit
+    #rrggbb) reuses an entry with the same RGB8 value, else is appended as a new entry. With
+    `fixed_palette=True` (a named hardware palette) the palette is never changed: the color,
+    auto or explicit, snaps to the nearest existing entry in LAB (CIE76, ties → lowest index).
+    A non-fixed palette that is already full (256 entries) has its nearest entry overwritten
+    with the outline color instead. If `stats` is given, stats["outline_index"] is set to the
+    index used, or None when no outline pixel was drawn.
     """
     idx = np.array(idx, dtype=np.int64)
     palette_lab = np.array(palette_lab, dtype=np.float64)
+    if stats is not None:
+        stats["outline_index"] = None
     opaque = idx >= 0
     touches_edge = opaque[0].any() or opaque[-1].any() or opaque[:, 0].any() or opaque[:, -1].any()
     if allow_pad and touches_edge:
@@ -181,26 +197,36 @@ def add_outline(idx: np.ndarray, palette_lab: np.ndarray, outline: str, darken: 
         return idx, palette_lab
 
     line_lab = outline_color_lab(palette_lab, outline, darken)
-    line_rgb8 = color.lab_to_rgb8(line_lab)
-    same = np.nonzero((color.lab_to_rgb8(palette_lab) == line_rgb8).all(axis=1))[0]
-    if len(same):
-        line_index = int(same[0])
-    elif len(palette_lab) < 256:
-        line_index = len(palette_lab)
-        palette_lab = np.vstack([palette_lab, line_lab[None, :]])
+    if fixed_palette:
+        # DEVIATION: Section 8.3 — hardware palettes are fixed; the outline snaps to the
+        # nearest existing entry instead of adding (or overwriting) one.
+        line_index = _nearest_entry(line_lab, palette_lab)
     else:
-        line_index = int(color.nearest_index(line_lab[None, :], palette_lab)[0])
-        palette_lab[line_index] = line_lab
+        line_rgb8 = color.lab_to_rgb8(line_lab)
+        same = np.nonzero((color.lab_to_rgb8(palette_lab) == line_rgb8).all(axis=1))[0]
+        if len(same):
+            line_index = int(same[0])
+        elif len(palette_lab) < 256:
+            line_index = len(palette_lab)
+            palette_lab = np.vstack([palette_lab, line_lab[None, :]])
+        else:
+            # A full palette: the nearest entry becomes the outline color.
+            line_index = _nearest_entry(line_lab, palette_lab)
+            palette_lab[line_index] = line_lab
     idx[ring] = line_index
+    if stats is not None:
+        stats["outline_index"] = line_index
     return idx, palette_lab
 
 
 # ------------------------------------------------------------------------------------ run
 
 def run(indices: np.ndarray, palette_lab: np.ndarray, config, *, saturated: bool = False,
-        fixed_palette: bool = False) -> tuple[np.ndarray, np.ndarray]:
+        fixed_palette: bool = False, stats: dict | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Apply all passes. `saturated`: β was already applied (gerstner). `fixed_palette`: a
-    named hardware palette is in use, whose colors are left untouched."""
+    named hardware palette is in use, whose colors are left untouched (the outline snaps to
+    one of them). If `stats` is given, stats["outline_index"] is the outline's palette index,
+    or None when no outline was drawn."""
     idx = np.array(indices, dtype=np.int64)
     palette_lab = np.array(palette_lab, dtype=np.float64)
 
@@ -215,11 +241,14 @@ def run(indices: np.ndarray, palette_lab: np.ndarray, config, *, saturated: bool
         idx = remove_orphans(idx, palette_lab, config.orphan_min_region)
     if config.fix_jaggies:
         idx = fix_jaggies(idx)
+    if stats is not None:
+        stats["outline_index"] = None
     if config.outline != "none":
         # DEVIATION: Section 8.3 — with tileset=True the canvas is not padded for the
         # outline, because that would break the tile_size | width, height requirement.
         idx, palette_lab = add_outline(idx, palette_lab, config.outline, config.outline_darken,
-                                       allow_pad=not config.tileset)
+                                       allow_pad=not config.tileset,
+                                       fixed_palette=fixed_palette, stats=stats)
         if config.remove_orphans:
             # The outline can create 1-px nubs.
             idx = remove_orphans(idx, palette_lab, config.orphan_min_region, max_passes=1)

@@ -129,6 +129,11 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
   fewer than K colors when the image has fewer distinguishable ones.
 - `regularize_ramps` reaches the 6° maximum at an L distance of 30 from the bin's mean L.
 - Ramp regularization and saturation are skipped when a named palette is used.
+- With a named palette the outline color (auto or explicit `#rrggbb`) snaps to the nearest
+  palette entry (CIE76, ties → lowest index); the palette is never extended or changed, so a
+  `_palette.hex` fed back via `palette_name` reproduces itself. Otherwise a new entry is
+  appended, or, in a full 256-entry palette, the nearest entry is overwritten with it.
+  `stats.outline_index` names the entry used (`null` if no outline was drawn).
 - With `tileset=True` the outline pass does not pad the canvas.
 
 **Pipeline, tiles, preprocessing (Sections 5 and 9).**
