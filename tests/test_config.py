@@ -146,3 +146,37 @@ def test_scale_and_canvas_accepted():
     assert hash(cfg) == hash(Config(scale=2.0, canvas="48x32"))
     assert Config(**json.loads(cfg.canonical_json())) == cfg
     assert Config().canvas_size is None
+
+
+def test_config_error_is_value_error_and_pixelforge_error():
+    import pixelforge
+    from pixelforge import ConfigError, PixelforgeError
+
+    assert issubclass(ConfigError, ValueError) and issubclass(ConfigError, PixelforgeError)
+    with pytest.raises(ConfigError, match="palette_size"):
+        Config(palette_size=1)
+    with pytest.raises(ValueError, match="unknown config field"):
+        Config(nope=1)
+    for name in ("Config", "run", "Result", "PixelforgeError", "ConfigError", "__version__"):
+        assert name in pixelforge.__all__ and hasattr(pixelforge, name)
+
+
+def test_negative_seed_rejected():
+    from pixelforge import ConfigError
+
+    with pytest.raises(ConfigError, match="seed must be >= 0"):
+        Config(seed=-1)
+
+
+def test_presets_are_read_only():
+    from pixelforge.config import PRESET_LONGEST_EDGE
+
+    before = Config(preset="sprite").to_dict()
+    with pytest.raises(TypeError):
+        PRESETS["sprite"]["palette_size"] = 99
+    with pytest.raises(TypeError):
+        PRESETS["evil"] = {}
+    with pytest.raises(TypeError):
+        PRESET_LONGEST_EDGE["sprite"] = 1
+    assert Config(preset="sprite").to_dict() == before
+    assert Config(preset="sprite").palette_size == 16

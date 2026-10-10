@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..errors import PixelforgeError
 from . import Downscaled
 
 
@@ -13,6 +14,8 @@ def cell_index(n_in: int, n_out: int) -> np.ndarray:
 
 
 def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, config) -> Downscaled:
+    if not mask.any():
+        raise PixelforgeError("no opaque pixels")
     hi, wi = mask.shape
     cell = (cell_index(hi, out_height)[:, None] * out_width
             + cell_index(wi, out_width)[None, :]).ravel()

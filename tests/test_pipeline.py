@@ -391,3 +391,63 @@ def test_tileset_fit_stretch_and_crop_fill_the_canvas():
     assert has(stretch, (220, 30, 30)) and has(stretch, (30, 30, 220))
     assert not has(crop, (220, 30, 30)) and not has(crop, (30, 30, 220))
     assert has(crop, (40, 180, 60))
+
+
+def _assert_same_output(a, b):
+    np.testing.assert_array_equal(a.indices, b.indices)
+    np.testing.assert_array_equal(a.palette, b.palette)
+    np.testing.assert_array_equal(a.image, b.image)
+
+
+def test_run_accepts_array_and_pil_image(fixture_path):
+    from pixelforge import PixelforgeError
+
+    path = fixture_path("circle_alpha")
+    config = Config(preset="sprite", method="box", out_width=16, out_height=16)
+    from_path = run(path, config)
+    with Image.open(path) as im:
+        im.load()
+        from_pil = run(im, config)
+        rgba = np.asarray(im.convert("RGBA"))
+    from_array = run(rgba, config)
+    from_float = run(rgba.astype(np.float64) / 255.0, config)
+    for other in (from_pil, from_array, from_float):
+        _assert_same_output(from_path, other)
+    # In-memory images hash shape + RGBA bytes, not the file bytes.
+    assert from_path.input_sha256 == io.sha256_file(path)
+    assert from_array.input_sha256 != from_path.input_sha256
+    assert from_array.input_sha256 == from_pil.input_sha256 == from_float.input_sha256
+
+    opaque = np.zeros((12, 12, 3), dtype=np.uint8)
+    opaque[:, 6:] = 255
+    rgb_result = run(opaque, Config(preset="sprite", method="box", out_width=8, out_height=8))
+    assert rgb_result.indices.shape == (8, 8)
+
+    with pytest.raises(PixelforgeError, match="input budget"):
+        run(rgba, config, max_pixels=rgba.shape[0] * rgba.shape[1] - 1)
+    with pytest.raises(PixelforgeError, match="shape"):
+        run(np.zeros((8, 8), dtype=np.uint8), config)
+    with pytest.raises(PixelforgeError, match=r"\[0, 1\]"):
+        run(np.full((8, 8, 3), 2.0), config)
+    with pytest.raises(PixelforgeError, match="uint8 or float"):
+        run(np.zeros((8, 8, 3), dtype=np.int32), config)
+
+
+def test_unknown_palette_fails_fast(fixture_path, monkeypatch, tmp_path):
+    from pixelforge import ConfigError, downscale, preprocess
+
+    with pytest.raises(ConfigError, match="unknown palette 'nope'"):
+        Config(palette_name="nope")
+
+    def must_not_run(*args, **kwargs):
+        raise AssertionError("pipeline stage ran before the palette was validated")
+
+    monkeypatch.setattr(preprocess, "run", must_not_run)
+    monkeypatch.setattr(downscale, "get", must_not_run)
+    missing = Config(palette_name=str(tmp_path / "missing.hex"))
+    with pytest.raises(ConfigError, match="unknown palette"):
+        run(fixture_path("two_color"), missing)
+    bad = tmp_path / "bad.hex"
+    bad.write_text("not a color\n")
+    with pytest.raises(ConfigError, match="not a hex color"):
+        run(fixture_path("two_color"), Config(palette_name=str(bad)))

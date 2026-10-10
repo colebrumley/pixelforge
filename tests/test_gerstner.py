@@ -106,3 +106,13 @@ def test_stalled_pair_ends_annealing(monkeypatch):
     out, config = _run_lab(lab, 2)
     assert not out.stats["hit_iteration_cap"]
     assert out.stats["final_temperature"] >= 1e-2 * config.g_T_final
+
+
+def test_empty_mask_raises_pixelforge_error():
+    import pytest
+
+    from pixelforge import PixelforgeError
+
+    lab = np.zeros((16, 16, 3))
+    with pytest.raises(PixelforgeError, match="no opaque pixels"):
+        gerstner.run(lab, np.zeros((16, 16), dtype=bool), 8, 8, Config(method="gerstner"))

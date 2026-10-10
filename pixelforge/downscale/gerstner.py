@@ -11,6 +11,7 @@ import math
 
 import numpy as np
 
+from ..errors import PixelforgeError
 from . import Downscaled
 
 PERTURB_DELTA = 0.5      # sub-cluster offset along the principal axis, LAB units
@@ -363,6 +364,8 @@ def _assign(grid: _Grid, cx, cy, radius: int, candidate_ok=None, channels=None, 
 
 
 def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, config) -> Downscaled:
+    if not mask.any():
+        raise PixelforgeError("no opaque pixels")
     hi, wi = mask.shape
     wo, ho = int(out_width), int(out_height)
     n_sp = wo * ho
