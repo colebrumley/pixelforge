@@ -15,6 +15,20 @@ Post-processing adds palette ramp regularization, selective ordered dithering, o
 removal, jaggy cleanup, sprite outlines and optional tileset + tilemap extraction. Bundled
 palettes: NES, Game Boy, Genesis, SNES, PICO-8.
 
+## Samples
+
+Source on the left, pixelforge output on the right (nearest-neighbor upscaled).
+
+`pixelforge convert knight.png --preset sprite --method gerstner`: 1254×1254 → 45×66,
+17 colors, backdrop keyed out.
+
+![Knight sprite before and after](docs/sample_sprite.png)
+
+`pixelforge convert town.png --preset background --method gerstner`: 1254×1254 → 256×256,
+32 colors, plus a tileset and tilemap.
+
+![Town background before and after](docs/sample_background.png)
+
 ## Install
 
 Python 3.11+. Not published to PyPI; install straight from GitHub:
