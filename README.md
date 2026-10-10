@@ -86,6 +86,10 @@ refuses inputs that share a name (`a.png`, `a.bmp`); `--force` overrides both. `
 | `NAME_palette.json`, `NAME_palette.hex` | the palette; `.hex` is reusable via `--palette-name` |
 | `NAME_meta.json` | stats, timings, config, config hash, input hash |
 | `NAME_tileset.png`, `NAME_tilemap.json` | background preset only; tiles merge when mean ΔE < `tile_dedupe_tolerance` and every pixel's ΔE < 10 (flips included) |
+| `NAME.tmj` | background preset only: Tiled JSON map (one `background` layer, flips in the GID high bits, tileset embedded and pointing at `NAME_tileset.png`) |
+| `NAME_tilemap.csv` | background preset only: one line per tile row of GIDs (1-based, 0 = empty, no flip bits) |
+
+`--tileset-columns N` sets the tileset sheet width in tiles (default 0: `ceil(sqrt(tiles))`).
 
 ### Limits
 

@@ -33,7 +33,8 @@ class Result:
 
     def save(self, prefix) -> dict:
         """Write <prefix>.png, _preview.png, _palette.json, _palette.hex, _meta.json and, for
-        tilesets, _tileset.png and _tilemap.json. Returns {name: path}."""
+        tilesets, _tileset.png, _tilemap.json, .tmj (Tiled) and _tilemap.csv. Returns
+        {name: path}."""
         paths = output_paths(prefix, tileset=self.tilemap is not None)
         Path(prefix).parent.mkdir(parents=True, exist_ok=True)
         text = self.png_text()
@@ -52,6 +53,11 @@ class Result:
         if self.tilemap is not None:
             io.save_png(paths["tileset"], self.tileset_indices, self.palette, text)
             paths["tilemap"].write_text(json.dumps(self.tilemap, separators=(",", ":")) + "\n")
+            sheet_h, sheet_w = self.tileset_indices.shape
+            tmj = tiles.tiled_map(self.tilemap, self.stats["tiles"], paths["tileset"].name,
+                                  (sheet_w, sheet_h), Path(prefix).name)
+            paths["tilemap_tmj"].write_text(json.dumps(tmj, indent=1) + "\n")
+            paths["tilemap_csv"].write_text(tiles.tilemap_csv(self.tilemap))
         return {name: str(path) for name, path in paths.items()}
 
 
@@ -68,6 +74,8 @@ def output_paths(prefix, tileset: bool) -> dict:
     if tileset:
         paths["tileset"] = sibling("_tileset.png")
         paths["tilemap"] = sibling("_tilemap.json")
+        paths["tilemap_tmj"] = sibling(".tmj")
+        paths["tilemap_csv"] = sibling("_tilemap.csv")
     return paths
 
 
