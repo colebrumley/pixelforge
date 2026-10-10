@@ -44,6 +44,7 @@ class Config:
     remove_bg: bool = False           # sprite preset default True if rembg installed, else False
     key_bg: bool = False              # key out a flat opaque background (sprite default True)
     key_bg_tolerance: float = 0.08    # max per-channel sRGB distance from the background color
+    key_bg_fringe: int = 3            # max passes keying out the anti-aliased edge (0 = off)
     crop_to_alpha: bool = True        # crop to alpha bbox before downscale (only if alpha present)
     alpha_threshold: int = 128        # input alpha < this → transparent
     denoise: str = "bilateral"        # "none" | "bilateral" | "median"
@@ -149,6 +150,8 @@ class Config:
         if not 0.0 <= self.key_bg_tolerance <= 1.0:
             raise ValueError(
                 f"key_bg_tolerance must be in [0, 1], got {self.key_bg_tolerance}")
+        if not 0 <= self.key_bg_fringe <= 8:
+            raise ValueError(f"key_bg_fringe must be in [0, 8], got {self.key_bg_fringe}")
         if not 0.0 <= self.outline_darken <= 1.0:
             raise ValueError(f"outline_darken must be in [0, 1], got {self.outline_darken}")
         for name in ("kopf_max_iters", "g_max_iters", "tile_size", "scale_preview",

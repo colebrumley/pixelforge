@@ -77,12 +77,14 @@ def remove_background(rgb: np.ndarray, alpha: np.ndarray) -> np.ndarray:
     return np.asarray(out.convert("RGBA"), dtype=np.uint8)[..., 3].copy()
 
 
-def flat_background(rgb: np.ndarray, tolerance: float) -> np.ndarray | None:
+def flat_background(rgb: np.ndarray, tolerance: float,
+                    fringe: int = 0) -> np.ndarray | None:
     """Mask of a flat background connected to the image border, or None if there is none.
 
     The background color is the per-channel median of the border pixels. If nearly the whole
     border has that color, every pixel of that color that is 4-connected to the border is
-    background; regions of the same color enclosed by the subject are kept.
+    background; regions of the same color enclosed by the subject are kept. Up to ``fringe``
+    passes of `_unmix_fringe` then key out the anti-aliased edge between subject and backdrop.
     """
     border = np.concatenate([rgb[0], rgb[-1], rgb[1:-1, 0], rgb[1:-1, -1]])
     reference = np.median(border, axis=0)
@@ -95,6 +97,56 @@ def flat_background(rgb: np.ndarray, tolerance: float) -> np.ndarray | None:
     background = np.isin(labels, on_border[on_border > 0])
     if background.all():
         return None
+    background = _unmix_fringe(rgb, background, reference, fringe)
+    if background.all():
+        return None
+    return background
+
+
+_EIGHT_NEIGHBOURS = np.ones((3, 3), dtype=bool)
+# Width in pixels of the widest anti-aliasing fringe `_unmix_fringe` expects.
+FRINGE_DEPTH = 3
+
+
+def _unmix_fringe(rgb: np.ndarray, background: np.ndarray, reference: np.ndarray,
+                  passes: int) -> np.ndarray:
+    """Grow ``background`` into the anti-aliased edge of the subject.
+
+    Each pass looks at the opaque pixels 8-adjacent to the background and estimates how much of
+    the subject they cover as ``max_c |p - bg| / max_c |fg - bg|``, where ``fg`` is the color of
+    a nearby opaque pixel that is not adjacent to the background (see below). Pixels covering
+    less than half are keyed out. Anti-aliasing fringes are 1-3 px wide, hence a few passes; it
+    stops early once a pass keys out nothing. Regions enclosed by the subject never touch the
+    background and are left alone.
+    """
+    background = background.copy()
+    for _ in range(passes):
+        edge = ndimage.binary_dilation(background, structure=_EIGHT_NEIGHBOURS) & ~background
+        shallow = ~background & ~edge
+        if not edge.any() or not shallow.any():
+            break
+        ey, ex = np.nonzero(edge)
+        _, near = ndimage.distance_transform_edt(~shallow, return_indices=True)
+        fg = rgb[near[0][ey, ex], near[1][ey, ex]]
+        # The pixel just inside a fringe is itself partly mixed, so where the subject is thick
+        # enough the reference color comes from beyond the widest fringe instead (a pixel at
+        # coverage 0.4 must not be compared against one at 0.7). Thin parts keep the nearest
+        # non-edge pixel rather than borrowing the color of some distant region.
+        deep = ~ndimage.binary_dilation(background, structure=_EIGHT_NEIGHBOURS,
+                                        iterations=FRINGE_DEPTH + 1)
+        if deep.any():
+            dist, far = ndimage.distance_transform_edt(~deep, return_indices=True)
+            use = dist[ey, ex] <= 2 * FRINGE_DEPTH
+            fg[use] = rgb[far[0][ey[use], ex[use]], far[1][ey[use], ex[use]]]
+        p = rgb[ey, ex]
+        mixed = np.abs(p - reference).max(axis=-1)
+        full = np.abs(fg - reference).max(axis=-1)
+        # A subject color indistinguishable from the backdrop gives no coverage estimate;
+        # such pixels are kept.
+        keyed = (full > 1e-6) & (2.0 * mixed < full)
+        if not keyed.any():
+            break
+        background[ey[keyed], ex[keyed]] = True
     return background
 
 
@@ -141,7 +193,7 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
     # would otherwise take part in every statistic and swallow most of the palette.
     background_keyed = False
     if config.key_bg and mask.all():
-        background = flat_background(rgb, config.key_bg_tolerance)
+        background = flat_background(rgb, config.key_bg_tolerance, config.key_bg_fringe)
         if background is not None:
             mask = ~background
             background_keyed = True

@@ -142,8 +142,11 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
   uses `mode="edge"` for the bilateral filter, and repeats inputs that are smaller than the
   output by an integer factor.
 - `convert` writes a fifth file, `NAME_palette.hex`.
-- `Config` has two fields that are not in the spec, `key_bg` and `key_bg_tolerance` (see
-  Install), and the sprite preset sets `key_bg=True`. The gallery runs the fixtures with
+- `Config` has three fields that are not in the spec, `key_bg`, `key_bg_tolerance` and
+  `key_bg_fringe` (see Install), and the sprite preset sets `key_bg=True`. After keying, up to
+  `key_bg_fringe` passes estimate each edge pixel's subject coverage as
+  `max_c|p−bg| / max_c|fg−bg|` (fg sampled just beyond a 3-px fringe) and key out those below
+  0.5, so the anti-aliased halo does not take palette entries. The gallery runs the fixtures with
   `key_bg=False` because they are test patterns, not sprites; images in `samples/` use the
   preset as-is.
 

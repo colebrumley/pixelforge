@@ -70,3 +70,75 @@ def test_pipeline_reports_keying_and_palette_ignores_background():
     assert result.indices[0, 0] == -1 and result.indices[-1, -1] == -1
     assert (result.indices[2:-2, 2:-2] >= 0).all()
     assert result.indices.shape[0] in (64, 66) and result.indices.shape[1] < 50
+
+
+_RED = np.array([0.85, 0.0, 0.07])
+
+
+def _disc_on_white(ramp=3.0, size=128, radius=40.0):
+    """A red disc on white whose edge is a linear anti-aliasing ramp ``ramp`` px wide.
+
+    Returns the RGB image and the true subject coverage of every pixel.
+    """
+    yy, xx = np.mgrid[:size, :size]
+    d = np.hypot(yy - (size - 1) / 2, xx - (size - 1) / 2)
+    if ramp > 0:
+        coverage = np.clip((radius + ramp / 2 - d) / ramp, 0.0, 1.0)
+    else:
+        coverage = (d <= radius).astype(np.float64)
+    rgb = coverage[..., None] * _RED + (1.0 - coverage[..., None])
+    return rgb, coverage
+
+
+def test_anti_aliased_fringe_is_keyed_out():
+    rgb, coverage = _disc_on_white()
+    halo = (coverage > 0) & (coverage < 0.5)
+    before = preprocess.flat_background(rgb, 0.08, fringe=0)
+    after = preprocess.flat_background(rgb, 0.08, fringe=3)
+    assert (halo & ~before).sum() > 0.5 * halo.sum()          # the bug: most of it stays
+    assert (halo & ~after).sum() <= 0.1 * halo.sum()
+    assert not (after & (coverage >= 0.5)).any()               # no subject pixel is lost
+
+
+def test_hard_edges_and_enclosed_regions_are_unchanged_by_unmixing():
+    rgb, coverage = _disc_on_white(ramp=0)
+    np.testing.assert_array_equal(preprocess.flat_background(rgb, 0.08, fringe=3),
+                                  coverage == 0)
+    rgb, alpha = _sprite_on_white()
+    keyed = preprocess.flat_background(rgb, 0.08, fringe=3)
+    assert not keyed[40:50, 40:56].any() and not keyed[20:76, 30:66].any()
+
+
+def test_fringe_zero_reproduces_plain_keying():
+    rgb, _ = _disc_on_white()
+    alpha = np.full(rgb.shape[:2], 255, dtype=np.uint8)
+    plain = preprocess.flat_background(rgb, 0.08)
+    pre = preprocess.run(rgb, alpha, Config(preset="sprite", denoise="none", out_height=128,
+                                            crop_to_alpha=False, key_bg_fringe=0))
+    np.testing.assert_array_equal(pre.mask, ~plain)
+    for bad in (-1, 9):
+        with pytest.raises(ValueError):
+            Config(key_bg_fringe=bad)
+
+
+def test_palette_is_not_spent_on_the_halo():
+    from pixelforge import color
+
+    rgb, _ = _disc_on_white()
+    rgba = np.dstack([np.round(rgb * 255).astype(np.uint8),
+                      np.full(rgb.shape[:2], 255, dtype=np.uint8)])
+    red_l, red_a, red_b = color.rgb_to_lab(_RED[None, None])[0, 0]
+    red_c = np.hypot(red_a, red_b)
+
+    def pinkish(fringe):
+        result = run_loaded(io.from_rgba(rgba, "disc"),
+                            Config(preset="sprite", method="box", palette_size=4,
+                                   key_bg_fringe=fringe))
+        lab = color.rgb_to_lab(np.asarray(result.palette, dtype=np.float64)[None] / 255.0)[0]
+        # Red mixed with white: lighter than the red by > 5 L and below 85 % of its chroma
+        # (the dark auto-outline entry is darker, so it does not count).
+        return int(((lab[:, 0] > red_l + 5)
+                    & (np.hypot(lab[:, 1], lab[:, 2]) < 0.85 * red_c)).sum())
+
+    assert pinkish(0) >= 3          # without unmixing three of four entries are pinks
+    assert pinkish(3) <= 1
