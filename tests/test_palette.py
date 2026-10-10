@@ -117,3 +117,7 @@ def test_mcda_does_not_spend_the_palette_on_coincident_colors():
     distances = color.palette_distance_matrix(found)
     np.fill_diagonal(distances, np.inf)
     assert distances.min() > 3.0
+
+
+def test_mcda_single_color():
+    assert len(palette.mcda(np.tile([60.0, 10.0, -20.0], (500, 1)), 8, Config())) == 1

@@ -101,18 +101,25 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
 
 **Gerstner (Section 7).**
 
+- The start temperature is 1.1·2·σ, with σ the standard deviation along the first principal
+  axis, not 1.1·2·σ². Rose's Tc = 2λ is for a squared-distance kernel; the association uses
+  exp(−‖·‖/T), whose critical temperature scales with the spread. With the variance a ΔE-100
+  checker spent 14 of 32 iterations cooling before anything happened.
 - Annealing also stops when the final temperature is reached and a convergence event
-  produces no split, even if fewer than K colors exist. Otherwise an image with fewer than K
-  separable colors would cool forever until `g_max_iters`. `stats.final_palette_size` reports
-  the actual count.
+  produces no split and no pair whose separation grew by more than `g_eps_cluster` over the
+  last 3 events, even if fewer than K colors exist (backstop: T < 10⁻³·`g_T_final`).
+  Otherwise an image with fewer than K separable colors would cool forever until
+  `g_max_iters`. `stats.final_palette_size` reports the actual count.
 - A sub-cluster pair only splits once it is three times further apart than the 2δ it was
-  placed at, and a pair that is moving apart but not there yet is left alone rather than
-  re-centered. The perturbation alone (1.0) already exceeds `g_eps_cluster` (0.25), so the
-  spec's test also splits pairs that are still collapsing back together. Those colors
+  placed at, or one standard deviation of its own points (along their principal axis) apart
+  if that is less, and a pair that is moving apart but not there yet is left alone rather
+  than re-centered. The perturbation alone (1.0) already exceeds `g_eps_cluster` (0.25), so
+  the spec's test also splits pairs that are still collapsing back together. Those colors
   coincide and never separate once K is reached: a single-color sprite ended with 16 palette
   entries of which 4 were distinct. Letting growth accumulate matters for small clusters,
   which diverge slowly: with re-centering, a thin line holding 1.5% of the pixels never split
-  off.
+  off. The spread cap matters for close colors: regions at L 50 and L 54 settle ≈ 2.8 apart
+  after the bilateral filter and never reached 3·2δ.
 - When more pairs are ready to split than palette slots remain, the slots go to the pairs
   whose split removes the most error, not to the lowest index.
 - Transparent input pixels are never assigned, so `small_mask` attributes each one to its

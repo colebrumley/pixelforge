@@ -15,6 +15,8 @@ from . import Downscaled
 
 PERTURB_DELTA = 0.5      # sub-cluster offset along the principal axis, LAB units
 SPLIT_GROWTH = 3.0       # a pair splits once it is this many times further apart than placed
+SPLIT_SPREAD = 1.0       # ... or once it is this many standard deviations of its cluster apart
+STALL_EVENTS = 3         # below g_T_final, stop once no pair grew over this many events
 EXHAUSTED_T_FRACTION = 1e-3   # backstop: stop annealing below this fraction of g_T_final
 _MAX_SEARCH_RADIUS = 6   # grid cells searched around a pixel's home cell (safety bound)
 
@@ -52,11 +54,17 @@ class PaletteAnnealer:
         self.config = config
         mean = init_points.mean(axis=0)
         _, variance = principal_axis(init_points)
-        # T = 1.1·Tc with Tc = 2·(variance along the first principal axis). The floor only
-        # matters for a single-color input, where Tc is 0.
-        self.T = max(1.1 * 2.0 * variance, config.g_T_final)
+        # DEVIATION: Section 7 — T0 = 1.1·2·σ (σ = standard deviation along the first
+        # principal axis), not 1.1·2·σ². Rose's critical temperature Tc = 2λ holds for the
+        # squared-distance kernel exp(−‖·‖²/T); the association here uses exp(−‖·‖/T), whose
+        # Tc scales with the spread itself (for two colors at ±σ it is exactly σ). With the
+        # variance a ΔE-100 checker started at T ≈ 6000 and spent 14 of 32 iterations cooling
+        # before the first split. The floor only matters for a single-color input (σ = 0).
+        self.T = max(1.1 * 2.0 * math.sqrt(variance), config.g_T_final)
         self.clusters = np.stack([mean, mean])
         self.placed = np.zeros(1)    # separation each sub-cluster pair was last placed at
+        # Separation of each pair at the last STALL_EVENTS convergence events, oldest first.
+        self.history = np.zeros((1, STALL_EVENTS))
         self.prob = np.array([0.5, 0.5])
         self.has_sub = True
         self.assign = None       # palette index per point from the latest ASSOCIATE
@@ -115,9 +123,18 @@ class PaletteAnnealer:
             # enough either: re-centering every pair at every event would undo the slow
             # divergence of a small cluster (a thin line holding 1.5% of the pixels never
             # split off at all), so growth has to be allowed to accumulate.
+            #
+            # The growth threshold is capped by the pair's own spread: a pair whose points
+            # span only a few ΔE (two regions at L 50 and L 54 end up as a ramp after the
+            # bilateral filter, halves ≈ 2.8 apart) can never reach 3·2δ, so it splits once
+            # it is SPLIT_SPREAD standard deviations (along its principal axis) apart.
+            spread = np.array([math.sqrt(principal_axis(points[sub_assign // 2 == k])[1])
+                               for k in range(n_before)])
             growing = separation > self.placed
             ready = growing & (separation > cfg.g_eps_cluster) & (
-                separation > SPLIT_GROWTH * self.placed)
+                separation > np.minimum(SPLIT_GROWTH * self.placed, SPLIT_SPREAD * spread))
+            grown = separation - self.history[:, 0]
+            history = np.concatenate([self.history[:, 1:], separation[:, None]], axis=1)
             # DEVIATION: Section 7 — when more pairs are ready than palette slots remain, the
             # slots go to the pairs whose split removes the most error (mass-weighted squared
             # separation), not to the lowest k. In ascending-k order the last slots went to
@@ -151,10 +168,13 @@ class PaletteAnnealer:
             # DEVIATION: Section 7 — the spec only breaks once K_current == K. An image with
             # fewer than K separable colors would then cool forever (T → 0) until
             # g_max_iters, so annealing also ends when the final temperature has been
-            # reached and a convergence event leaves no pair split or still moving apart
+            # reached and a convergence event splits no pair and leaves no pair whose
+            # separation grew by more than g_eps_cluster over the last STALL_EVENTS events
             # (or, as a backstop, when T has fallen far below the final temperature); the
             # palette keeps K_current < K colors.
-            exhausted = ((self.T <= cfg.g_T_final and not chosen and not any(keep))
+            stalled = not any(keep[k] and grown[k] > cfg.g_eps_cluster
+                              for k in range(n_before))
+            exhausted = ((self.T <= cfg.g_T_final and not chosen and stalled)
                          or self.T < EXHAUSTED_T_FRACTION * cfg.g_T_final)
             if n_colors == self.K or exhausted:
                 self.clusters, self.prob, self.has_sub = colors, probs, False
@@ -165,6 +185,7 @@ class PaletteAnnealer:
                 old_clusters, old_prob, old_placed = self.clusters, self.prob, self.placed
                 self.clusters = np.empty((2 * n_colors, 3))
                 self.placed = np.empty(n_colors)
+                self.history = np.empty((n_colors, STALL_EVENTS))
                 self.prob = np.repeat(0.5 * probs, 2)
                 for k in range(n_colors):
                     if keep[k]:
@@ -172,6 +193,7 @@ class PaletteAnnealer:
                         self.clusters[2 * k:2 * k + 2] = old_clusters[2 * k:2 * k + 2]
                         self.prob[2 * k:2 * k + 2] = old_prob[2 * k:2 * k + 2]
                         self.placed[k] = old_placed[k]
+                        self.history[k] = history[k]
                         continue
                     axis, _ = principal_axis(points[self.assign == k])
                     delta = PERTURB_DELTA
@@ -181,6 +203,7 @@ class PaletteAnnealer:
                     self.clusters[2 * k] = colors[k] + delta * axis
                     self.clusters[2 * k + 1] = colors[k] - delta * axis
                     self.placed[k] = 2.0 * delta
+                    self.history[k] = 2.0 * delta
         if self.T <= cfg.g_T_final and not self.has_sub:
             self.done = True
 
