@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import math
 import re
 from dataclasses import asdict, dataclass, fields
 
@@ -76,6 +77,8 @@ class Config:
     # --- postprocess ---
     remove_orphans: bool = True
     orphan_min_region: int = 2        # connected regions (8-conn) with < this many px get merged
+    orphan_max_delta: float = 25.0    # ...only if ΔE (LAB) to the replacement is below this;
+                                      # high-contrast singles (eyes, highlights) are kept
     fix_jaggies: bool = True
     outline: str = "auto"             # "none" | "auto" | "#rrggbb"
     outline_darken: float = 0.55      # auto outline = darkest palette color blended toward black
@@ -149,6 +152,9 @@ class Config:
         if not 0.0 <= self.key_bg_tolerance <= 1.0:
             raise ValueError(
                 f"key_bg_tolerance must be in [0, 1], got {self.key_bg_tolerance}")
+        if not (math.isfinite(self.orphan_max_delta) and self.orphan_max_delta >= 0):
+            raise ValueError(
+                f"orphan_max_delta must be finite and >= 0, got {self.orphan_max_delta}")
         if not 0.0 <= self.outline_darken <= 1.0:
             raise ValueError(f"outline_darken must be in [0, 1], got {self.outline_darken}")
         for name in ("kopf_max_iters", "g_max_iters", "tile_size", "scale_preview",

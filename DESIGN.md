@@ -130,6 +130,8 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
 - `regularize_ramps` reaches the 6° maximum at an L distance of 30 from the bin's mean L.
 - Ramp regularization and saturation are skipped when a named palette is used.
 - With `tileset=True` the outline pass does not pad the canvas.
+- Orphan removal merges a region only if its ΔE to the replacement is below `orphan_max_delta`
+  (25), other orphans do not vote, and passes stop early on no change or a repeated image.
 
 **Pipeline, tiles, preprocessing (Sections 5 and 9).**
 

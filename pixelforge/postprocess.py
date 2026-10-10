@@ -6,6 +6,8 @@ Order: ramps → saturation → orphans → jaggies → outline. Every pass work
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 from scipy import ndimage
 
@@ -15,6 +17,7 @@ from .palette import regularize_ramps
 _EIGHT = np.ones((3, 3), dtype=bool)
 _OFFSETS8 = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 ORPHAN_MAX_PASSES = 5
+ORPHAN_MAX_DELTA = 25.0
 
 
 def apply_saturation(palette_lab: np.ndarray, beta: float) -> np.ndarray:
@@ -37,8 +40,14 @@ def _label_regions(idx: np.ndarray) -> tuple[np.ndarray, int]:
     return labels, n_total
 
 
-def _orphan_pass(idx: np.ndarray, distances: np.ndarray, min_region: int) -> bool:
-    """Merge every region smaller than min_region into its most frequent neighbor index."""
+def _orphan_pass(idx: np.ndarray, distances: np.ndarray, min_region: int, max_delta: float,
+                 frozen: np.ndarray) -> bool:
+    """Merge every region smaller than min_region into its most frequent neighbor index.
+
+    A region is merged only when the ΔE between its color and the chosen replacement is below
+    max_delta; otherwise its pixels are marked in `frozen` (in place) and the region is never
+    examined again in this remove_orphans call. Returns whether any pixel changed.
+    """
     h, w = idx.shape
     labels, n_regions = _label_regions(idx)
     sizes = np.bincount(labels.ravel(), minlength=n_regions + 1)
@@ -48,6 +57,8 @@ def _orphan_pass(idx: np.ndarray, distances: np.ndarray, min_region: int) -> boo
     if len(ys) == 0:
         return False
     region = labels[ys, xs]
+    candidate = np.ones(n_regions + 1, dtype=bool)
+    candidate[labels[frozen]] = False
 
     pair_region, pair_pos = [], []
     for dy, dx in _OFFSETS8:
@@ -55,7 +66,11 @@ def _orphan_pass(idx: np.ndarray, distances: np.ndarray, min_region: int) -> boo
         inside = (ny >= 0) & (ny < h) & (nx >= 0) & (nx < w)
         ny, nx, r = ny[inside], nx[inside], region[inside]
         neighbor_label = labels[ny, nx]
-        ok = (neighbor_label > 0) & (neighbor_label != r)
+        # DEVIATION: Section 8.3 — pixels of other small regions do not vote. Otherwise two
+        # touching orphans (a 2-px sparkle) adopt each other's color, swap back on the next
+        # pass, and the result depends on the parity of max_passes. A cluster of orphans with
+        # no large neighbor is left as is until a neighbor of it has been merged.
+        ok = (neighbor_label > 0) & ~small[neighbor_label] & candidate[r]
         pair_region.append(r[ok])
         pair_pos.append(ny[ok] * w + nx[ok])
     pair_region = np.concatenate(pair_region)
@@ -80,8 +95,14 @@ def _orphan_pass(idx: np.ndarray, distances: np.ndarray, min_region: int) -> boo
     is_max = counts == counts.max(axis=1, keepdims=True)
     target = np.argmin(np.where(is_max, distances[own], np.inf), axis=1)
 
+    # Contrast exemption: high-contrast singles (eyes, highlights) are features, not noise.
+    merge = distances[own, target] < max_delta
+    keep = np.zeros(n_regions + 1, dtype=bool)
+    keep[region_ids[~merge]] = True
+    frozen[ys[keep[region]], xs[keep[region]]] = True
+
     new_index = np.full(n_regions + 1, -1, dtype=np.int64)
-    new_index[region_ids] = target
+    new_index[region_ids[merge]] = target[merge]
     replacement = new_index[region]
     change = replacement >= 0
     idx[ys[change], xs[change]] = replacement[change]
@@ -89,18 +110,28 @@ def _orphan_pass(idx: np.ndarray, distances: np.ndarray, min_region: int) -> boo
 
 
 def remove_orphans(idx: np.ndarray, palette_lab: np.ndarray, min_region: int = 2,
-                   max_passes: int = ORPHAN_MAX_PASSES) -> np.ndarray:
+                   max_passes: int = ORPHAN_MAX_PASSES,
+                   max_delta: float = ORPHAN_MAX_DELTA) -> np.ndarray:
     """Merge 8-connected regions with fewer than min_region pixels into their surroundings.
 
-    Transparent pixels are never reassigned and never count as neighbors.
+    Transparent pixels are never reassigned and never count as neighbors. A region is merged
+    only if its color is within ΔE max_delta (CIE76) of the replacement, so high-contrast
+    singles such as eye pixels and highlights are kept. Passes repeat until nothing changes,
+    a pass reproduces an earlier index image, or max_passes is reached.
     """
     idx = np.array(idx, dtype=np.int64)
     if min_region <= 1:
         return idx
     distances = color.palette_distance_matrix(palette_lab)
+    frozen = np.zeros(idx.shape, dtype=bool)
+    seen = [hashlib.sha256(idx.tobytes()).digest()]
     for _ in range(max_passes):
-        if not _orphan_pass(idx, distances, min_region):
+        if not _orphan_pass(idx, distances, min_region, max_delta, frozen):
             break
+        digest = hashlib.sha256(idx.tobytes()).digest()
+        if digest in seen:
+            break
+        seen.append(digest)
     return idx
 
 
@@ -212,7 +243,8 @@ def run(indices: np.ndarray, palette_lab: np.ndarray, config, *, saturated: bool
         if not saturated:
             palette_lab = apply_saturation(palette_lab, config.saturation_beta)
     if config.remove_orphans:
-        idx = remove_orphans(idx, palette_lab, config.orphan_min_region)
+        idx = remove_orphans(idx, palette_lab, config.orphan_min_region,
+                             max_delta=config.orphan_max_delta)
     if config.fix_jaggies:
         idx = fix_jaggies(idx)
     if config.outline != "none":
