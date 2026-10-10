@@ -149,3 +149,7 @@ def test_palette_files_are_size_suffix_and_type_checked(tmp_path):
     high.write_text("GIMP Palette\n300 0 0\n")
     with pytest.raises(ValueError, match="line 2"):
         palette.load_palette(str(high))
+
+
+def test_mcda_single_color():
+    assert len(palette.mcda(np.tile([60.0, 10.0, -20.0], (500, 1)), 8, Config())) == 1
