@@ -33,6 +33,7 @@ class Preprocessed:
     out_height: int
     pad_out: int             # output pixels of wrap padding per side (0 unless seamless)
     background_keyed: bool = False   # a flat opaque background was made transparent
+    prereduce_factor: int = 1        # integer box pre-reduction applied to the input (1 = none)
 
     @property
     def target_width(self) -> int:
@@ -109,7 +110,30 @@ def _fill_transparent(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
     return rgb[nearest[0], nearest[1]]
 
 
+def prereduce_factor(h: int, w: int, out_h: int, out_w: int, max_ratio: int) -> int:
+    """Largest integer box factor that keeps the input >= max_ratio × the output on both axes."""
+    if max_ratio <= 0:
+        return 1
+    return max(1, int(min(h // out_h, w // out_w) // max_ratio))
+
+
+def prereduce(rgb: np.ndarray, mask: np.ndarray,
+              factor: int) -> tuple[np.ndarray, np.ndarray]:
+    """Exact area mean over factor×factor blocks; trailing partial blocks are dropped.
+
+    Transparent pixels first take the nearest opaque color so their arbitrary RGB does not
+    bleed into edge blocks. A block is opaque when at least half of its pixels are.
+    """
+    h, w = (mask.shape[0] // factor) * factor, (mask.shape[1] // factor) * factor
+    hb, wb = h // factor, w // factor
+    filled = _fill_transparent(rgb, mask)[:h, :w]
+    small = filled.reshape(hb, factor, wb, factor, 3).mean(axis=(1, 3))
+    coverage = mask[:h, :w].reshape(hb, factor, wb, factor).mean(axis=(1, 3))
+    return small, coverage >= 0.5
+
+
 def denoise(rgb: np.ndarray, config: Config) -> np.ndarray:
+    """Denoise the (possibly pre-reduced) image; the bilateral sigmas are in its pixels."""
     if config.denoise == "none":
         return rgb
     if config.denoise == "median":
@@ -164,6 +188,20 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
         mask = np.repeat(np.repeat(mask, factor, axis=0), factor, axis=1)
         h, w = mask.shape
 
+    # DEVIATION: Section 5 — inputs far larger than the output are first box-reduced by an
+    # integer factor (exact area mean), so that denoise and the downscalers run on less than
+    # 2 × prereduce_max_ratio × the output resolution. Kopf's kernels span 4×4 output pixels, so
+    # at these ratios the reduction is nearly lossless, and it bounds time and memory. Up to
+    # factor − 1 trailing rows/columns that do not fill a block are dropped.
+    reduce_by = prereduce_factor(h, w, out_h, out_w, config.prereduce_max_ratio)
+    if reduce_by > 1:
+        small_rgb, small_mask = prereduce(rgb, mask, reduce_by)
+        if small_mask.any():     # else a sparse subject would vanish: keep full resolution
+            rgb, mask = small_rgb, small_mask
+            h, w = mask.shape
+        else:
+            reduce_by = 1
+
     pad_out = 0
     if config.seamless:
         pad_out = SEAMLESS_PAD_OUT
@@ -176,4 +214,4 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
     lab = color.rgb_to_lab(rgb)
     return Preprocessed(lab=np.ascontiguousarray(lab), mask=np.ascontiguousarray(mask),
                         out_width=out_w, out_height=out_h, pad_out=pad_out,
-                        background_keyed=background_keyed)
+                        background_keyed=background_keyed, prereduce_factor=reduce_by)

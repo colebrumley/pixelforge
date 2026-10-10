@@ -131,6 +131,7 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
              "colors_used": int(len(np.unique(indices[indices >= 0]))),
              "config_hash": config.hash(),
              "background_keyed": bool(pre.background_keyed),
+             "prereduce_factor": int(pre.prereduce_factor),
              "method": dict(small.stats),
              "timings": {name: round(seconds, 4) for name, seconds in timings.items()}}
     result = Result(image=io.indices_to_rgba(indices, palette_rgb8), palette=palette_rgb8,

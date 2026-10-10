@@ -48,7 +48,8 @@ class Config:
     alpha_threshold: int = 128        # input alpha < this → transparent
     denoise: str = "bilateral"        # "none" | "bilateral" | "median"
     denoise_sigma_color: float = 0.08  # bilateral, in [0,1] sRGB units
-    denoise_sigma_spatial: float = 2.0
+    denoise_sigma_spatial: float = 2.0  # in input pixels, after any pre-reduction
+    prereduce_max_ratio: int = 8      # box-reduce inputs > this × output first; 0 = never
     # --- downscale ---
     method: str = "gerstner"          # "box" | "kopf" | "gerstner"
     kopf_max_iters: int = 50
@@ -149,6 +150,8 @@ class Config:
         if not 0.0 <= self.key_bg_tolerance <= 1.0:
             raise ValueError(
                 f"key_bg_tolerance must be in [0, 1], got {self.key_bg_tolerance}")
+        if self.prereduce_max_ratio < 0:
+            raise ValueError(f"prereduce_max_ratio must be >= 0, got {self.prereduce_max_ratio}")
         if not 0.0 <= self.outline_darken <= 1.0:
             raise ValueError(f"outline_darken must be in [0, 1], got {self.outline_darken}")
         for name in ("kopf_max_iters", "g_max_iters", "tile_size", "scale_preview",
