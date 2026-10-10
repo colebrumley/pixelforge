@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
+import logging
+import os
+import platform
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +17,10 @@ import numpy as np
 from . import color, downscale, io, palette, postprocess, preprocess, quantize, tiles
 from .config import Config
 from .version import __version__
+
+LAB_DECIMALS = 6   # precision of the LAB values in _palette.json
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -28,40 +37,97 @@ class Result:
     tileset_indices: np.ndarray | None = None
 
     def png_text(self) -> dict:
-        return {io.META_CONFIG_KEY: self.config.canonical_json(),
+        text = {io.META_CONFIG_KEY: self.config.canonical_json(),
                 io.META_INPUT_KEY: self.input_sha256}
+        provenance = self.config.provenance()
+        if provenance["palette"] is not None:
+            text[io.META_PALETTE_SHA_KEY] = provenance["palette_sha256"]
+            text[io.META_PALETTE_KEY] = "\n".join(provenance["palette"])
+        return text
 
     def save(self, prefix) -> dict:
         """Write <prefix>.png, _preview.png, _palette.json, _palette.hex, _meta.json and, for
-        tilesets, _tileset.png and _tilemap.json. Returns {name: path}."""
-        prefix = Path(prefix)
-        prefix.parent.mkdir(parents=True, exist_ok=True)
-
-        def sibling(suffix: str) -> Path:
-            return prefix.parent / (prefix.name + suffix)
-
-        paths = {"image": sibling(".png"), "preview": sibling("_preview.png"),
-                 "palette": sibling("_palette.json"), "palette_hex": sibling("_palette.hex"),
-                 "meta": sibling("_meta.json")}
+        tilesets, _tileset.png, _tilemap.json, .tmj (Tiled) and _tilemap.csv. Returns
+        {name: path}."""
+        paths = output_paths(prefix, tileset=self.tilemap is not None)
+        Path(prefix).parent.mkdir(parents=True, exist_ok=True)
         text = self.png_text()
-        io.save_png(paths["image"], self.indices, self.palette, text)
+        layout = self.config.transparent_index
+        first = layout == "first"
+        io.save_png(paths["image"], self.indices, self.palette, text, transparent_index=layout)
         io.save_png(paths["preview"], self.indices, self.palette, text,
-                    scale=self.config.scale_preview)
-        entries = [{"hex": color.rgb8_to_hex(rgb), "lab": [float(v) for v in lab]}
-                   for rgb, lab in zip(self.palette, self.palette_lab)]
+                    scale=self.config.scale_preview, transparent_index=layout)
+        used = np.zeros(len(self.palette), dtype=bool)
+        used[np.unique(self.indices[self.indices >= 0])] = True
+        # LAB_DECIMALS: float64 LAB can differ at ~1e-12 across SIMD paths; the PNG does not.
+        entries = [{"hex": color.rgb8_to_hex(rgb),
+                    "lab": [round(float(v), LAB_DECIMALS) + 0.0 for v in lab],
+                    "used": bool(u)}
+                   for rgb, lab, u in zip(self.palette, self.palette_lab, used)]
+        if first:
+            entries.insert(0, {"hex": None, "transparent": True,
+                               "used": bool((self.indices < 0).any())})
         paths["palette"].write_text(json.dumps(entries, indent=2) + "\n")
-        palette.write_hex(paths["palette_hex"], self.palette)
-        meta = {"version": __version__, "config": self.config.to_dict(),
+        palette.write_hex(paths["palette_hex"], self.palette, transparent_first=first)
+        provenance = self.config.provenance()
+        meta = {"version": __version__, "config": provenance["config"],
                 "config_hash": self.config.hash(), "input_sha256": self.input_sha256,
+                "palette_sha256": provenance["palette_sha256"],
+                "palette": provenance["palette"],
                 "width": int(self.indices.shape[1]), "height": int(self.indices.shape[0]),
-                "stats": self.stats}
+                "stats": self.stats, "environment": environment()}
+        if self.config.remove_bg:
+            # The matting model is outside the determinism contract; record what ran.
+            meta["remove_bg_versions"] = {name: package_version(name)
+                                          for name in ("rembg", "onnxruntime")}
         paths["meta"].write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
         if self.tilemap is not None:
-            paths["tileset"] = sibling("_tileset.png")
-            paths["tilemap"] = sibling("_tilemap.json")
-            io.save_png(paths["tileset"], self.tileset_indices, self.palette, text)
+            # With "last", an opaque image has no transparent entry while a tileset whose
+            # last row is padded gets one appended; the K colors keep their indices.
+            io.save_png(paths["tileset"], self.tileset_indices, self.palette, text,
+                        transparent_index=layout)
             paths["tilemap"].write_text(json.dumps(self.tilemap, separators=(",", ":")) + "\n")
+            sheet_h, sheet_w = self.tileset_indices.shape
+            tmj = tiles.tiled_map(self.tilemap, self.stats["tiles"], paths["tileset"].name,
+                                  (sheet_w, sheet_h), Path(prefix).name)
+            paths["tilemap_tmj"].write_text(json.dumps(tmj, indent=1) + "\n")
+            paths["tilemap_csv"].write_text(tiles.tilemap_csv(self.tilemap))
         return {name: str(path) for name, path in paths.items()}
+
+
+def environment() -> dict:
+    """Interpreter, numerical library versions and platform; recorded, never hashed."""
+    return {"python": platform.python_version(), "numpy": package_version("numpy"),
+            "scipy": package_version("scipy"), "scikit_image": package_version("scikit-image"),
+            "pillow": package_version("Pillow"),
+            "platform": f"{sys.platform} {platform.machine()}"}
+
+
+def package_version(name: str) -> str | None:
+    """Installed version of a distribution, or None if it is not installed."""
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def output_paths(prefix, tileset: bool) -> dict:
+    """{name: Path} of every file Result.save(prefix) writes, in write order."""
+    prefix = Path(prefix)
+
+    def sibling(suffix: str) -> Path:
+        return prefix.parent / (prefix.name + suffix)
+
+    paths = {"image": sibling(".png"), "preview": sibling("_preview.png"),
+             # DEVIATION: Section 5 — _palette.hex is a fifth output, not in the spec.
+             "palette": sibling("_palette.json"), "palette_hex": sibling("_palette.hex"),
+             "meta": sibling("_meta.json")}
+    if tileset:
+        paths["tileset"] = sibling("_tileset.png")
+        paths["tilemap"] = sibling("_tilemap.json")
+        paths["tilemap_tmj"] = sibling(".tmj")
+        paths["tilemap_csv"] = sibling("_tilemap.csv")
+    return paths
 
 
 def uses_gerstner_palette(config: Config) -> bool:
@@ -70,23 +136,54 @@ def uses_gerstner_palette(config: Config) -> bool:
             and palette.resolve_source(config) == "mcda")
 
 
-def run(input_path, config: Config) -> Result:
+def _describe_method(stats: dict) -> str:
+    """", 31 iterations, converged" for the downscale log line ("" for box)."""
+    if "converged" in stats:
+        state = "converged" if stats["converged"] else "hit the iteration cap"
+    elif "hit_iteration_cap" in stats:
+        state = "hit the iteration cap" if stats["hit_iteration_cap"] else "converged"
+    else:
+        return ""
+    return f", {stats['iterations']} iterations, {state}"
+
+
+def run(image, config: Config, max_pixels: int | None = None) -> Result:
+    """Load and convert one image.
+
+    ``image`` is a path (str or os.PathLike), a ``PIL.Image.Image``, or an (H, W, 3) /
+    (H, W, 4) numpy array of uint8 or of float in [0, 1] (see ``io.from_image``). For paths
+    ``input_sha256`` hashes the file bytes; for in-memory images it hashes shape and RGBA
+    bytes. ``max_pixels`` defaults to ``io.MAX_INPUT_PIXELS`` and applies to every kind.
+    """
     start = time.perf_counter()
-    loaded = io.load(input_path)
+    budget = io.MAX_INPUT_PIXELS if max_pixels is None else max_pixels
+    if isinstance(image, (str, os.PathLike)):
+        loaded = io.load(image, budget)
+    else:
+        loaded = io.from_image(image, budget)
     return run_loaded(loaded, config, {"load": time.perf_counter() - start})
 
 
 def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -> Result:
+    """Convert an already loaded image (``io.load`` / ``io.from_image`` / ``io.from_rgba``)."""
+    config.validate_palette()   # before any expensive stage
     timings = dict(timings or {})
     clock = time.perf_counter
 
     t = clock()
     pre = preprocess.run(loaded.rgb, loaded.alpha, config)
     timings["preprocess"] = clock() - t
+    if config.key_bg and not config.remove_bg and not pre.background_keyed and (
+            loaded.alpha >= config.alpha_threshold).all():
+        log.warning("no flat background to key out; the whole image is the subject "
+                    "(try --remove-bg, or an input with an alpha channel)")
+    log.info("preprocess %.2f s (%dx%d -> %dx%d, prereduce %d)", timings["preprocess"],
+             loaded.rgb.shape[1], loaded.rgb.shape[0], pre.lab.shape[1], pre.lab.shape[0],
+             pre.prereduce_factor)
 
     t = clock()
     small = downscale.get(config.method).run(pre.lab, pre.mask, pre.target_width,
-                                             pre.target_height, config)
+                                             pre.target_height, config, weight=pre.weight)
     if pre.pad_out:
         # Seamless mode: drop the wrapped context again.
         crop = (slice(pre.pad_out, -pre.pad_out), slice(pre.pad_out, -pre.pad_out))
@@ -94,6 +191,8 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
         if small.indices is not None:
             small.indices, small.mean_lab = small.indices[crop], small.mean_lab[crop]
     timings["downscale"] = clock() - t
+    log.info("downscale %s %.2f s%s", config.method, timings["downscale"],
+             _describe_method(small.stats))
     if not small.small_mask.any():
         raise preprocess.PixelforgeError("no opaque pixels left after downscaling")
 
@@ -103,18 +202,37 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
         palette_lab = small.palette_lab
         indices = np.where(small.small_mask, small.indices, -1)
         if config.dither != "none":
-            indices = quantize.run(small.small_lab, small.small_mask, palette_lab, config)
+            # DEVIATION: Section 8.2 — small_lab is the palette color per pixel, so dithering it
+            # rarely moves a pixel. Dither the smoothed superpixel means against the annealer's
+            # colors before β instead; palette_lab (index-aligned) already carries β once.
+            indices = quantize.run(small.mean_lab, small.small_mask,
+                                   small.palette_lab_unsaturated, config)
     else:
         # box / kopf, or gerstner with an external palette: quantize the (mean) colors.
+        # DEVIATION: Section 7 — with palette_name or palette_source="median_cut", gerstner's
+        # smoothed superpixel means are quantized against that palette, not its own.
         source = small.mean_lab if small.mean_lab is not None else small.small_lab
         palette_lab = palette.build(source[small.small_mask], config)
         indices = quantize.run(source, small.small_mask, palette_lab, config)
     timings["palette_quantize"] = clock() - t
+    log.info("palette/quantize %.2f s, %d colors (%s)", timings["palette_quantize"],
+             len(palette_lab), "named" if config.palette_name is not None
+             else palette.resolve_source(config))
 
     t = clock()
+    post_stats: dict = {}
+    pad = pre.canvas_pad()
+    if any(pad[0] + pad[1]):
+        # The outline ring is drawn inside the requested canvas: the image was downscaled to
+        # the inner size and gets a transparent margin here, so the size never changes later.
+        # With `canvas` the same padding also centers the fitted image on the canvas.
+        indices = np.pad(indices, pad, mode="constant", constant_values=-1)
     indices, palette_lab = postprocess.run(indices, palette_lab, config, saturated=own_palette,
-                                           fixed_palette=config.palette_name is not None)
+                                           fixed_palette=config.palette_name is not None,
+                                           outline_margin=pre.outline_margin, stats=post_stats)
     timings["postprocess"] = clock() - t
+    log.info("postprocess %.2f s (%dx%d)", timings["postprocess"], indices.shape[1],
+             indices.shape[0])
 
     tile_result = None
     if config.tileset:
@@ -122,15 +240,24 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
         tile_result = tiles.extract(indices, palette_lab, config)
         # DEVIATION: Section 9 — near-duplicate tiles were merged, so the output image is
         # re-rendered from the tileset and is exactly what the tilemap draws.
-        indices = tiles.reconstruct(tile_result.tiles, tile_result.tilemap)
+        rendered = tiles.reconstruct(tile_result.tiles, tile_result.tilemap)
+        tile_px_changed = int(np.count_nonzero(rendered != indices))
+        indices = rendered
         timings["tiles"] = clock() - t
+        log.info("tiles %.2f s, %d tiles", timings["tiles"], len(tile_result.tiles))
 
     palette_rgb8 = color.lab_to_rgb8(palette_lab)
     stats = {"iterations": int(small.stats.get("iterations", 0)),
              "final_palette_size": int(len(palette_rgb8)),
              "colors_used": int(len(np.unique(indices[indices >= 0]))),
+             "colors_unused": int(len(palette_rgb8) - len(np.unique(indices[indices >= 0]))),
              "config_hash": config.hash(),
              "background_keyed": bool(pre.background_keyed),
+             "fit": pre.fit, "content_size": [int(pre.inner_width), int(pre.inner_height)],
+             "outline_index": post_stats["outline_index"],
+             "outline_margin": int(pre.outline_margin),
+             "outline_clipped": bool(post_stats["outline_clipped"]),
+             "prereduce_factor": int(pre.prereduce_factor),
              "method": dict(small.stats),
              "timings": {name: round(seconds, 4) for name, seconds in timings.items()}}
     result = Result(image=io.indices_to_rgba(indices, palette_rgb8), palette=palette_rgb8,
@@ -141,4 +268,5 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
         result.tileset = io.indices_to_rgba(result.tileset_indices, palette_rgb8)
         result.tilemap = tile_result.tilemap
         stats["tiles"] = int(len(tile_result.tiles))
+        stats["tiles_rerender_px_changed"] = tile_px_changed
     return result

@@ -1,5 +1,7 @@
 # pixelforge
 
+[![CI](https://github.com/colebrumley/pixelforge/actions/workflows/ci.yml/badge.svg)](https://github.com/colebrumley/pixelforge/actions/workflows/ci.yml)
+
 Deterministic conversion of raster images into 16-bit-style pixel art: sprites and
 backgrounds/tiles. Same input + same config = the same PNG, every run.
 
@@ -14,13 +16,17 @@ Three downscalers, selectable per run:
 Post-processing adds palette ramp regularization, selective ordered dithering, orphan-pixel
 removal, jaggy cleanup, sprite outlines and optional tileset + tilemap extraction. Bundled
 palettes: NES, Game Boy, Genesis, SNES, PICO-8.
+Orphan removal keeps high-contrast singles such as 1-px eyes and highlights: a stray pixel is
+merged only when it is within ΔE `orphan_max_delta` (default 25) of its replacement.
 
 ## Samples
 
 Source on the left, pixelforge output on the right (nearest-neighbor upscaled).
 
-`pixelforge convert knight.png --preset sprite --method gerstner`: 1254×1254 → 45×66,
-17 colors, backdrop keyed out.
+`pixelforge convert knight.png --preset sprite --method gerstner`: 1254×1254 → 64 px on the
+longest edge, 17 colors, backdrop keyed out. The canvas is exactly the requested size; the
+outline is drawn inside it. (The outline adds a palette entry; with a named palette it snaps
+to the nearest palette color instead.)
 
 ![Knight sprite before and after](docs/sample_sprite.png)
 
@@ -37,7 +43,9 @@ Python 3.11+. Not published to PyPI; install straight from GitHub:
 uv tool install git+https://github.com/colebrumley/pixelforge
 ```
 
-or `pip install git+https://github.com/colebrumley/pixelforge`.
+or `pip install git+https://github.com/colebrumley/pixelforge`. Both resolve the dependency
+ranges in `pyproject.toml`, not `uv.lock`, so they can pick other numpy/scipy versions; for
+output that matches someone else's byte for byte, use the locked checkout below.
 
 Optional AI background removal via `rembg`:
 
@@ -45,14 +53,22 @@ Optional AI background removal via `rembg`:
 pip install 'pixelforge[bg] @ git+https://github.com/colebrumley/pixelforge'
 ```
 
-Without it the sprite preset still keys out flat opaque backdrops (`--no-key-bg` to disable).
+AI matting is opt-in with `--remove-bg` (no preset enables it, installed or not). rembg
+downloads its model on first use, the model is outside the determinism guarantee, and its
+license is the model's own; `_meta.json` records the rembg and onnxruntime versions.
 
-To work on it:
+The sprite preset keys out flat opaque backdrops without it (`--no-key-bg` to disable),
+including the anti-aliased fringe where the subject blends into them (`key_bg_fringe`).
+Pixels at or above `alpha_threshold` are opaque, but each counts in the downscaled colors in
+proportion to its alpha, so a semi-transparent fringe pulls its neighbors less.
+
+To work on it, or to reproduce outputs exactly:
 
 ```bash
 git clone https://github.com/colebrumley/pixelforge && cd pixelforge
-uv sync
-uv run pytest -q
+uv sync --locked
+uv run pytest -q                    # full suite, as CI runs it
+uv run pytest -q -m "not slow"      # skip the full-size kopf cases while iterating
 ```
 
 ## CLI
@@ -65,8 +81,42 @@ pixelforge compare hero.png -o out                          # box, kopf, gerstne
 pixelforge palettes                                         # list bundled palettes
 ```
 
-Every `Config` field is a `--kebab-case` flag (`--flag/--no-flag` for booleans); `--config
-file.json` loads a config. Precedence: defaults ← preset ← JSON ← flags.
+Every `Config` field is a `--kebab-case` flag (`--flag/--no-flag` for booleans; `--g-t-final`
+for `g_T_final`, the old `--g-T-final` still works); `pixelforge convert --help` lists each with
+its description, per-preset default and allowed values. `--config file.json` loads a config.
+Precedence: defaults ← preset ← JSON ← flags.
+`Config.replace(preset=...)` re-applies the new preset to every field not set explicitly.
+
+`convert`, `batch` and `compare` refuse (exit 2) to write an output over an input file, and `batch`
+refuses inputs that share a name (`a.png`, `a.bmp`); `--force` overrides both. `batch` skips
+`*_preview`, `*_tileset` and `*_compare` images.
+
+Errors print one line and exit 2 for configuration problems (bad flags, unknown palette,
+`--remove-bg` without rembg) or 1 for anything else; `pixelforge --debug ...` or
+`PIXELFORGE_DEBUG=1` prints the full traceback instead.
+
+Runs take from under a second (box) to a minute or more (kopf and gerstner at large sizes) and
+are silent until the JSON result unless asked: `pixelforge -v convert ...` logs each stage with
+its duration to stderr, `-vv` every downscaler iteration, `-q` only errors. stdout carries only
+the JSON results. Library callers get the same messages from the `pixelforge` logger.
+
+`--scale N` fixes the downscale ratio (output = cropped input / N per axis); `--canvas WxH` fits
+the subject inside a fixed canvas, centered, outline included. Neither combines with
+`--out-width/--out-height`. Unless one of them (or both `--out-*`) is given, `batch` derives one
+scale from the largest frame's subject and gives every frame the same canvas, so animation
+frames cropped to their alpha keep a constant size; the first JSON line reports `scale` and
+`canvas`.
+
+With a tileset, a derived size must be a multiple of `--tile-size`: `--fit pad` (default) keeps
+the aspect and pads with transparent pixels, centered; `--fit stretch` scales to fill (warns
+if the aspect changes by more than 2 %); `--fit crop` crops the input centered.
+
+`--palette-name` takes a bundled name, a `.hex`/`.gpl` path, or inline colors
+(`hex:ff0000,00ff00,…`). `batch` writes its shared palette to `shared_palette.hex` and hands it
+to every frame inline, so the frames' metadata carries the colors, not the output path.
+
+Inputs much larger than the output are box-reduced to 8–16× the output size before denoising
+(`--prereduce-max-ratio`, 0 disables).
 
 `convert` writes to `OUTDIR` (default `out/`):
 
@@ -74,9 +124,25 @@ file.json` loads a config. Precedence: defaults ← preset ← JSON ← flags.
 | --- | --- |
 | `NAME.png` | native-resolution result (palette-indexed PNG) |
 | `NAME_preview.png` | nearest-neighbor upscale |
-| `NAME_palette.json`, `NAME_palette.hex` | the palette; `.hex` is reusable via `--palette-name` |
-| `NAME_meta.json` | stats, timings, config, config hash, input hash |
-| `NAME_tileset.png`, `NAME_tilemap.json` | background preset only |
+| `NAME_palette.json`, `NAME_palette.hex` | the palette (LAB rounded to 6 decimals); `.hex` is reusable via `--palette-name`; `.json` entries carry `"used"` (unused entries are kept, so named palettes stay complete) |
+| `NAME_meta.json` | stats, timings, config, config hash, input hash, palette, environment (Python, numpy, scipy, scikit-image, Pillow, platform; not hashed) |
+| `NAME_tileset.png`, `NAME_tilemap.json` | background preset only; tiles merge when mean ΔE < `tile_dedupe_tolerance` and every pixel's ΔE < 10 (flips included) |
+| `NAME.tmj` | background preset only: Tiled JSON map (one `background` layer, flips in the GID high bits, tileset embedded and pointing at `NAME_tileset.png`) |
+| `NAME_tilemap.csv` | background preset only: one line per tile row of GIDs (1-based, 0 = empty, no flip bits) |
+
+`--tileset-columns N` sets the tileset sheet width in tiles (default 0: `ceil(sqrt(tiles))`). The PNG
+palette puts transparency after the colors (`--transparent-index last`, the default) or at index
+0 with every color shifted by one (`--transparent-index first`, as Aseprite and console tools
+expect); `first` also adds a leading `{"hex": null, "transparent": true}` entry to
+`_palette.json` and a `; transparent` comment line to `_palette.hex`. `Result.indices` always
+uses −1 for transparent.
+
+### Limits
+
+Inputs larger than 24 million pixels (`width × height`) are refused before decoding; raise or
+lower the budget with `--max-input-pixels N` (`max_pixels=` in `pipeline.run`). Only PNG, JPEG,
+GIF, WEBP, BMP and TIFF are read, and only regular files. Numeric config fields have upper
+bounds (e.g. output edges ≤ 4096, `--scale-preview` ≤ 64), and non-finite numbers are rejected.
 
 ## Library
 
@@ -89,15 +155,36 @@ res.save("out/hero")   # out/hero.png, hero_preview.png, hero_palette.json, ...
 res.image              # numpy RGBA (H, W, 4) uint8
 res.palette            # numpy (K, 3) uint8
 res.indices            # (H, W) palette index, -1 = transparent
+
+run(Image.open("hero.png"), cfg)   # a PIL image
+run(rgba, cfg)                     # (H, W, 3|4) numpy array: uint8, or float in [0, 1]
 ```
+
+`run(image, config, max_pixels=None)` applies the same pixel budget to every input kind.
+`input_sha256` hashes the file bytes for a path, and the shape plus RGBA bytes for in-memory
+images. `pixelforge.PRESETS` is read-only.
+
+Errors: `ConfigError` (also a `ValueError`) for invalid configs, raised by `Config(...)`, or for
+an unreadable `palette_name` file at the start of `run`; `PixelforgeError` (its base class) for
+everything else pixelforge reports, such as undecodable, oversized or fully transparent input.
 
 ## Determinism
 
 No unseeded randomness, no thread scheduling or wall-clock dependence, float64 throughout.
-Each output PNG carries the canonical config JSON and the input SHA-256 as `tEXt` chunks.
 `tests/test_determinism.py` enforces identical output bytes for every method and preset.
-Cross-machine reproducibility additionally assumes the pinned numpy/scipy/scikit-image/Pillow
-versions in `uv.lock`.
+
+- Byte identity across machines requires `git clone && uv sync --locked`: installing from git
+  resolves the ranged dependencies, and the lock itself pins different numpy/scipy for
+  Python 3.11 than for 3.12+, so use the same Python minor version too.
+- Across CPU architectures (x86-64 vs arm64, different SIMD paths) identity is best-effort:
+  float64 results can differ in the last bits, which rounding to 8-bit colors usually absorbs.
+- `--remove-bg` (rembg) is outside the guarantee and is never on by default.
+- Each output PNG carries `tEXt` chunks: `pixelforge:config` (canonical config JSON),
+  `pixelforge:input_sha256` (input file bytes) and, when a palette is given,
+  `pixelforge:palette_sha256` and `pixelforge:palette` (its `rrggbb` colors). `Config.hash()`
+  covers the config, the version and the palette's colors, so editing a palette file changes it.
+- `_meta.json` also records the Python, numpy, scipy, scikit-image and Pillow versions and the
+  platform (not hashed), to tell which of these differ when two outputs do.
 
 ## Gallery
 
@@ -113,3 +200,7 @@ Renders every method × preset on the test fixtures plus any PNGs in `samples/`.
 - [DESIGN.md](DESIGN.md) — how each method works, the full determinism contract, timings,
   and every deliberate deviation from the spec.
 - [REQUIREMENTS.md](REQUIREMENTS.md) — the specification the prototype was built from.
+
+## License
+
+MIT; see [LICENSE](LICENSE). Changes are listed in [CHANGELOG.md](CHANGELOG.md).

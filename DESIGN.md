@@ -41,7 +41,14 @@ Timings on an Apple M1 Max, 1024×1024 → 64×64: kopf ≈ 36 s (50 iterations)
 box well under a second. `pixelforge convert … --preset background` on a 256×256 input
 (256×256 output, 65 536 kernels) takes about 30 s. Gerstner at 256×256 output with 32 colors
 is the slow corner: 5 s to 2 minutes depending on how many annealing iterations the image
-needs.
+needs. Without `-v` such runs print nothing until the result; `-v` logs per-stage timings and
+`-vv` each iteration (logging only reads values, it never changes an output).
+
+On a shared 4-core Linux box (CPU time, a noisy 256² gradient resized up), kopf 512² → 64²
+went from 52 s (50 iterations × 1.04 s, peak 141 MiB traced) to 26 s (32 × 0.83 s, 67 MiB)
+once the per-slot offset arrays were dropped and the convergence test fixed; 1024² → 64²
+went from 204 s + 5 s preprocessing (50 × 4.1 s, 554 MiB) to 27 s + 1.6 s (31 × 0.88 s,
+67 MiB) with the 2× pre-reduction, at a mean ΔE of 1.1 from the old output.
 
 ## Determinism contract
 
@@ -56,14 +63,30 @@ needs.
    routine. Final color conversion rounds with `np.round(...).astype(np.uint8)` after
    clipping to [0, 255], never truncation.
 4. `Config.hash()` is the SHA-256 of the canonical JSON of the config (sorted keys, no
-   whitespace) and the pixelforge version string. Every output PNG carries the `tEXt` chunks
-   `pixelforge:config` (the canonical JSON) and `pixelforge:input_sha256` (SHA-256 of the
-   input file bytes).
-5. Running the CLI twice on the same input and config produces byte-identical PNGs;
-   `pytest tests/test_determinism.py` enforces this for every method and preset.
+   whitespace), the pixelforge version string and, when `palette_name` is set, the SHA-256
+   of the resolved palette's `rrggbb` lines, so rewriting a palette file changes the hash.
+   Every output PNG carries the `tEXt` chunks `pixelforge:config` (the canonical JSON) and
+   `pixelforge:input_sha256` (SHA-256 of the input file bytes), plus, with a palette,
+   `pixelforge:palette_sha256` and `pixelforge:palette` (the lines, newline-joined).
+   `batch` passes its shared palette as an inline `palette_name="hex:rrggbb,…"`, not as the
+   path of `shared_palette.hex`, so frame metadata never depends on `--outdir`.
+5. Nothing in a config depends on the environment: `remove_bg` is `False` unless asked for,
+   whether or not rembg is installed. A `remove_bg=True` run depends on the rembg model,
+   which is outside this contract; `_meta.json` records the rembg and onnxruntime versions.
+6. Running the CLI twice on the same input and config produces byte-identical PNGs;
+   `pytest tests/test_determinism.py` enforces this for every method and preset, in-process
+   and across fresh interpreters with different `PYTHONHASHSEED` and BLAS/OpenMP thread
+   counts (every output file; `_meta.json` minus `stats.timings` and `environment`).
+   `tests/test_golden.py` pins the decoded pixels and `config_hash` per fixture, method and
+   preset to `tests/golden.json`; after an intentional output change, regenerate it with
+   `python scripts/update_golden.py` and commit the diff with the change.
 
 Byte-identical output across *different machines* additionally assumes the same versions of
-numpy, scipy, scikit-image and Pillow (`uv.lock` pins them).
+numpy, scipy, scikit-image and Pillow, which only `git clone && uv sync --locked` (same Python
+minor version) guarantees; `_meta.json` records them under `environment`. Across CPU
+architectures it is best-effort: float64 results can differ at ~1e-12 between SIMD paths, which
+the 8-bit rounding absorbs in every case tested, and `_palette.json` rounds LAB to 6 decimals
+for the same reason.
 
 ## Known deviations
 
@@ -89,30 +112,60 @@ The algorithmic deviations are marked with `# DEVIATION:` comments in the code.
   blurring a result that was exact after five iterations. It is replaced by the direction
   between the two kernels' M-step centroids, a robust measure of the same quantity (the net
   normal of the boundary between the two kernels' pixel sets).
+- *Truncated windows skip the shape constraints.* A kernel whose R_k window holds transparent
+  pixels or reaches past the image border has a lopsided footprint, so its one-sided variance
+  and centroid direction are set by the cut and fire on every iteration: on `circle_alpha`
+  256→32 a 2–4-kernel band along the silhouette (340 kernels) fired forever, 248 kernels ended
+  at the σ cap, and a dark line 4 px inside the edge came out fainter than with box. Such
+  kernels keep their σ, and the orientation test also needs a non-zero overlap `f` (no shared
+  pixels, no edge between the pair). No kernel now reaches the cap there, and the run
+  converges in 14 iterations.
+- *Ghost kernels.* A kernel whose own output cell is less than half opaque (the box filter's
+  rule) takes no part in the E-step, the shape constraints or the starved re-seeding, and is
+  transparent in the output. Left in, it kept its tiny initial σ, claimed a dark line 2–3 px
+  inside the silhouette, and was then dropped from `small_mask`, so the line vanished (13 of
+  24 placements at 256→32 showed it on every row; now all 24 do). Its opaque neighbors take
+  those pixels instead.
 - *Laplacian smoothing* averages displacements from the grid position rather than raw
   positions. Identical for interior kernels; it stops border kernels from being dragged
   inward every iteration.
-- *`small_mask`* is computed from spatial-only responsibilities, because transparent pixels
-  are excluded from the EM and the specified ratio would always be 1.
+- *`small_mask`* is the cell rule above (identical to box's mask), because transparent
+  pixels are excluded from the EM and the specified ratio would always be 1. A coverage
+  measured with spatial-only responsibilities kept cells only 19 % opaque and flickered row
+  by row on cells exactly half opaque; it is still used for the color of starved kernels.
 
-With the spec's convergence criterion (|Δμ| and |Δν| < `kopf_tol` and no σ change) most real
-images run to `kopf_max_iters`; the simple fixtures converge in 30–48 iterations. The
-R_k half-width stays at the specified 2 output units (the 1024² → 64² run takes ≈ 36 s).
+- *Convergence.* The spec's test (max |Δμ| and max |Δν| < `kopf_tol`, no σ change) was never
+  met on real content: border truncation and non-integer ratios keep a few centroids
+  drifting (a solid 100×100 → 64×64 plateaued at 1.1e-3), and 0.5–1 % of the kernels keep
+  growing σ every iteration. Kopf now stops when the RMS |Δμ| over fed kernels is below
+  10·`kopf_tol` output pixels, the RMS |Δν| (unit-cube color) below `kopf_tol`, and σ
+  changed on fewer than 2 % of the kernels not already at the cap. A solid image converges
+  in 3 iterations, `line_diag` in 5, noisy content in about 30, with a mean ΔE below 0.1
+  from the 50-iteration result.
+
+The R_k half-width stays at the specified 2 output units.
 
 **Gerstner (Section 7).**
 
+- The start temperature is 1.1·2·σ, with σ the standard deviation along the first principal
+  axis, not 1.1·2·σ². Rose's Tc = 2λ is for a squared-distance kernel; the association uses
+  exp(−‖·‖/T), whose critical temperature scales with the spread. With the variance a ΔE-100
+  checker spent 14 of 32 iterations cooling before anything happened.
 - Annealing also stops when the final temperature is reached and a convergence event
-  produces no split, even if fewer than K colors exist. Otherwise an image with fewer than K
-  separable colors would cool forever until `g_max_iters`. `stats.final_palette_size` reports
-  the actual count.
+  produces no split and no pair whose separation grew by more than `g_eps_cluster` over the
+  last 3 events, even if fewer than K colors exist (backstop: T < 10⁻³·`g_T_final`).
+  Otherwise an image with fewer than K separable colors would cool forever until
+  `g_max_iters`. `stats.final_palette_size` reports the actual count.
 - A sub-cluster pair only splits once it is three times further apart than the 2δ it was
-  placed at, and a pair that is moving apart but not there yet is left alone rather than
-  re-centered. The perturbation alone (1.0) already exceeds `g_eps_cluster` (0.25), so the
-  spec's test also splits pairs that are still collapsing back together. Those colors
+  placed at, or one standard deviation of its own points (along their principal axis) apart
+  if that is less, and a pair that is moving apart but not there yet is left alone rather
+  than re-centered. The perturbation alone (1.0) already exceeds `g_eps_cluster` (0.25), so
+  the spec's test also splits pairs that are still collapsing back together. Those colors
   coincide and never separate once K is reached: a single-color sprite ended with 16 palette
   entries of which 4 were distinct. Letting growth accumulate matters for small clusters,
   which diverge slowly: with re-centering, a thin line holding 1.5% of the pixels never split
-  off.
+  off. The spread cap matters for close colors: regions at L 50 and L 54 settle ≈ 2.8 apart
+  after the bilateral filter and never reached 3·2δ.
 - When more pairs are ready to split than palette slots remain, the slots go to the pairs
   whose split removes the most error, not to the lowest index.
 - Transparent input pixels are never assigned, so `small_mask` attributes each one to its
@@ -129,21 +182,97 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
   fewer than K colors when the image has fewer distinguishable ones.
 - `regularize_ramps` reaches the 6° maximum at an L distance of 30 from the bin's mean L.
 - Ramp regularization and saturation are skipped when a named palette is used.
-- With `tileset=True` the outline pass does not pad the canvas.
+- With a named palette the outline color (auto or explicit `#rrggbb`) snaps to the nearest
+  palette entry (CIE76, ties → lowest index); the palette is never extended or changed, so a
+  `_palette.hex` fed back via `palette_name` reproduces itself. Otherwise a new entry is
+  appended, or, in a full 256-entry palette, the nearest entry is overwritten with it.
+  `stats.outline_index` names the entry used (`null` if no outline was drawn).
+- The canvas is always exactly the resolved output size; the outline never grows it. With
+  an outline and `tileset=False`, a 1-px margin per side is always reserved inside the
+  requested size (`stats.outline_margin = 1`), whether or not the silhouette reaches the
+  edge: the image is downscaled to (W−2)×(H−2), padded with 1 transparent pixel per side
+  before post-processing, and the ring is drawn without further padding. A derived dimension
+  keeps the aspect ratio of that inner area (rounded, then the margin is added back; never
+  below 8), so the sprite preset gives exactly 64 px on the longest edge.
+- With `tileset=True` nothing is reserved or padded (the canvas must stay a multiple of
+  `tile_size`); where the silhouette touches the edge the outline is clipped and
+  `stats.outline_clipped` is true.
+- Orphan removal merges a region only if its ΔE to the replacement is below `orphan_max_delta`
+  (25), other orphans do not vote, and passes stop early on no change or a repeated image.
 
 **Pipeline, tiles, preprocessing (Sections 5 and 9).**
 
+- The mask stays binary (alpha ≥ `alpha_threshold`), but every downscaler weights each opaque
+  pixel's color by alpha / 255 (`Preprocessed.weight`): box per cell, kopf in γ before the
+  M-step, gerstner in the superpixel means and centers and in the palette prior, which is
+  each superpixel's mean weight (uniform, as specified, for an opaque input). A cell made
+  only of fringe pixels above the threshold still keeps the fringe's color.
 - When gerstner is combined with `palette_name` or `palette_source="median_cut"`, its
   smoothed superpixel mean colors are quantized against that palette.
+- With gerstner's own palette and `dither` other than `"none"`, the smoothed superpixel means
+  (not the per-pixel palette colors, which dithering cannot move) are dithered against the
+  annealer's colors before β, and the indices are then used with the saturated palette. The
+  `"auto"` local-std criterion is computed on those means, and only over opaque cells.
+- Two tiles (any flip) are near-duplicates only if the mean ΔE over the tile is below
+  `tile_dedupe_tolerance` and every pixel's ΔE is below `TILE_DEDUPE_MAX_PIXEL_DELTA` (10,
+  fixed; a transparent/opaque pair costs 100). The spec's mean-only test let a few very
+  different pixels (stars, highlights) merge into a plain tile and vanish. A tile joins the
+  nearest qualifying entry (lowest mean ΔE, then lowest id, then flip order), not the first.
 - After near-duplicate tiles are merged, the output image is re-rendered from the tileset so
-  it matches the tilemap exactly.
+  it matches the tilemap exactly; `stats.tiles_rerender_px_changed` counts the pixels this
+  changed (0 when `tile_dedupe_tolerance=0`).
+- The tileset sheet is `tileset_columns` tiles wide (0, the default, = `ceil(sqrt(n))`; the
+  spec's fixed 16 left small sets mostly empty); only the last row is padded. Besides the
+  spec's `NAME_tilemap.json` (unchanged schema), tilesets also write `NAME.tmj`, a Tiled JSON
+  map with an embedded tileset and the standard GID flip bits (0x80000000 horizontal,
+  0x40000000 vertical), and `NAME_tilemap.csv` (GIDs without flip bits).
+- `transparent_index` ("last" | "first") places the PNG's transparent palette entry. With
+  "first" it is always index 0 (even for an opaque image) in the image, preview and tileset,
+  so all three share one PLTE; a 256-color palette then no longer fits and is written as
+  RGBA. With "last" (the spec) the entry is appended only when a PNG has transparent pixels,
+  so an opaque image's tileset with a padded last row carries one extra trailing entry; the K
+  color indices agree either way. `_palette.json` marks each entry `"used"` and
+  `stats.colors_unused` counts the unused ones; they are kept so named palettes stay whole.
+- With `tileset=True` the spec rounds both derived dims up to a multiple of `tile_size`, which
+  stretched the image (160×96 at width 64 became 64×48, +26 % vertically) and could exceed
+  the target edge (`tile_size=24` gave 264). Now the target edge (preset longest edge or the
+  one given `out_width`/`out_height`) is rounded *down* to a multiple, the other axis is
+  derived from it and the canvas is rounded up; `fit` decides how the image fills it:
+  `"pad"` (default) centers it, aspect kept, with transparent pixels, `"stretch"` is the
+  spec behaviour (warns when the aspect changes by > 2 %), `"crop"` crops the input centered
+  to the canvas aspect before downscaling, so the downscalers stay untouched. Seamless mode
+  always stretches (padding or cropping would break the wrap). `tile_size` larger than the
+  longest derived edge is a `ValueError`. `stats.fit` and `stats.content_size` record it.
 - Seamless padding is 2 output pixels per side, i.e. `2·rx` × `2·ry` input pixels per axis.
 - Preprocessing fills transparent pixels with the nearest opaque color before denoising,
   uses `mode="edge"` for the bilateral filter, and repeats inputs that are smaller than the
   output by an integer factor.
+- Inputs at least 2·`prereduce_max_ratio` (default 8) times the output on both axes are
+  first box-reduced by the integer factor ⌊min(h/out_h, w/out_w) / prereduce_max_ratio⌋:
+  an exact area mean of the sRGB image (transparent pixels filled with the nearest opaque
+  color first), a block being opaque when at least half its pixels are, and the trailing
+  rows/columns that do not fill a block dropped. Denoise and the downscalers then run on the
+  reduced image, so the `denoise_sigma_*` values are in reduced-image pixels. Kopf's kernels
+  span 4×4 output pixels, so at these ratios this is nearly lossless; together with the kopf
+  changes it cuts 1024² → 64² from 209 s to 29 s. `stats.prereduce_factor` reports the
+  factor; 0 disables it.
 - `convert` writes a fifth file, `NAME_palette.hex`.
-- `Config` has two fields that are not in the spec, `key_bg` and `key_bg_tolerance` (see
-  Install), and the sprite preset sets `key_bg=True`. The gallery runs the fixtures with
+- The sprite preset has `remove_bg=False` instead of the spec's `None` ("True if rembg is
+  installed"), so the same command gives the same config hash on every machine.
+- `scale` and `canvas` are not in the spec. Without them `batch` sizes each frame from its own
+  crop box, so frames of one animation came out at different scales; it now sets one `scale`
+  from the union of the frames' crop boxes and a shared `canvas` (`cli.shared_scale`).
+- Input loading (not in the spec) only enables Pillow's PNG, JPEG, GIF, WEBP, BMP and TIFF
+  decoders, so content under a misleading name cannot reach other plugins (EPS would run
+  Ghostscript). It applies the EXIF orientation, rescales 16-bit grayscale to 8 bit instead
+  of clipping it, uses the first frame of animations (with a warning), refuses non-regular
+  files and enforces a pixel budget (`io.MAX_INPUT_PIXELS`) before decoding. A small input
+  whose integer repeat would exceed that budget is refused.
+- `Config` has three fields that are not in the spec, `key_bg`, `key_bg_tolerance` and
+  `key_bg_fringe` (see Install), and the sprite preset sets `key_bg=True`. After keying, up to
+  `key_bg_fringe` passes estimate each edge pixel's subject coverage as
+  `max_c|p−bg| / max_c|fg−bg|` (fg sampled just beyond a 3-px fringe) and key out those below
+  0.5, so the anti-aliased halo does not take palette entries. The gallery runs the fixtures with
   `key_bg=False` because they are test patterns, not sprites; images in `samples/` use the
   preset as-is.
 
@@ -152,8 +281,9 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
 - The box baseline does not produce a *broken* line on `line_diag.png`; it produces an
   unbroken but gray one (L ≈ 66, nothing below L = 50). The test asserts exactly that, and
   that the Kopf line is dark (L < 50) and 8-connected along the whole diagonal.
-- `test_determinism.py` runs the background preset at 64×64 instead of 256×256 to keep the
-  suite at about two minutes.
+- `test_determinism.py` runs the background preset at 64×64 instead of 256×256. Its kopf cases
+  at preset size, and kopf on the 256-px golden fixtures, are marked `slow`; 32-px variants
+  with `kopf_max_iters=10` run in their place under `-m "not slow"`. CI runs everything.
 - `test_converges` uses an 8×8 output.
 
 ## Troubleshooting

@@ -7,16 +7,25 @@ palette half on its own; `palette.mcda` reuses it directly on pixel colors.
 
 from __future__ import annotations
 
+import logging
 import math
 
 import numpy as np
 
-from . import Downscaled
+from ..errors import PixelforgeError
+from . import Downscaled, neighbor_mean4
+from .box import cell_index
 
 PERTURB_DELTA = 0.5      # sub-cluster offset along the principal axis, LAB units
 SPLIT_GROWTH = 3.0       # a pair splits once it is this many times further apart than placed
+SPLIT_SPREAD = 1.0       # ... or once it is this many standard deviations of its cluster apart
+STALL_EVENTS = 3         # below g_T_final, stop once no pair grew over this many events
 EXHAUSTED_T_FRACTION = 1e-3   # backstop: stop annealing below this fraction of g_T_final
 _MAX_SEARCH_RADIUS = 6   # grid cells searched around a pixel's home cell (safety bound)
+
+
+log = logging.getLogger(__name__)
+PROGRESS_EVERY = 10      # iterations between INFO progress lines (DEBUG logs every one)
 
 
 def principal_axis(points: np.ndarray) -> tuple[np.ndarray, float]:
@@ -52,11 +61,17 @@ class PaletteAnnealer:
         self.config = config
         mean = init_points.mean(axis=0)
         _, variance = principal_axis(init_points)
-        # T = 1.1·Tc with Tc = 2·(variance along the first principal axis). The floor only
-        # matters for a single-color input, where Tc is 0.
-        self.T = max(1.1 * 2.0 * variance, config.g_T_final)
+        # DEVIATION: Section 7 — T0 = 1.1·2·σ (σ = standard deviation along the first
+        # principal axis), not 1.1·2·σ². Rose's critical temperature Tc = 2λ holds for the
+        # squared-distance kernel exp(−‖·‖²/T); the association here uses exp(−‖·‖/T), whose
+        # Tc scales with the spread itself (for two colors at ±σ it is exactly σ). With the
+        # variance a ΔE-100 checker started at T ≈ 6000 and spent 14 of 32 iterations cooling
+        # before the first split. The floor only matters for a single-color input (σ = 0).
+        self.T = max(1.1 * 2.0 * math.sqrt(variance), config.g_T_final)
         self.clusters = np.stack([mean, mean])
         self.placed = np.zeros(1)    # separation each sub-cluster pair was last placed at
+        # Separation of each pair at the last STALL_EVENTS convergence events, oldest first.
+        self.history = np.zeros((1, STALL_EVENTS))
         self.prob = np.array([0.5, 0.5])
         self.has_sub = True
         self.assign = None       # palette index per point from the latest ASSOCIATE
@@ -115,9 +130,18 @@ class PaletteAnnealer:
             # enough either: re-centering every pair at every event would undo the slow
             # divergence of a small cluster (a thin line holding 1.5% of the pixels never
             # split off at all), so growth has to be allowed to accumulate.
+            #
+            # The growth threshold is capped by the pair's own spread: a pair whose points
+            # span only a few ΔE (two regions at L 50 and L 54 end up as a ramp after the
+            # bilateral filter, halves ≈ 2.8 apart) can never reach 3·2δ, so it splits once
+            # it is SPLIT_SPREAD standard deviations (along its principal axis) apart.
+            spread = np.array([math.sqrt(principal_axis(points[sub_assign // 2 == k])[1])
+                               for k in range(n_before)])
             growing = separation > self.placed
             ready = growing & (separation > cfg.g_eps_cluster) & (
-                separation > SPLIT_GROWTH * self.placed)
+                separation > np.minimum(SPLIT_GROWTH * self.placed, SPLIT_SPREAD * spread))
+            grown = separation - self.history[:, 0]
+            history = np.concatenate([self.history[:, 1:], separation[:, None]], axis=1)
             # DEVIATION: Section 7 — when more pairs are ready than palette slots remain, the
             # slots go to the pairs whose split removes the most error (mass-weighted squared
             # separation), not to the lowest k. In ascending-k order the last slots went to
@@ -151,10 +175,13 @@ class PaletteAnnealer:
             # DEVIATION: Section 7 — the spec only breaks once K_current == K. An image with
             # fewer than K separable colors would then cool forever (T → 0) until
             # g_max_iters, so annealing also ends when the final temperature has been
-            # reached and a convergence event leaves no pair split or still moving apart
+            # reached and a convergence event splits no pair and leaves no pair whose
+            # separation grew by more than g_eps_cluster over the last STALL_EVENTS events
             # (or, as a backstop, when T has fallen far below the final temperature); the
             # palette keeps K_current < K colors.
-            exhausted = ((self.T <= cfg.g_T_final and not chosen and not any(keep))
+            stalled = not any(keep[k] and grown[k] > cfg.g_eps_cluster
+                              for k in range(n_before))
+            exhausted = ((self.T <= cfg.g_T_final and not chosen and stalled)
                          or self.T < EXHAUSTED_T_FRACTION * cfg.g_T_final)
             if n_colors == self.K or exhausted:
                 self.clusters, self.prob, self.has_sub = colors, probs, False
@@ -165,6 +192,7 @@ class PaletteAnnealer:
                 old_clusters, old_prob, old_placed = self.clusters, self.prob, self.placed
                 self.clusters = np.empty((2 * n_colors, 3))
                 self.placed = np.empty(n_colors)
+                self.history = np.empty((n_colors, STALL_EVENTS))
                 self.prob = np.repeat(0.5 * probs, 2)
                 for k in range(n_colors):
                     if keep[k]:
@@ -172,6 +200,7 @@ class PaletteAnnealer:
                         self.clusters[2 * k:2 * k + 2] = old_clusters[2 * k:2 * k + 2]
                         self.prob[2 * k:2 * k + 2] = old_prob[2 * k:2 * k + 2]
                         self.placed[k] = old_placed[k]
+                        self.history[k] = history[k]
                         continue
                     axis, _ = principal_axis(points[self.assign == k])
                     delta = PERTURB_DELTA
@@ -181,24 +210,14 @@ class PaletteAnnealer:
                     self.clusters[2 * k] = colors[k] + delta * axis
                     self.clusters[2 * k + 1] = colors[k] - delta * axis
                     self.placed[k] = 2.0 * delta
+                    self.history[k] = 2.0 * delta
         if self.T <= cfg.g_T_final and not self.has_sub:
             self.done = True
 
 
 def _laplacian_smooth(grid: np.ndarray, fraction: float) -> np.ndarray:
     """Move every value `fraction` of the way toward the mean of its 4-connected neighbors."""
-    total = np.zeros_like(grid)
-    count = np.zeros_like(grid)
-    total[1:] += grid[:-1]
-    count[1:] += 1
-    total[:-1] += grid[1:]
-    count[:-1] += 1
-    total[:, 1:] += grid[:, :-1]
-    count[:, 1:] += 1
-    total[:, :-1] += grid[:, 1:]
-    count[:, :-1] += 1
-    target = np.where(count > 0, total / np.maximum(count, 1), grid)
-    return grid + fraction * (target - grid)
+    return grid + fraction * (neighbor_mean4(grid) - grid)
 
 
 def bilateral_filter(image: np.ndarray, active: np.ndarray, sigma_color: float,
@@ -242,8 +261,8 @@ class _Grid:
         self.px = np.arange(wi) + 0.5            # pixel centers
         self.py = np.arange(hi) + 0.5
         # Initial-grid cell containing each pixel column / row.
-        self.home_x = (np.arange(wi, dtype=np.int64) * wo) // wi
-        self.home_y = (np.arange(hi, dtype=np.int64) * ho) // hi
+        self.home_x = cell_index(wi, wo)
+        self.home_y = cell_index(hi, ho)
 
     def search_radius(self, cx: np.ndarray, cy: np.ndarray) -> int:
         """Grid cells around the home cell that can hold a center inside the 2rx × 2ry window.
@@ -339,7 +358,29 @@ def _assign(grid: _Grid, cx, cy, radius: int, candidate_ok=None, channels=None, 
     return best_s
 
 
-def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, config) -> Downscaled:
+def _weighted(values: np.ndarray, w: np.ndarray | None) -> np.ndarray:
+    return values if w is None else w * values
+
+
+def palette_prior(coverage: np.ndarray) -> np.ndarray:
+    """P(p_s) over the active superpixels from their mean pixel weight (alpha).
+
+    Uniform (exactly 1/N) when every superpixel is fully opaque, as in the spec; otherwise
+    proportional to the coverage, so a superpixel of semi-transparent fringe pixels holds
+    less palette mass. Superpixels lying entirely in the transparent region are not active.
+    """
+    # DEVIATION: Section 7 — the spec's uniform prior is weighted by alpha coverage. It is
+    # the mean weight, not the total, so that equal-alpha superpixels of different pixel
+    # counts keep the spec's equal mass (and an opaque input is bit-identical).
+    if np.all(coverage == 1.0):
+        return np.full(len(coverage), 1.0 / len(coverage))
+    return coverage / coverage.sum()
+
+
+def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, config,
+        weight: np.ndarray | None = None) -> Downscaled:
+    if not mask.any():
+        raise PixelforgeError("no opaque pixels")
     hi, wi = mask.shape
     wo, ho = int(out_width), int(out_height)
     n_sp = wo * ho
@@ -351,16 +392,29 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
     col = np.ascontiguousarray(lab[ys, xs], dtype=np.float64)
     channels = [np.ascontiguousarray(lab[..., c], dtype=np.float64) for c in range(3)]
     all_opaque = bool(mask.all())
+    # Pixel weight (alpha) of the opaque pixels: superpixel means and centers are weighted by
+    # it, and so is each superpixel's share of the palette prior. None when it is all ones.
+    pix_w = None
+    if weight is not None:
+        pix_w = np.asarray(weight, dtype=np.float64)[ys, xs]
+        if np.all(pix_w == 1.0):
+            pix_w = None
 
     # INITIALIZE: regular grid of centers, every pixel assigned to the nearest center.
     cx, cy = grid.cx0.copy(), grid.cy0.copy()
     assign = grid.home_y[ys] * wo + grid.home_x[xs]
     count = np.bincount(assign, minlength=n_sp)
     has_color = count > 0
+    mass = count if pix_w is None else np.bincount(assign, weights=pix_w, minlength=n_sp)
+    # Mean pixel weight of each superpixel (1 for an opaque input), kept for those that
+    # lose all their pixels in an iteration, like their color.
+    coverage = np.ones(n_sp)
+    if pix_w is not None:
+        coverage[has_color] = mass[has_color] / count[has_color]
     mean = np.zeros((n_sp, 3))
     for c in range(3):
-        sums = np.bincount(assign, weights=col[:, c], minlength=n_sp)
-        mean[has_color, c] = sums[has_color] / count[has_color]
+        sums = np.bincount(assign, weights=_weighted(col[:, c], pix_w), minlength=n_sp)
+        mean[has_color, c] = sums[has_color] / mass[has_color]
 
     annealer = PaletteAnnealer(col, config.palette_size, config)
     k = np.zeros(n_sp, dtype=np.int64)
@@ -377,17 +431,23 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         # Masked (transparent) input pixels are never assigned and never contribute.
         assign = assigned_to.ravel() if all_opaque else assigned_to[mask]
         assigned = assign >= 0
+        a_w = pix_w
         if assigned.all():
             a, a_px, a_py, a_col = assign, px, py, col
         else:
             a, a_px, a_py, a_col = assign[assigned], px[assigned], py[assigned], col[assigned]
+            if pix_w is not None:
+                a_w = pix_w[assigned]
         count = np.bincount(a, minlength=n_sp)
         got = count > 0   # superpixels with zero pixels keep their previous center and color
+        mass = count if a_w is None else np.bincount(a, weights=a_w, minlength=n_sp)
         for c in range(3):
-            sums = np.bincount(a, weights=a_col[:, c], minlength=n_sp)
-            mean[got, c] = sums[got] / count[got]
-        cx[got] = np.bincount(a, weights=a_px, minlength=n_sp)[got] / count[got]
-        cy[got] = np.bincount(a, weights=a_py, minlength=n_sp)[got] / count[got]
+            sums = np.bincount(a, weights=_weighted(a_col[:, c], a_w), minlength=n_sp)
+            mean[got, c] = sums[got] / mass[got]
+        cx[got] = np.bincount(a, weights=_weighted(a_px, a_w), minlength=n_sp)[got] / mass[got]
+        cy[got] = np.bincount(a, weights=_weighted(a_py, a_w), minlength=n_sp)[got] / mass[got]
+        if a_w is not None:
+            coverage[got] = mass[got] / count[got]
         has_color |= got
 
         cx = _laplacian_smooth(cx.reshape(ho, wo), config.g_laplacian).ravel()
@@ -401,20 +461,27 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         # 2-4. ASSOCIATE, REFINE, CONVERGENCE CHECK / EXPAND on the active superpixels.
         active = np.nonzero(has_color)[0]
         points = smooth.reshape(-1, 3)[active]
-        # P(p_s) is uniform over the superpixels that hold opaque pixels (1/N for an opaque
-        # input); superpixels lying entirely in the transparent region have no color.
-        annealer.step(points, np.full(len(active), 1.0 / len(active)))
+        annealer.step(points, palette_prior(coverage[active]))
         k[active] = annealer.assign
         sp_color = annealer.colors[k]
         iterations += 1
+        level = logging.INFO if iterations % PROGRESS_EVERY == 0 else logging.DEBUG
+        if log.isEnabledFor(level):   # read-only: logging never affects the result
+            log.log(level, "gerstner iter %d/%d T=%.3g colors=%d", iterations,
+                    config.g_max_iters, annealer.T, len(annealer.colors))
         if annealer.done:
             hit_cap = False
             break
+    log.debug("gerstner %s after %d iterations",
+              "stopped at the cap" if hit_cap else "converged", iterations)
 
     # POST: saturation, then indices / palette / mask.
-    palette = annealer.colors.copy()
+    unsaturated = annealer.colors.copy()
+    palette = unsaturated.copy()
     palette[:, 1:] *= config.saturation_beta
 
+    # DEVIATION: Section 7 — the spec does not say how transparent pixels count toward a
+    # superpixel (and its prior is uniform over the superpixels holding opaque pixels).
     # small_mask[s] = opaque fraction of superpixel s >= 0.5. Transparent pixels are never
     # assigned during the optimization, so attribute each to its spatially nearest center.
     transparent = np.zeros(n_sp, dtype=np.int64)
@@ -427,6 +494,7 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         small_lab=palette[k].reshape(ho, wo, 3),
         small_mask=small_mask.reshape(ho, wo),
         palette_lab=palette,
+        palette_lab_unsaturated=unsaturated,
         indices=k.reshape(ho, wo).copy(),
         mean_lab=smooth,
         stats={"iterations": iterations, "palette_size": int(len(palette)),

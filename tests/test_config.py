@@ -1,3 +1,4 @@
+import dataclasses
 import json
 
 import pytest
@@ -13,7 +14,7 @@ def test_defaults_then_preset_then_explicit():
     for key, value in PRESETS["background"].items():
         assert getattr(background, key) == value
     assert Config(preset="background", method="box", dither="bayer8").method == "box"
-    assert isinstance(sprite.remove_bg, bool)
+    assert sprite.remove_bg is False      # opt-in only, whatever is installed
 
 
 def test_hash_is_stable_and_sensitive():
@@ -35,3 +36,220 @@ def test_hash_is_stable_and_sensitive():
 def test_validation_errors(kwargs):
     with pytest.raises(ValueError):
         Config(**kwargs)
+
+
+def test_replace_reapplies_changed_preset():
+    background = Config(preset="sprite").replace(preset="background")
+    assert background == Config(preset="background")
+    for key in ("method", "tileset", "outline", "palette_size"):
+        assert getattr(background, key) == PRESETS["background"][key]
+    kept = Config(preset="sprite", palette_size=12).replace(preset="background")
+    assert kept.palette_size == 12 and kept.method == "kopf" and kept.tileset
+    # Fields set through replace() are explicit in the result and survive a later preset change.
+    chained = Config().replace(method="box").replace(preset="background")
+    assert chained.method == "box" and chained.tileset
+
+
+def test_replace_keeps_everything_else():
+    cfg = Config(preset="background", palette_size=12, dither="bayer8", seed=3)
+    boxed = cfg.replace(method="box")
+    assert boxed.method == "box"
+    assert {k: v for k, v in boxed.to_dict().items() if k != "method"} == \
+        {k: v for k, v in cfg.to_dict().items() if k != "method"}
+
+
+def test_round_trip_hashable_and_frozen():
+    cfg = Config(preset="background", palette_size=12)
+    again = Config(**cfg.to_dict())
+    assert again == cfg and hash(again) == hash(cfg) and again.hash() == cfg.hash()
+    assert "_explicit" not in cfg.to_dict() and "_explicit" not in cfg.canonical_json()
+    assert "_explicit" not in Config.field_names()
+    assert len({cfg, again, Config()}) == 2
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        cfg.method = "box"
+
+
+def test_cli_warns_when_json_shadows_preset(tmp_path, capsys):
+    from pixelforge.cli import build_config
+
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps({"preset": "sprite", "method": "gerstner", "palette_size": 16}))
+    config = build_config(str(path), {"preset": "background", "palette_size": 8})
+    assert (config.preset, config.method, config.palette_size) == ("background", "gerstner", 8)
+    err = capsys.readouterr().err
+    assert "warning" in err and "method" in err and "palette_size" not in err
+    build_config(str(path), {"palette_size": 8})
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("name, limit", [
+    ("out_width", 4096), ("out_height", 4096), ("scale_preview", 64),
+    ("denoise_sigma_spatial", 16), ("kopf_max_iters", 1000), ("g_max_iters", 10000),
+    ("saturation_beta", 5), ("tile_size", 512), ("seed", 2**63 - 1),
+])
+def test_upper_bounds(name, limit):
+    Config(**{name: limit})
+    with pytest.raises(ValueError, match=name):
+        Config(**{name: limit + 1})
+
+
+@pytest.mark.parametrize("kwargs", [
+    dict(seed=-1), dict(dither_variance_threshold=-0.1), dict(tile_dedupe_tolerance=-1.0),
+    dict(key_bg_tolerance=-0.01), dict(g_m=0.0), dict(kopf_tol=0.0), dict(seed=2**64),
+    dict(orphan_min_region=-2**63 - 1),
+])
+def test_lower_and_range_bounds(kwargs):
+    with pytest.raises(ValueError):
+        Config(**kwargs)
+
+
+@pytest.mark.parametrize("name", ["saturation_beta", "g_m", "kopf_tol", "dither_strength",
+                                  "dither_variance_threshold", "tile_dedupe_tolerance",
+                                  "key_bg_tolerance", "g_T_final"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_floats_are_rejected(name, value):
+    with pytest.raises(ValueError, match=name):
+        Config(**{name: value})
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("nan")])
+def test_non_finite_values_for_int_fields_are_rejected(value):
+    with pytest.raises(ValueError, match="kopf_max_iters"):
+        Config(kopf_max_iters=value)
+
+
+def test_outline_is_normalised_to_lowercase():
+    upper, lower = Config(outline="#AABBCC"), Config(outline="#aabbcc")
+    assert upper.outline == "#aabbcc" and upper.hash() == lower.hash()
+    for bad in ("#aabbcc\n", "#aabbccdd", "aabbcc"):
+        with pytest.raises(ValueError, match="outline"):
+            Config(outline=bad)
+
+
+@pytest.mark.parametrize("kwargs", [
+    dict(scale=0), dict(scale=-1.5), dict(scale=4097), dict(scale=float("nan")),
+    dict(canvas="64"), dict(canvas="64x"), dict(canvas="64X64"), dict(canvas=" 64x64"),
+    dict(canvas="7x64"), dict(canvas="64x4097"), dict(canvas="６４x64"), dict(canvas=64),
+    dict(scale=2, out_width=32), dict(canvas="64x64", out_height=64),
+    dict(preset="background", canvas="40x32"),          # tileset: tile_size must divide it
+])
+def test_scale_and_canvas_validation(kwargs):
+    with pytest.raises(ValueError):
+        Config(**kwargs)
+
+
+def test_scale_and_canvas_accepted():
+    cfg = Config(scale=2, canvas="48x32")
+    assert cfg.scale == 2.0 and cfg.canvas_size == (48, 32)
+    assert Config(scale=4096).scale == 4096 and Config(canvas="4096x8").canvas_size == (4096, 8)
+    assert Config(preset="background", canvas="64x32").canvas_size == (64, 32)
+    assert hash(cfg) == hash(Config(scale=2.0, canvas="48x32"))
+    assert Config(**json.loads(cfg.canonical_json())) == cfg
+    assert Config().canvas_size is None
+
+
+def test_config_error_is_value_error_and_pixelforge_error():
+    import pixelforge
+    from pixelforge import ConfigError, PixelforgeError
+
+    assert issubclass(ConfigError, ValueError) and issubclass(ConfigError, PixelforgeError)
+    with pytest.raises(ConfigError, match="palette_size"):
+        Config(palette_size=1)
+    with pytest.raises(ValueError, match="unknown config field"):
+        Config(nope=1)
+    for name in ("Config", "run", "Result", "PixelforgeError", "ConfigError", "__version__"):
+        assert name in pixelforge.__all__ and hasattr(pixelforge, name)
+
+
+def test_negative_seed_rejected():
+    from pixelforge import ConfigError
+
+    with pytest.raises(ConfigError, match="seed must be >= 0"):
+        Config(seed=-1)
+
+
+def test_presets_are_read_only():
+    from pixelforge.config import PRESET_LONGEST_EDGE
+
+    before = Config(preset="sprite").to_dict()
+    with pytest.raises(TypeError):
+        PRESETS["sprite"]["palette_size"] = 99
+    with pytest.raises(TypeError):
+        PRESETS["evil"] = {}
+    with pytest.raises(TypeError):
+        PRESET_LONGEST_EDGE["sprite"] = 1
+    assert Config(preset="sprite").to_dict() == before
+    assert Config(preset="sprite").palette_size == 16
+
+
+def test_hash_covers_palette_file_contents(tmp_path):
+    path = tmp_path / "p.hex"
+    path.write_text("ff0000\n00ff00\n")
+    before = Config(palette_name=str(path))
+    before_hash = before.hash()                 # reads and caches the palette lines
+    path.write_text("ff0000\n0000ff\n")
+    after = Config(palette_name=str(path))
+    assert before.canonical_json() == after.canonical_json()
+    assert before_hash == before.hash() != after.hash()
+    assert len(Config(palette_name="pico8").palette_hex_lines()) == 16   # bundled: same way
+    provenance = after.provenance()
+    assert provenance["palette"] == ["ff0000", "0000ff"]
+    assert provenance["config"] == after.to_dict() and len(provenance["palette_sha256"]) == 64
+    assert Config().provenance()["palette"] is None
+    assert Config().provenance()["palette_sha256"] is None
+
+
+# Every raise in Config._validate, with the start of the message it must produce.
+_VALIDATE_MESSAGES = [
+    (dict(palette_name="no_such_palette"), "unknown palette 'no_such_palette'"),
+    (dict(out_width=7), "out_width must be >= 8, got 7"),
+    (dict(out_height=7), "out_height must be >= 8, got 7"),
+    (dict(scale=0), "scale must be > 0, got 0.0"),
+    (dict(canvas="7x64"), 'canvas must be "WxH" with W, H in [8, 4096]'),
+    (dict(scale=2, out_width=32), "scale and canvas cannot be combined with out_width"),
+    (dict(canvas="32x32", out_height=32), "scale and canvas cannot be combined with out_width"),
+    (dict(palette_size=257), "palette_size must be in [2, 256], got 257"),
+    (dict(method="nearest"), "method must be one of ['box', 'kopf', 'gerstner']"),
+    (dict(denoise="gauss"), "denoise must be one of ['none', 'bilateral', 'median']"),
+    (dict(dither="floyd"), "dither must be one of ['none', 'bayer4', 'bayer8', 'auto']"),
+    (dict(palette_source="kmeans"), "palette_source must be one of"),
+    (dict(transparent_index="middle"), "transparent_index must be one of ['last', 'first']"),
+    (dict(fit="zoom"), "fit must be one of ['pad', 'stretch', 'crop']"),
+    (dict(outline="red"), 'outline must be "none", "auto" or "#rrggbb", got \'red\''),
+    (dict(g_alpha=1.0), "g_alpha must be in (0, 1), got 1.0"),
+    (dict(alpha_threshold=256), "alpha_threshold must be in [0, 255], got 256"),
+    (dict(dither_strength=1.5), "dither_strength must be in [0, 1], got 1.5"),
+    (dict(key_bg_tolerance=1.5), "key_bg_tolerance must be in [0, 1], got 1.5"),
+    (dict(orphan_max_delta=-1.0), "orphan_max_delta must be finite and >= 0, got -1.0"),
+    (dict(key_bg_fringe=9), "key_bg_fringe must be in [0, 8], got 9"),
+    (dict(prereduce_max_ratio=-1), "prereduce_max_ratio must be >= 0, got -1"),
+    (dict(outline_darken=1.5), "outline_darken must be in [0, 1], got 1.5"),
+    *[(dict(**{name: 0}), f"{name} must be >= 1, got 0")
+      for name in ("kopf_max_iters", "g_max_iters", "tile_size", "scale_preview",
+                   "orphan_min_region")],
+    *[(dict(**{name: 0.0}), f"{name} must be > 0, got 0.0")
+      for name in ("g_T_final", "g_m", "kopf_tol", "saturation_beta", "denoise_sigma_color",
+                   "denoise_sigma_spatial", "g_bilateral_sigma_color",
+                   "g_bilateral_sigma_spatial")],
+    (dict(dither_variance_threshold=-0.5), "dither_variance_threshold must be >= 0, got -0.5"),
+    (dict(tile_dedupe_tolerance=-0.5), "tile_dedupe_tolerance must be >= 0, got -0.5"),
+    (dict(tileset_columns=257), "tileset_columns must be 0 (automatic) or in [1, 256], got 257"),
+    (dict(seed=-1), "seed must be >= 0, got -1"),
+    (dict(scale_preview=65), "scale_preview must be <= 64, got 65"),
+    (dict(preset="background", out_width=40, out_height=32),
+     "tile_size (16) must divide out_width (40) when tileset=True"),
+    (dict(preset="background", out_width=32, out_height=40),
+     "tile_size (16) must divide out_height (40) when tileset=True"),
+    (dict(preset="background", canvas="40x32"),
+     "tile_size (16) must divide canvas (40x32) when tileset=True"),
+]
+
+
+@pytest.mark.parametrize("kwargs, message", _VALIDATE_MESSAGES,
+                         ids=[",".join(sorted(k)) for k, _ in _VALIDATE_MESSAGES])
+def test_every_validation_message(kwargs, message):
+    from pixelforge import ConfigError
+
+    with pytest.raises(ConfigError) as info:
+        Config(**kwargs)
+    assert str(info.value).startswith(message), str(info.value)

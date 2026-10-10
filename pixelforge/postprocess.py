@@ -6,6 +6,8 @@ Order: ramps → saturation → orphans → jaggies → outline. Every pass work
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 from scipy import ndimage
 
@@ -15,6 +17,7 @@ from .palette import regularize_ramps
 _EIGHT = np.ones((3, 3), dtype=bool)
 _OFFSETS8 = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 ORPHAN_MAX_PASSES = 5
+ORPHAN_MAX_DELTA = 25.0
 
 
 def apply_saturation(palette_lab: np.ndarray, beta: float) -> np.ndarray:
@@ -37,8 +40,14 @@ def _label_regions(idx: np.ndarray) -> tuple[np.ndarray, int]:
     return labels, n_total
 
 
-def _orphan_pass(idx: np.ndarray, distances: np.ndarray, min_region: int) -> bool:
-    """Merge every region smaller than min_region into its most frequent neighbor index."""
+def _orphan_pass(idx: np.ndarray, distances: np.ndarray, min_region: int, max_delta: float,
+                 frozen: np.ndarray) -> bool:
+    """Merge every region smaller than min_region into its most frequent neighbor index.
+
+    A region is merged only when the ΔE between its color and the chosen replacement is below
+    max_delta; otherwise its pixels are marked in `frozen` (in place) and the region is never
+    examined again in this remove_orphans call. Returns whether any pixel changed.
+    """
     h, w = idx.shape
     labels, n_regions = _label_regions(idx)
     sizes = np.bincount(labels.ravel(), minlength=n_regions + 1)
@@ -48,6 +57,8 @@ def _orphan_pass(idx: np.ndarray, distances: np.ndarray, min_region: int) -> boo
     if len(ys) == 0:
         return False
     region = labels[ys, xs]
+    candidate = np.ones(n_regions + 1, dtype=bool)
+    candidate[labels[frozen]] = False
 
     pair_region, pair_pos = [], []
     for dy, dx in _OFFSETS8:
@@ -55,7 +66,11 @@ def _orphan_pass(idx: np.ndarray, distances: np.ndarray, min_region: int) -> boo
         inside = (ny >= 0) & (ny < h) & (nx >= 0) & (nx < w)
         ny, nx, r = ny[inside], nx[inside], region[inside]
         neighbor_label = labels[ny, nx]
-        ok = (neighbor_label > 0) & (neighbor_label != r)
+        # DEVIATION: Section 8.3 — pixels of other small regions do not vote. Otherwise two
+        # touching orphans (a 2-px sparkle) adopt each other's color, swap back on the next
+        # pass, and the result depends on the parity of max_passes. A cluster of orphans with
+        # no large neighbor is left as is until a neighbor of it has been merged.
+        ok = (neighbor_label > 0) & ~small[neighbor_label] & candidate[r]
         pair_region.append(r[ok])
         pair_pos.append(ny[ok] * w + nx[ok])
     pair_region = np.concatenate(pair_region)
@@ -80,8 +95,14 @@ def _orphan_pass(idx: np.ndarray, distances: np.ndarray, min_region: int) -> boo
     is_max = counts == counts.max(axis=1, keepdims=True)
     target = np.argmin(np.where(is_max, distances[own], np.inf), axis=1)
 
+    # Contrast exemption: high-contrast singles (eyes, highlights) are features, not noise.
+    merge = distances[own, target] < max_delta
+    keep = np.zeros(n_regions + 1, dtype=bool)
+    keep[region_ids[~merge]] = True
+    frozen[ys[keep[region]], xs[keep[region]]] = True
+
     new_index = np.full(n_regions + 1, -1, dtype=np.int64)
-    new_index[region_ids] = target
+    new_index[region_ids[merge]] = target[merge]
     replacement = new_index[region]
     change = replacement >= 0
     idx[ys[change], xs[change]] = replacement[change]
@@ -89,18 +110,28 @@ def _orphan_pass(idx: np.ndarray, distances: np.ndarray, min_region: int) -> boo
 
 
 def remove_orphans(idx: np.ndarray, palette_lab: np.ndarray, min_region: int = 2,
-                   max_passes: int = ORPHAN_MAX_PASSES) -> np.ndarray:
+                   max_passes: int = ORPHAN_MAX_PASSES,
+                   max_delta: float = ORPHAN_MAX_DELTA) -> np.ndarray:
     """Merge 8-connected regions with fewer than min_region pixels into their surroundings.
 
-    Transparent pixels are never reassigned and never count as neighbors.
+    Transparent pixels are never reassigned and never count as neighbors. A region is merged
+    only if its color is within ΔE max_delta (CIE76) of the replacement, so high-contrast
+    singles such as eye pixels and highlights are kept. Passes repeat until nothing changes,
+    a pass reproduces an earlier index image, or max_passes is reached.
     """
     idx = np.array(idx, dtype=np.int64)
     if min_region <= 1:
         return idx
     distances = color.palette_distance_matrix(palette_lab)
+    frozen = np.zeros(idx.shape, dtype=bool)
+    seen = [hashlib.sha256(idx.tobytes()).digest()]
     for _ in range(max_passes):
-        if not _orphan_pass(idx, distances, min_region):
+        if not _orphan_pass(idx, distances, min_region, max_delta, frozen):
             break
+        digest = hashlib.sha256(idx.tobytes()).digest()
+        if digest in seen:
+            break
+        seen.append(digest)
     return idx
 
 
@@ -156,17 +187,36 @@ def outline_color_lab(palette_lab: np.ndarray, outline: str, darken: float) -> n
     return color.rgb8_to_lab(color.hex_to_rgb8(outline))
 
 
+def _nearest_entry(lab: np.ndarray, palette_lab: np.ndarray) -> int:
+    """Nearest palette entry to one LAB color (CIE76); ties → lowest index."""
+    return int(np.argmin(color.delta_e(palette_lab, lab[None, :])))
+
+
 def add_outline(idx: np.ndarray, palette_lab: np.ndarray, outline: str, darken: float = 0.55,
-                allow_pad: bool = True) -> tuple[np.ndarray, np.ndarray]:
+                allow_pad: bool = True, *, fixed_palette: bool = False,
+                stats: dict | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Set every transparent pixel with an opaque 4-neighbor to the outline color.
 
-    The outline is drawn outside the silhouette; the canvas is padded by 1 px first if any
-    opaque pixel touches its edge.
+    The outline is drawn outside the silhouette. With `allow_pad=True` the canvas is padded by
+    1 px first if any opaque pixel touches its edge; with `allow_pad=False` the size is kept
+    and the ring is clipped on those edges (stats["outline_clipped"] = True).
+
+    The outline color ("auto": the darkest entry blended toward black; or an explicit
+    #rrggbb) reuses an entry with the same RGB8 value, else is appended as a new entry. With
+    `fixed_palette=True` (a named hardware palette) the palette is never changed: the color,
+    auto or explicit, snaps to the nearest existing entry in LAB (CIE76, ties → lowest index).
+    A non-fixed palette that is already full (256 entries) has its nearest entry overwritten
+    with the outline color instead. If `stats` is given, stats["outline_index"] is set to the
+    index used, or None when no outline pixel was drawn.
     """
     idx = np.array(idx, dtype=np.int64)
     palette_lab = np.array(palette_lab, dtype=np.float64)
     opaque = idx >= 0
-    touches_edge = opaque[0].any() or opaque[-1].any() or opaque[:, 0].any() or opaque[:, -1].any()
+    touches_edge = bool(opaque[0].any() or opaque[-1].any() or opaque[:, 0].any()
+                        or opaque[:, -1].any())
+    if stats is not None:
+        stats["outline_index"] = None
+        stats["outline_clipped"] = touches_edge and not allow_pad
     if allow_pad and touches_edge:
         idx = np.pad(idx, 1, mode="constant", constant_values=-1)
         opaque = idx >= 0
@@ -181,26 +231,40 @@ def add_outline(idx: np.ndarray, palette_lab: np.ndarray, outline: str, darken: 
         return idx, palette_lab
 
     line_lab = outline_color_lab(palette_lab, outline, darken)
-    line_rgb8 = color.lab_to_rgb8(line_lab)
-    same = np.nonzero((color.lab_to_rgb8(palette_lab) == line_rgb8).all(axis=1))[0]
-    if len(same):
-        line_index = int(same[0])
-    elif len(palette_lab) < 256:
-        line_index = len(palette_lab)
-        palette_lab = np.vstack([palette_lab, line_lab[None, :]])
+    if fixed_palette:
+        # DEVIATION: Section 8.3 — hardware palettes are fixed; the outline snaps to the
+        # nearest existing entry instead of adding (or overwriting) one.
+        line_index = _nearest_entry(line_lab, palette_lab)
     else:
-        line_index = int(color.nearest_index(line_lab[None, :], palette_lab)[0])
-        palette_lab[line_index] = line_lab
+        line_rgb8 = color.lab_to_rgb8(line_lab)
+        same = np.nonzero((color.lab_to_rgb8(palette_lab) == line_rgb8).all(axis=1))[0]
+        if len(same):
+            line_index = int(same[0])
+        elif len(palette_lab) < 256:
+            line_index = len(palette_lab)
+            palette_lab = np.vstack([palette_lab, line_lab[None, :]])
+        else:
+            # A full palette: the nearest entry becomes the outline color.
+            line_index = _nearest_entry(line_lab, palette_lab)
+            palette_lab[line_index] = line_lab
     idx[ring] = line_index
+    if stats is not None:
+        stats["outline_index"] = line_index
     return idx, palette_lab
 
 
 # ------------------------------------------------------------------------------------ run
 
 def run(indices: np.ndarray, palette_lab: np.ndarray, config, *, saturated: bool = False,
-        fixed_palette: bool = False) -> tuple[np.ndarray, np.ndarray]:
+        fixed_palette: bool = False, outline_margin: int = 0,
+        stats: dict | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Apply all passes. `saturated`: β was already applied (gerstner). `fixed_palette`: a
-    named hardware palette is in use, whose colors are left untouched."""
+    named hardware palette is in use, whose colors are left untouched (the outline snaps to
+    one of them). `outline_margin`: the caller already reserved a transparent margin for the
+    outline (see preprocess.outline_margin), so the canvas is never padded here. If `stats`
+    is given, stats["outline_index"] is the outline's palette index, or None when no outline
+    was drawn, and stats["outline_clipped"] is True when the outline could not be drawn on an
+    edge the silhouette touches (no padding allowed)."""
     idx = np.array(indices, dtype=np.int64)
     palette_lab = np.array(palette_lab, dtype=np.float64)
 
@@ -212,15 +276,23 @@ def run(indices: np.ndarray, palette_lab: np.ndarray, config, *, saturated: bool
         if not saturated:
             palette_lab = apply_saturation(palette_lab, config.saturation_beta)
     if config.remove_orphans:
-        idx = remove_orphans(idx, palette_lab, config.orphan_min_region)
+        idx = remove_orphans(idx, palette_lab, config.orphan_min_region,
+                             max_delta=config.orphan_max_delta)
     if config.fix_jaggies:
         idx = fix_jaggies(idx)
+    if stats is not None:
+        stats["outline_index"] = None
+        stats["outline_clipped"] = False
     if config.outline != "none":
-        # DEVIATION: Section 8.3 — with tileset=True the canvas is not padded for the
-        # outline, because that would break the tile_size | width, height requirement.
+        # DEVIATION: Section 8.3 — the canvas is never grown by the pipeline: the outline
+        # margin is reserved inside the requested size (outline_margin), and with tileset=True
+        # nothing is reserved or padded because the canvas must stay a multiple of tile_size;
+        # an outline on edges the silhouette touches is then clipped (stats.outline_clipped).
         idx, palette_lab = add_outline(idx, palette_lab, config.outline, config.outline_darken,
-                                       allow_pad=not config.tileset)
+                                       allow_pad=not config.tileset and not outline_margin,
+                                       fixed_palette=fixed_palette, stats=stats)
         if config.remove_orphans:
             # The outline can create 1-px nubs.
-            idx = remove_orphans(idx, palette_lab, config.orphan_min_region, max_passes=1)
+            idx = remove_orphans(idx, palette_lab, config.orphan_min_region, max_passes=1,
+                                 max_delta=config.orphan_max_delta)
     return idx, palette_lab

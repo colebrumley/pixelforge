@@ -1,7 +1,8 @@
 import numpy as np
+import pytest
 from scipy import ndimage
 
-from pixelforge import color
+from pixelforge import Config, color
 from pixelforge.downscale import box, kopf
 
 DARK_L = 50.0   # "dark" = closer to black than to white
@@ -51,3 +52,97 @@ def test_max_iters_is_respected(preprocessed):
     out = kopf.run(pre.lab, pre.mask, 16, 16, config)
     assert out.stats["iterations"] == 3 and not out.stats["converged"]
     assert out.small_lab.shape == (16, 16, 3) and out.small_mask.all()
+
+
+def test_solid_color_converges_quickly():
+    # A non-integer ratio, where border truncation used to keep max |Δμ| above kopf_tol.
+    lab = np.broadcast_to(color.rgb_to_lab(np.array([[[0.3, 0.6, 0.2]]])), (50, 50, 3)).copy()
+    config = Config(method="kopf", out_width=32, out_height=32)
+    out = kopf.run(lab, np.ones((50, 50), dtype=bool), 32, 32, config)
+    assert out.stats["converged"] and out.stats["iterations"] < 10
+    assert color.delta_e(out.small_lab, lab[0, 0]).max() < 1e-6
+
+
+def test_thin_line_converges(preprocessed):
+    pre, config = preprocessed("line_diag", method="kopf", out_width=32, out_height=32,
+                               key_bg=False)
+    out = kopf.run(pre.lab, pre.mask, 32, 32, config)
+    assert out.stats["converged"] and out.stats["iterations"] < config.kopf_max_iters
+
+
+def test_all_ones_weight_matches_unweighted(preprocessed):
+    for name in ("line_diag", "circle_alpha"):
+        pre, config = preprocessed(name, method="kopf", out_width=16, out_height=16)
+        plain = kopf.run(pre.lab, pre.mask, 16, 16, config)
+        ones = kopf.run(pre.lab, pre.mask, 16, 16, config, weight=np.ones(pre.mask.shape))
+        assert np.array_equal(ones.small_lab, plain.small_lab)
+        assert np.array_equal(ones.small_mask, plain.small_mask)
+
+
+def test_low_weight_pixels_pull_kernels_less():
+    # Columns alternate L 40 and L 60, both equally far from the initial kernel color (L 50),
+    # so after one iteration every kernel's color is the spatial mean of its window: 50
+    # unweighted, and closer to 40 when the light columns carry a quarter of the weight.
+    lab = np.zeros((32, 32, 3))
+    lab[:, 1::2, 0] = 60.0
+    lab[:, 0::2, 0] = 40.0
+    mask = np.ones((32, 32), dtype=bool)
+    weight = np.ones((32, 32))
+    weight[:, 1::2] = 0.25
+    config = Config(method="kopf", denoise="none", kopf_max_iters=1)
+    plain = kopf.run(lab, mask, 8, 8, config)
+    out = kopf.run(lab, mask, 8, 8, config, weight=weight)
+    assert np.array_equal(out.small_mask, plain.small_mask)
+    assert abs(plain.small_lab[..., 0].mean() - 50.0) < 0.5
+    assert abs(out.small_lab[..., 0].mean() - 44.0) < 1.0
+
+
+def _line_near_silhouette(edge: int, offset: int, n: int = 64):
+    """Orange (L≈68) right of a transparent margin of `edge` px, with a 2-px dark (L≈6)
+    vertical line `offset` px inside the silhouette."""
+    x = np.broadcast_to(np.arange(n), (n, n))
+    rgb = np.empty((n, n, 3))
+    rgb[:] = np.array([240, 140, 30]) / 255
+    rgb[(x >= edge + offset) & (x < edge + offset + 2)] = 20 / 255
+    return color.rgb_to_lab(rgb), x >= edge
+
+
+def test_line_near_silhouette_not_worse_than_box():
+    # Kernels whose window the silhouette cuts used to fire the shape constraint on every
+    # iteration and saturate σ, so a line 4 px inside the edge came out fainter than with box.
+    lab, mask = _line_near_silhouette(edge=4, offset=4)
+    config = Config(method="kopf", out_width=16, out_height=16)
+    out = kopf.run(lab, mask, 16, 16, config)
+    baseline = box.run(lab, mask, 16, 16, config)
+    kopf_l = np.where(out.small_mask, out.small_lab[..., 0], np.inf)
+    box_l = np.where(baseline.small_mask, baseline.small_lab[..., 0], np.inf)
+    assert kopf_l.min() <= box_l.min() + 2
+    assert (kopf_l.min(axis=1) < DARK_L).all()   # the line is visible on every row
+
+
+@pytest.mark.parametrize("out_size, edge", [(16, 4), (8, 4), (8, 6), (8, 9)])
+def test_line_two_px_inside_silhouette_shows_on_every_row(out_size, edge):
+    # A kernel whose cell is mostly transparent used to claim the line's pixels and then be
+    # dropped from the mask, so at 64→8 the line vanished (pure fill color on every row).
+    lab, mask = _line_near_silhouette(edge=edge, offset=2)
+    config = Config(method="kopf", out_width=out_size, out_height=out_size)
+    out = kopf.run(lab, mask, out_size, out_size, config)
+    baseline = box.run(lab, mask, out_size, out_size, config)
+    kopf_l = np.where(out.small_mask, out.small_lab[..., 0], np.inf)
+    box_l = np.where(baseline.small_mask, baseline.small_lab[..., 0], np.inf)
+    assert (kopf_l.min(axis=1) < box_l.min() + 2).all()
+
+
+def test_silhouette_mask_matches_box(preprocessed):
+    pre, config = preprocessed("circle_alpha", method="kopf", out_width=32, out_height=32,
+                               crop_to_alpha=False)
+    out = kopf.run(pre.lab, pre.mask, 32, 32, config)
+    assert np.array_equal(out.small_mask, box.run(pre.lab, pre.mask, 32, 32, config).small_mask)
+
+
+def test_silhouette_does_not_saturate_sigma(preprocessed):
+    pre, config = preprocessed("circle_alpha", method="kopf", out_width=16, out_height=16,
+                               crop_to_alpha=False, prereduce_max_ratio=4)
+    assert pre.mask.shape == (64, 64)
+    out = kopf.run(pre.lab, pre.mask, 16, 16, config)
+    assert out.stats["sigma_capped"] < 0.1 * 16 * 16

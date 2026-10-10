@@ -12,9 +12,14 @@ import make_fixtures  # noqa: E402
 
 @pytest.fixture(scope="session", autouse=True)
 def _fixtures():
-    """Generate the synthetic fixtures if they are not on disk yet."""
-    if any(not (FIXTURES / f"{name}.png").is_file() for name in make_fixtures.FIXTURES):
-        make_fixtures.main(FIXTURES)
+    """Fail (never write into the repository) if a committed fixture is missing."""
+    missing = [name for name in make_fixtures.FIXTURES
+               if not (FIXTURES / f"{name}.png").is_file()]
+    if missing:
+        pytest.fail(f"missing test fixture(s) {', '.join(missing)} in {FIXTURES}; restore the "
+                    "committed files, or regenerate them with `python scripts/make_fixtures.py` "
+                    "(same pixels, but the PNG bytes and so every input_sha256 may differ)",
+                    pytrace=False)
 
 
 @pytest.fixture(scope="session")

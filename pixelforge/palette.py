@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
 
-from . import color
+from . import color, io
+from .errors import PixelforgeError
 
 PALETTE_DIR = Path(__file__).parent / "palettes"
+PALETTE_SUFFIXES = (".hex", ".gpl")
+MAX_PALETTE_FILE_BYTES = 64 * 1024
+INLINE_PREFIX = "hex:"
+_HEX_LINE = re.compile(r"#?[0-9a-fA-F]{6}")
 
 # Boxes spanning less than this (LAB units; ΔE ≈ 2.3 is one just-noticeable difference) are not split.
 MEDIAN_CUT_MIN_RANGE = 2.3
@@ -17,6 +23,7 @@ RAMP_BIN_DEGREES = 30.0
 RAMP_MAX_SHIFT_DEGREES = 6.0
 RAMP_ACHROMATIC_CHROMA = 8.0
 # L distance from the bin's mean L at which the hue shift reaches its 6° maximum.
+# DEVIATION: Section 8.1 — the spec gives the 6° maximum but no L scale for it.
 RAMP_FULL_SHIFT_L = 30.0
 RAMP_DARK_HUE = 270.0    # blue/purple
 RAMP_LIGHT_HUE = 90.0    # yellow
@@ -111,33 +118,76 @@ def bundled_palettes() -> list[str]:
 
 
 def parse_hex(text: str) -> np.ndarray:
+    """One 'rrggbb' or '#rrggbb' per line; ';' starts a comment. Errors name the line number
+    only, never its content."""
     colors = []
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines(), start=1):
         line = line.split(";")[0].strip()
         if not line or line.startswith("//"):
             continue
+        if not _HEX_LINE.fullmatch(line):
+            raise ValueError(f"line {number}: not a hex color")
         colors.append(color.hex_to_rgb8(line))
     return np.array(colors, dtype=np.uint8).reshape(-1, 3)
 
 
 def parse_gpl(text: str) -> np.ndarray:
     colors = []
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines(), start=1):
         parts = line.split()
         if len(parts) >= 3 and all(p.isdigit() for p in parts[:3]):
-            colors.append([int(p) for p in parts[:3]])
+            rgb = [int(p) for p in parts[:3]]
+            if max(rgb) > 255:
+                raise ValueError(f"line {number}: color channel above 255")
+            colors.append(rgb)
     return np.array(colors, dtype=np.uint8).reshape(-1, 3)
 
 
+def _read_palette_text(path: Path) -> str:
+    """Read a palette file: regular files of at most MAX_PALETTE_FILE_BYTES, UTF-8 text."""
+    try:
+        with io.open_regular(path) as f:
+            data = f.read(MAX_PALETTE_FILE_BYTES + 1)
+    except PixelforgeError as exc:
+        raise ValueError(str(exc)) from None
+    if len(data) > MAX_PALETTE_FILE_BYTES:
+        raise ValueError(f"palette file {path} is larger than {MAX_PALETTE_FILE_BYTES} bytes")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError(f"palette file {path} is not a UTF-8 text file") from None
+
+
+def inline_name(palette_rgb8: np.ndarray) -> str:
+    """A palette_name that carries the colors themselves: 'hex:rrggbb,rrggbb,...'."""
+    lines = [color.rgb8_to_hex(c)[1:] for c in np.asarray(palette_rgb8).reshape(-1, 3)]
+    return INLINE_PREFIX + ",".join(lines)
+
+
 def load_palette(name: str) -> np.ndarray:
-    """Load a bundled palette by name, or a .hex / .gpl file by path. Returns (K, 3) uint8."""
-    bundled = PALETTE_DIR / f"{name}.hex"
-    path = bundled if bundled.is_file() else Path(name)
-    if not path.is_file():
-        raise ValueError(f"unknown palette {name!r}: not one of {bundled_palettes()} "
-                         "and not a path to a .hex or .gpl file")
-    text = path.read_text()
-    rgb8 = parse_gpl(text) if path.suffix.lower() == ".gpl" else parse_hex(text)
+    """Load a bundled palette by name, a .hex / .gpl file by path, or an inline
+    'hex:rrggbb,rrggbb,...' palette. Returns (K, 3) uint8."""
+    if name.startswith(INLINE_PREFIX):
+        try:
+            rgb8 = parse_hex("\n".join(name[len(INLINE_PREFIX):].split(",")))
+        except ValueError as exc:
+            raise ValueError(f"inline palette: {exc}") from None
+        if not 1 <= len(rgb8) <= 256:
+            raise ValueError(f"inline palette must have between 1 and 256 colors, "
+                             f"got {len(rgb8)}")
+        return rgb8
+    if name in bundled_palettes():
+        path = PALETTE_DIR / f"{name}.hex"
+    else:
+        path = Path(name)
+        if path.suffix.lower() not in PALETTE_SUFFIXES or not path.exists():
+            raise ValueError(f"unknown palette {name!r}: not one of {bundled_palettes()} "
+                             "and not a path to a .hex or .gpl file")
+    text = _read_palette_text(path)
+    try:
+        rgb8 = parse_gpl(text) if path.suffix.lower() == ".gpl" else parse_hex(text)
+    except ValueError as exc:
+        raise ValueError(f"palette file {path}: {exc}") from None
     if not 1 <= len(rgb8) <= 256:
         raise ValueError(f"palette {name!r} must have between 1 and 256 colors, "
                          f"got {len(rgb8)}")
@@ -149,8 +199,15 @@ def parse_hex_lines(name: str) -> list[str]:
     return [color.rgb8_to_hex(c)[1:] for c in load_palette(name)]
 
 
-def write_hex(path, palette_rgb8: np.ndarray) -> None:
+TRANSPARENT_HEX_LINE = "; transparent"
+
+
+def write_hex(path, palette_rgb8: np.ndarray, transparent_first: bool = False) -> None:
+    """One 'rrggbb' per line. ``transparent_first`` adds a leading TRANSPARENT_HEX_LINE, a
+    comment that parse_hex skips, so the file still loads as the K colors."""
     lines = [color.rgb8_to_hex(c)[1:] for c in np.asarray(palette_rgb8).reshape(-1, 3)]
+    if transparent_first:
+        lines.insert(0, TRANSPARENT_HEX_LINE)
     Path(path).write_text("\n".join(lines) + "\n")
 
 
@@ -200,7 +257,9 @@ def resolve_source(config) -> str:
 def build(lab_pixels: np.ndarray, config) -> np.ndarray:
     """Palette (K, 3) in LAB for the given pixels according to the config."""
     if config.palette_name is not None:
-        return color.rgb8_to_lab(load_palette(config.palette_name))
+        # The cached lines, so the palette used is exactly the one Config.hash() covers.
+        lines = config.palette_hex_lines()
+        return color.rgb8_to_lab(np.array([color.hex_to_rgb8(h) for h in lines], np.uint8))
     if resolve_source(config) == "mcda":
         return mcda(lab_pixels, config.palette_size, config)
     return median_cut(lab_pixels, config.palette_size)
