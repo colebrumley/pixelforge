@@ -1,0 +1,6 @@
+include LICENSE README.md DESIGN.md REQUIREMENTS.md
+recursive-include tests *.py
+include tests/fixtures/*.png
+include scripts/*.py
+prune *.egg-info
+global-exclude __pycache__ *.py[cod]
