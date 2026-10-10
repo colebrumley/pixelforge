@@ -1,4 +1,4 @@
-include LICENSE README.md DESIGN.md REQUIREMENTS.md
+include LICENSE README.md CHANGELOG.md DESIGN.md REQUIREMENTS.md
 recursive-include tests *.py
 include tests/fixtures/*.png
 include scripts/*.py
