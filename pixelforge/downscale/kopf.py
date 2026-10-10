@@ -16,6 +16,7 @@ import math
 import numpy as np
 
 from . import Downscaled
+from .box import cell_index
 
 RK_HALF_WIDTH = 2.0          # R_k half-width in output units
 SIGMA_INIT = 1e-4
@@ -202,6 +203,18 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
     # image border (fewer in-image pixels than the window spans); see the shape constraints.
     truncated = (has_pixels < in_image) | (in_image < np.outer(layout.y.window, layout.x.window))
     has_pixels = has_pixels > 0
+    # DEVIATION: Section 6 — a kernel whose own output cell is less than half opaque (the box
+    # filter's rule) is a "ghost": it takes no part in the E-step, the shape constraints or
+    # the starved re-seeding, and it is transparent in the output. Left in the EM, such a
+    # kernel keeps its tiny initial σ, matches a dark line 2–3 px inside the silhouette
+    # exactly, claims the line's pixels from its opaque neighbors, and is then dropped by
+    # small_mask, so the line vanished from the output altogether (pure fill color on
+    # 256→32 where box still showed it). Its neighbors now take those pixels.
+    cell = (cell_index(hi, ho)[:, None] * wo + cell_index(wi, wo)[None, :]).ravel()
+    cell_total = np.bincount(cell, minlength=ho * wo).reshape(ho, wo)
+    cell_opaque = np.bincount(cell[mask.ravel()], minlength=ho * wo).reshape(ho, wo)
+    ghost = cell_opaque * 2 < cell_total
+    any_ghost = bool(ghost.any())
 
     def offsets(cx: np.ndarray, cy: np.ndarray, jy: int, jx: int) -> None:
         """dx, dy ← p_i − c_k for each pixel's slot kernel."""
@@ -241,6 +254,8 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
             dist *= layout.expand(inv_color, jy, jx)
             logw -= dist
             logw[~layout.slot_valid(jy, jx, pixel_mask)] = -np.inf
+            if any_ghost:
+                logw[layout.expand(ghost, jy, jx)] = -np.inf
 
         # DEVIATION: Section 6 — the per-kernel normalization w_k(i) /= Σ_{i∈R_k} w_k(i) is
         # skipped. It rescales every kernel relative to its own best-fitting pixels, so a
@@ -366,10 +381,11 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         # 248 ended at SIGMA_CAP, and those kernels lost their color selectivity (a dark line
         # 4 px inside the silhouette came out fainter than with the box filter).
         fires = np.zeros((ho, wo), dtype=np.int64)
-        whole = fed & ~truncated
+        shaped = ~truncated & ~ghost
+        whole = fed & shaped
         for ndy, ndx in _NEIGHBORS8:
             exists = _shift(np.ones((ho, wo), dtype=bool), ndy, ndx, fill=False)
-            pair = exists & whole & _shift(~truncated, ndy, ndx, fill=False)
+            pair = exists & whole & _shift(shaped, ndy, ndx, fill=False)
             s_dir = toward[(ndy, ndx)] / wsafe
             f = overlap[(ndy, ndx)] / wsafe
             norm = math.hypot(ndx, ndy)
@@ -390,7 +406,7 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         # exactly. In place of the spec's "sum == 0 → uniform over R_k" guard, the kernel is
         # re-seeded with the color of the input pixel under its center, which it then matches
         # exactly and competes for on spatial terms alone.
-        starved = has_pixels & (weight_sum < starve_below)
+        starved = has_pixels & ~ghost & (weight_sum < starve_below)
         if starved.any():
             seed_y = np.clip(np.floor(mu_y[starved] * (hi / ho)).astype(np.int64), 0, hi - 1)
             seed_x = np.clip(np.floor(mu_x[starved] * (wi / wo)).astype(np.int64), 0, wi - 1)
@@ -424,12 +440,16 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
 
     # OUTPUT: small_mask[k] = Σ γ_k(i)·mask_i / Σ γ_k(i) >= 0.5.
     # DEVIATION: Section 6 — transparent pixels are excluded from R_k, so with the EM's own γ
-    # that ratio is always 1. The coverage is measured with spatial-only responsibilities
-    # (the final μ, Σ without the color term) over all pixels instead; kernels that ended up
-    # starved take their color from the same weights.
-    starved = weight_sum < starve_below
-    small_mask = ~starved
-    if pixel_mask is not None or starved.any():
+    # that ratio is always 1. small_mask is instead the cell rule that defines the ghost
+    # kernels: a kernel is opaque iff its own output cell is at least half opaque, the same
+    # mask as the box filter. An earlier version measured the coverage with spatial-only
+    # responsibilities; it kept kernels whose cell was as little as 19 % opaque (the ghosts'
+    # problem above) and, for cells exactly half opaque, dropped kernels on some rows and not
+    # others after they had claimed a line's pixels. Kernels that ended up starved take their
+    # color from spatial-only responsibilities (the final μ, Σ without the color term).
+    small_mask = ~ghost
+    starved = (weight_sum < starve_below) & small_mask
+    if starved.any():
         inv_a, inv_b, inv_c = _inverse_cov(cov)
         for s, (jy, jx) in enumerate(slots):
             offsets(mu_x, mu_y, jy, jx)
@@ -444,21 +464,15 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         pixel_sum = gamma.sum(axis=0)
         pixel_sum[pixel_sum == 0] = 1.0
         gamma /= pixel_sum
-        opaque = mask.astype(np.float64)
-        all_w, opaque_w = np.zeros((ho, wo)), np.zeros((ho, wo))
+        # Colors are weighted by alpha (by the binary mask when there is no weight).
+        pixel_mass = mask.astype(np.float64) if pixel_weight is None else pixel_weight
+        mass_w = np.zeros((ho, wo))
         color_w = [np.zeros((ho, wo)) for _ in range(3)]
-        mass_w = opaque_w if pixel_weight is None else np.zeros((ho, wo))
         for s, (jy, jx) in enumerate(slots):
-            layout.reduce(gamma[s], jy, jx, all_w)
-            g = gamma[s] * opaque
-            layout.reduce(g, jy, jx, opaque_w)
-            if pixel_weight is not None:
-                # Coverage counts opaque pixels; colors are weighted by alpha.
-                g = gamma[s] * pixel_weight
-                layout.reduce(g, jy, jx, mass_w)
+            g = gamma[s] * pixel_mass
+            layout.reduce(g, jy, jx, mass_w)
             for c in range(3):
                 layout.reduce(g * channels[c], jy, jx, color_w[c])
-        small_mask = (opaque_w > 0) & (opaque_w * 2 >= all_w)
         refill = starved & (mass_w > 0)
         for c in range(3):
             nu[refill, c] = color_w[c][refill] / mass_w[refill]
