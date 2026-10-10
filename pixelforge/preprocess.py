@@ -10,6 +10,8 @@ from scipy import ndimage
 
 from . import color
 from .config import PRESET_LONGEST_EDGE, Config
+from .errors import PixelforgeError  # noqa: F401 - re-exported for compatibility
+from .io import MAX_INPUT_PIXELS
 
 # Output pixels of wrapped context added on every side in seamless mode (Section 9:
 # the input is wrap-padded by 2·r input pixels, i.e. 2 output pixels).
@@ -19,10 +21,6 @@ SEAMLESS_PAD_OUT = 2
 # A flat background is assumed when at least this fraction of the image's border pixels
 # share one color (within key_bg_tolerance).
 KEY_BG_MIN_BORDER_FRACTION = 0.9
-
-
-class PixelforgeError(RuntimeError):
-    """A runtime failure that is not a config validation error."""
 
 
 @dataclass
@@ -160,6 +158,12 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
     # downscalers (otherwise gerstner would leave superpixels without pixels).
     factor = max(math.ceil(out_w / w), math.ceil(out_h / h))
     if factor > 1:
+        # Checked before allocating: a 2000×1 input with a square output would otherwise be
+        # repeated into hundreds of millions of float64 pixels.
+        if h * w * factor * factor > MAX_INPUT_PIXELS:
+            raise PixelforgeError(
+                f"a {w}x{h} input is too small for a {out_w}x{out_h} output: repeating it "
+                f"{factor}x per axis would exceed {MAX_INPUT_PIXELS} pixels")
         rgb = np.repeat(np.repeat(rgb, factor, axis=0), factor, axis=1)
         mask = np.repeat(np.repeat(mask, factor, axis=0), factor, axis=1)
         h, w = mask.shape

@@ -3,15 +3,26 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps, UnidentifiedImageError
 from PIL.PngImagePlugin import PngInfo
+
+from .errors import PixelforgeError
 
 META_CONFIG_KEY = "pixelforge:config"
 META_INPUT_KEY = "pixelforge:input_sha256"
+
+# Default input pixel budget (width × height), checked before any pixel data is decoded.
+MAX_INPUT_PIXELS = 24_000_000
+# Only these decoders are reachable; Pillow's other plugins (EPS → Ghostscript, ...) are not.
+INPUT_FORMATS = ("PNG", "JPEG", "GIF", "WEBP", "BMP", "TIFF")
+_HIGH_BIT_MODES = ("I;16", "I;16B", "I;16L", "I")
 
 
 @dataclass
@@ -26,14 +37,74 @@ class Loaded:
         return self.alpha.astype(np.float64) / 255.0
 
 
+def _open_regular(path):
+    """Open a regular file for binary reading; refuse FIFOs, devices and directories.
+
+    O_NONBLOCK keeps the open itself from hanging on a FIFO; the check runs on the opened
+    descriptor, so the file cannot be swapped between check and read.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags)
+    except IsADirectoryError:
+        raise PixelforgeError(f"{path} is not a regular file") from None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise PixelforgeError(f"{path} is not a regular file")
+        if hasattr(os, "set_blocking"):
+            os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def sha256_file(path) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    with _open_regular(path) as f:
+        return hashlib.file_digest(f, "sha256").hexdigest()
 
 
-def load(path) -> Loaded:
-    digest = sha256_file(path)
-    with Image.open(path) as im:
-        rgba = np.asarray(im.convert("RGBA"), dtype=np.uint8)
+def _to_8bit(im: Image.Image) -> Image.Image:
+    """Rescale 16-bit (and 32-bit integer) grayscale to 8-bit; Pillow would clip it at 255."""
+    if im.mode not in _HIGH_BIT_MODES:
+        return im
+    values = np.asarray(im, dtype=np.float64)
+    gray = np.round(np.clip(values, 0.0, 65535.0) / 257.0).astype(np.uint8)
+    return Image.fromarray(gray, mode="L")
+
+
+def load(path, max_pixels: int = MAX_INPUT_PIXELS) -> Loaded:
+    """Decode an image file to RGBA.
+
+    Raises PixelforgeError for non-regular files, unsupported or undecodable data and images
+    with more than ``max_pixels`` pixels. Multi-frame images use their first frame (with a
+    warning); EXIF orientation is applied.
+    """
+    with _open_regular(path) as f:
+        digest = hashlib.file_digest(f, "sha256").hexdigest()
+        f.seek(0)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with Image.open(f, formats=list(INPUT_FORMATS)) as im:
+                    width, height = im.size
+                    if width * height > max_pixels:
+                        raise PixelforgeError(
+                            f"{path}: {width}x{height} = {width * height} pixels exceeds the "
+                            f"input budget of {max_pixels} pixels (--max-input-pixels)")
+                    if getattr(im, "n_frames", 1) > 1:
+                        warnings.warn(f"{path} has {im.n_frames} frames; using the first",
+                                      stacklevel=2)
+                    frame = _to_8bit(ImageOps.exif_transpose(im))
+                    rgba = np.asarray(frame.convert("RGBA"), dtype=np.uint8)
+        except (Image.DecompressionBombWarning, Image.DecompressionBombError) as exc:
+            raise PixelforgeError(f"{path}: {exc}") from None
+        except UnidentifiedImageError:
+            raise PixelforgeError(
+                f"{path}: not a supported image (expected one of "
+                f"{', '.join(INPUT_FORMATS)})") from None
+        except (OSError, SyntaxError, ValueError) as exc:
+            raise PixelforgeError(f"{path}: could not decode image ({exc})") from None
     return from_rgba(rgba, digest)
 
 

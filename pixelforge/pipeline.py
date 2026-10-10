@@ -70,9 +70,10 @@ def uses_gerstner_palette(config: Config) -> bool:
             and palette.resolve_source(config) == "mcda")
 
 
-def run(input_path, config: Config) -> Result:
+def run(input_path, config: Config, max_pixels: int | None = None) -> Result:
+    """Load and convert one image. ``max_pixels`` defaults to ``io.MAX_INPUT_PIXELS``."""
     start = time.perf_counter()
-    loaded = io.load(input_path)
+    loaded = io.load(input_path, io.MAX_INPUT_PIXELS if max_pixels is None else max_pixels)
     return run_loaded(loaded, config, {"load": time.perf_counter() - start})
 
 
