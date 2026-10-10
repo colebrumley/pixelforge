@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import platform
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +15,8 @@ import numpy as np
 from . import color, downscale, io, palette, postprocess, preprocess, quantize, tiles
 from .config import Config
 from .version import __version__
+
+LAB_DECIMALS = 6   # precision of the LAB values in _palette.json
 
 
 @dataclass
@@ -46,7 +50,9 @@ class Result:
         io.save_png(paths["image"], self.indices, self.palette, text)
         io.save_png(paths["preview"], self.indices, self.palette, text,
                     scale=self.config.scale_preview)
-        entries = [{"hex": color.rgb8_to_hex(rgb), "lab": [float(v) for v in lab]}
+        # LAB_DECIMALS: float64 LAB can differ at ~1e-12 across SIMD paths; the PNG does not.
+        entries = [{"hex": color.rgb8_to_hex(rgb),
+                    "lab": [round(float(v), LAB_DECIMALS) + 0.0 for v in lab]}
                    for rgb, lab in zip(self.palette, self.palette_lab)]
         paths["palette"].write_text(json.dumps(entries, indent=2) + "\n")
         palette.write_hex(paths["palette_hex"], self.palette)
@@ -56,7 +62,7 @@ class Result:
                 "palette_sha256": provenance["palette_sha256"],
                 "palette": provenance["palette"],
                 "width": int(self.indices.shape[1]), "height": int(self.indices.shape[0]),
-                "stats": self.stats}
+                "stats": self.stats, "environment": environment()}
         if self.config.remove_bg:
             # The matting model is outside the determinism contract; record what ran.
             meta["remove_bg_versions"] = {name: package_version(name)
@@ -66,6 +72,14 @@ class Result:
             io.save_png(paths["tileset"], self.tileset_indices, self.palette, text)
             paths["tilemap"].write_text(json.dumps(self.tilemap, separators=(",", ":")) + "\n")
         return {name: str(path) for name, path in paths.items()}
+
+
+def environment() -> dict:
+    """Interpreter, numerical library versions and platform; recorded, never hashed."""
+    return {"python": platform.python_version(), "numpy": package_version("numpy"),
+            "scipy": package_version("scipy"), "scikit_image": package_version("scikit-image"),
+            "pillow": package_version("Pillow"),
+            "platform": f"{sys.platform} {platform.machine()}"}
 
 
 def package_version(name: str) -> str | None:

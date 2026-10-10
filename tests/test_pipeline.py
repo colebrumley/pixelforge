@@ -296,3 +296,16 @@ def test_meta_records_matting_versions_only_with_remove_bg(fixture_path, tmp_pat
     versions = json.loads((tmp_path / "matted_meta.json").read_text())["remove_bg_versions"]
     assert set(versions) == {"rembg", "onnxruntime"}
     assert all(v is None or isinstance(v, str) for v in versions.values())
+
+
+def test_meta_environment_and_rounded_palette_lab(fixture_path, tmp_path):
+    config = Config(method="box", out_height=16, palette_size=4)
+    result = run(fixture_path("circle_alpha"), config)
+    result.save(tmp_path / "a")
+    meta = json.loads((tmp_path / "a_meta.json").read_text())
+    assert set(meta["environment"]) == {"python", "numpy", "scipy", "scikit_image", "pillow",
+                                        "platform"}
+    assert meta["environment"]["numpy"] == np.__version__
+    assert meta["config_hash"] == config.hash()     # environment is not hashed
+    for entry in json.loads((tmp_path / "a_palette.json").read_text()):
+        assert all(v == round(v, 6) for v in entry["lab"])
