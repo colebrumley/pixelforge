@@ -210,3 +210,30 @@ def test_batch_metadata_does_not_depend_on_outdir(tmp_path):
         assert text["pixelforge:palette_sha256"] == meta["palette_sha256"]
         runs.append((text, (out / "a.png").read_bytes(), meta["config_hash"]))
     assert runs[0] == runs[1]
+
+
+def test_verbose_progress_on_stderr_json_on_stdout(fixture_path, tmp_path):
+    result = _invoke("-vv", "convert", fixture_path("circle_alpha"), "-o", tmp_path,
+                     "--method", "kopf", "--out-width", "16", "--out-height", "16",
+                     "--kopf-max-iters", "3")
+    assert result.exit_code == 0, result.output
+    assert "pixelforge: kopf iter 1/3" in result.stderr
+    assert "pixelforge: downscale kopf" in result.stderr
+    assert "outputs" in json.loads(result.stdout)
+
+
+def test_quiet_clean_run_prints_nothing_on_stderr(fixture_path, tmp_path):
+    result = _invoke("-q", "convert", fixture_path("noisy_gradient"), "-o", tmp_path, *FAST)
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    json.loads(result.stdout)
+
+
+def test_hint_when_no_background_to_key(fixture_path, tmp_path):
+    # An opaque image without a flat border: key_bg (sprite default) finds nothing to remove.
+    result = _invoke("convert", fixture_path("noisy_gradient"), "-o", tmp_path, *FAST)
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["stats"]["background_keyed"] is False
+    assert result.stderr.count("--remove-bg") == 1
+    result = _invoke("convert", fixture_path("circle_alpha"), "-o", tmp_path, *FAST)
+    assert result.stderr == ""

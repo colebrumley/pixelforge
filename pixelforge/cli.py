@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
 import math
 import os
 import sys
@@ -25,6 +26,47 @@ OUTPUT_STEM_SUFFIXES = ("_preview", "_tileset", "_compare")   # our own image ou
 MAX_CONFIG_FILE_BYTES = 1024 * 1024
 
 _CLICK_TYPES = {"int": int, "float": float, "str": str}
+
+log = logging.getLogger("pixelforge")
+
+
+class _ClickHandler(logging.Handler):
+    """Writes records to the current stderr (as CliRunner swaps it), never to stdout."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            click.echo(self.format(record), err=True)
+        except Exception:  # noqa: BLE001 - logging must never break a run
+            self.handleError(record)
+
+
+def configure_logging(verbose: int, quiet: bool) -> None:
+    """stderr handler on the "pixelforge" logger: WARNING by default, -v INFO, -vv DEBUG.
+
+    Undone when the command finishes, so repeated in-process invocations do not stack.
+    """
+    handler = _ClickHandler()
+    handler.setFormatter(logging.Formatter("pixelforge: %(message)s"))
+    previous_level = log.level
+    log.addHandler(handler)
+    if quiet:
+        log.setLevel(logging.ERROR)
+    else:
+        log.setLevel({0: logging.WARNING, 1: logging.INFO}.get(verbose, logging.DEBUG))
+
+    def restore() -> None:
+        log.removeHandler(handler)
+        log.setLevel(previous_level)
+
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None:
+        ctx.call_on_close(restore)
+
+
+def _warn(message: str) -> None:
+    """A CLI warning on stderr, unless -q (also printed when called outside the CLI)."""
+    if log.isEnabledFor(logging.WARNING):
+        click.echo(f"pixelforge: {message}", err=True)
 
 
 def config_options(command):
@@ -63,9 +105,8 @@ def build_config(config_path, flags: dict) -> Config:
         if "preset" in given and config_path is not None:
             shadowed = sorted(set(values) & set(PRESETS[given["preset"]]) - set(given))
             if shadowed:
-                click.echo(f"warning: --preset {given['preset']} does not override "
-                           f"{', '.join(shadowed)} from {config_path}; the JSON values win",
-                           err=True)
+                _warn(f"warning: --preset {given['preset']} does not override "
+                      f"{', '.join(shadowed)} from {config_path}; the JSON values win")
         values.update(given)
         config = Config(**values)
         config.validate_palette()
@@ -141,8 +182,16 @@ def _emit(payload: dict) -> None:
 @click.version_option(package_name="pixelforge")
 @click.option("--debug", is_flag=True, default=False,
               help="Print full tracebacks on errors (also: PIXELFORGE_DEBUG=1).")
-def cli(debug):
-    """Deterministic conversion of images into 16-bit-style pixel art."""
+@click.option("-v", "--verbose", count=True,
+              help="Progress on stderr: -v per stage, -vv every iteration.")
+@click.option("-q", "--quiet", is_flag=True, default=False,
+              help="Only errors on stderr (no warnings or hints).")
+def cli(debug, verbose, quiet):
+    """Deterministic conversion of images into 16-bit-style pixel art.
+
+    stdout carries only JSON; progress, warnings and errors go to stderr.
+    """
+    configure_logging(verbose, quiet)
 
 
 @cli.command()
@@ -226,7 +275,7 @@ def batch(input_dir, outdir, force, config_path, max_input_pixels, **flags):
         if not (p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES):
             continue
         if p.stem.endswith(OUTPUT_STEM_SUFFIXES):
-            click.echo(f"skipping {p}: looks like a pixelforge output", err=True)
+            _warn(f"skipping {p}: looks like a pixelforge output")
             continue
         paths.append(p)
     if not paths:

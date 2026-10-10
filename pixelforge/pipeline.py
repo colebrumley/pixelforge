@@ -172,6 +172,10 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
     t = clock()
     pre = preprocess.run(loaded.rgb, loaded.alpha, config)
     timings["preprocess"] = clock() - t
+    if config.key_bg and not config.remove_bg and not pre.background_keyed and (
+            loaded.alpha >= config.alpha_threshold).all():
+        log.warning("no flat background to key out; the whole image is the subject "
+                    "(try --remove-bg, or an input with an alpha channel)")
     log.info("preprocess %.2f s (%dx%d -> %dx%d, prereduce %d)", timings["preprocess"],
              loaded.rgb.shape[1], loaded.rgb.shape[0], pre.lab.shape[1], pre.lab.shape[0],
              pre.prereduce_factor)
