@@ -181,8 +181,15 @@ def parse_hex_lines(name: str) -> list[str]:
     return [color.rgb8_to_hex(c)[1:] for c in load_palette(name)]
 
 
-def write_hex(path, palette_rgb8: np.ndarray) -> None:
+TRANSPARENT_HEX_LINE = "; transparent"
+
+
+def write_hex(path, palette_rgb8: np.ndarray, transparent_first: bool = False) -> None:
+    """One 'rrggbb' per line. ``transparent_first`` adds a leading TRANSPARENT_HEX_LINE, a
+    comment that parse_hex skips, so the file still loads as the K colors."""
     lines = [color.rgb8_to_hex(c)[1:] for c in np.asarray(palette_rgb8).reshape(-1, 3)]
+    if transparent_first:
+        lines.insert(0, TRANSPARENT_HEX_LINE)
     Path(path).write_text("\n".join(lines) + "\n")
 
 

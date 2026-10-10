@@ -15,6 +15,7 @@ METHODS = ("box", "kopf", "gerstner")
 DENOISERS = ("none", "bilateral", "median")
 DITHERS = ("none", "bayer4", "bayer8", "auto")
 PALETTE_SOURCES = ("auto", "median_cut", "mcda")
+TRANSPARENT_INDICES = ("last", "first")
 
 PRESETS = {
     "sprite": dict(remove_bg=None, key_bg=True, crop_to_alpha=True, method="gerstner",
@@ -93,6 +94,8 @@ class Config:
     tile_dedupe_tolerance: float = 2.0  # mean LAB distance between tiles to consider identical
     seamless: bool = False            # wrap-around filtering so output tiles seamlessly
     tileset_columns: int = 0          # tiles per tileset row; 0 = ceil(sqrt(tile count))
+    # --- output ---
+    transparent_index: str = "last"   # PNG palette slot of transparency: "last" | "first"
     # --- misc ---
     seed: int | None = None           # only used for optional MCDA jitter; None = fully analytic
     scale_preview: int = 8            # nearest-neighbor upscale factor for *_preview.png
@@ -151,6 +154,7 @@ class Config:
         _choice("denoise", self.denoise, DENOISERS)
         _choice("dither", self.dither, DITHERS)
         _choice("palette_source", self.palette_source, PALETTE_SOURCES)
+        _choice("transparent_index", self.transparent_index, TRANSPARENT_INDICES)
         if self.outline not in ("none", "auto") and not _HEX_COLOR.fullmatch(self.outline):
             raise ValueError(f'outline must be "none", "auto" or "#rrggbb", got {self.outline!r}')
         if not 0.0 < self.g_alpha < 1.0:

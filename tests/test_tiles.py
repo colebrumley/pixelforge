@@ -248,3 +248,18 @@ def test_tiled_export_matches_tilemap(tmp_path):
     rows = (tmp_path / "scene_tilemap.csv").read_text().splitlines()
     assert len(rows) == 4
     assert [int(v) for r in rows for v in r.split(",")] == [e[0] + 1 for e in entries]
+
+
+@pytest.mark.parametrize("layout", ["first", "last"])
+def test_image_and_tileset_share_palette_layout(tmp_path, layout):
+    result = run_loaded(io.from_rgba(_flip_scene()), _scene_config(transparent_index=layout))
+    assert (result.indices < 0).any()
+    result.save(tmp_path / "scene")
+    with Image.open(tmp_path / "scene.png") as im, \
+            Image.open(tmp_path / "scene_tileset.png") as sheet:
+        assert im.getpalette() == sheet.getpalette()
+        assert im.info["transparency"] == sheet.info["transparency"]
+        if layout == "first":
+            assert im.info["transparency"] == 0
+        assert np.array_equal(np.asarray(im.convert("RGBA")), result.image)
+        assert np.array_equal(np.asarray(sheet.convert("RGBA")), result.tileset)
