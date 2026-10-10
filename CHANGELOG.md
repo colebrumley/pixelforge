@@ -6,6 +6,41 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `convert`, `batch` and `compare` refuse (exit 2) to write an output over an input file, and
+  `batch` refuses inputs that share a stem; `--force` overrides both. `batch` skips
+  `*_preview`, `*_tileset` and `*_compare` images.
+- With a named palette (`--palette-name`) the outline snaps to the nearest palette entry
+  instead of adding a colour outside the hardware palette; a `_palette.hex` fed back through
+  `--palette-name` reproduces itself. `stats.outline_index` names the entry used.
+- `Config.replace(preset=...)` re-applies the new preset to every field the caller did not
+  set explicitly; previously the old preset's values were kept under the new label.
+- The output canvas is exactly the requested size: the outline ring is reserved inside it
+  (`stats.outline_margin`) instead of growing the image by 2 px; with `tileset=True` a
+  clipped outline is reported as `stats.outline_clipped`.
+- Dithering with gerstner (the default method) now dithers the smoothed superpixel means;
+  it was a no-op because the per-pixel values already sat on palette colours. `auto` dither
+  ignores transparent cells when measuring local detail, so silhouette edges dither too.
+- `batch` derives one scale from the largest frame's subject and gives every frame the same
+  canvas, so animation frames keep a constant size; `--scale N` and `--canvas WxH` are new.
+- Tile de-duplication requires both a mean ΔE below `tile_dedupe_tolerance` and every
+  pixel's ΔE below 10, and merges into the nearest tile; sparse details (stars, highlights)
+  are no longer erased or stamped into every cell. `stats.tiles_rerender_px_changed` reports
+  what the re-render changed. Tiling is 50–100× faster on large outputs.
+- Orphan removal keeps high-contrast single pixels (eyes, highlights): a region is merged
+  only when its ΔE to the replacement is below `orphan_max_delta` (25), and passes stop on
+  convergence instead of oscillating.
+- Gerstner/MCDA splits palette colours a few ΔE apart (the 3× growth rule collapsed them),
+  stops annealing when no pair grows instead of cooling to 1e-3, and starts at a temperature
+  scaled to the colour spread instead of its variance (about 40 % fewer iterations).
+- `key_bg` also keys out the anti-aliased fringe around a flat backdrop (`key_bg_fringe`
+  passes of coverage unmixing), so the halo no longer takes palette entries.
+- Kopf converges: the |Δμ| < 1e-3 criterion was unreachable even on a solid colour, so
+  every run hit `kopf_max_iters`; RMS criteria on Δμ, Δν and the σ-change fraction replace it.
+- 16-bit grayscale inputs are rescaled instead of clipped to white; EXIF orientation is
+  applied; animations use the first frame with a warning.
+
 ### Added
 
 - MIT `LICENSE` and package metadata (license expression, author, classifiers, project URLs).
@@ -39,6 +74,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Inputs much larger than the output are box-reduced by an integer factor to at most
+  `prereduce_max_ratio` (8) times the output size before denoising and downscaling (nearly
+  lossless at these ratios); kopf drops its per-slot offset arrays and reuses buffers. Kopf
+  1024²→64² went from ≈200 s and 550 MiB to ≈27 s and 67 MiB here.
+- Tilesets also write `NAME.tmj` (Tiled JSON with GID flip bits and an embedded tileset) and
+  `NAME_tilemap.csv`; the sheet is `tileset_columns` wide (default `ceil(sqrt(n))`, was 16);
+  `transparent_index="first"` puts the transparent entry at PNG index 0; `_palette.json`
+  marks `"used"` entries and `stats.colors_unused` counts the rest.
+- Image loading only enables the PNG, JPEG, GIF, WEBP, BMP and TIFF decoders, refuses
+  non-regular files, hashes inputs in a stream, and enforces a pixel budget
+  (`--max-input-pixels`, default 24 Mpx); Pillow's decompression-bomb warning is an error.
+- `Config` has upper bounds on sizes, iteration caps, `scale_preview`, `denoise_sigma_spatial`
+  and `saturation_beta`, rejects NaN/Infinity (also in `--config` JSON), and lowercases
+  `outline`. Palette files must be `.hex`/`.gpl`, under 64 KiB; errors name the line number,
+  never the line.
 - `--g-T-final` is now `--g-t-final`; the old spelling remains as a hidden alias.
 - The test suite fails with a pointer to `scripts/make_fixtures.py` when a fixture is missing
   instead of regenerating it inside the repository.
@@ -75,7 +125,6 @@ All notable changes to this project are documented here. The format follows
 - `box.run` and `gerstner.run` raise `PixelforgeError` on an all-transparent mask.
 - `--debug` / `PIXELFORGE_DEBUG=1` prints the full traceback on CLI errors.
 
-<!-- Later commits on this branch are appended here by the final integrator. -->
 
 ## [0.1.0]
 
