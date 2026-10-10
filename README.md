@@ -49,7 +49,8 @@ Optional AI background removal via `rembg`:
 pip install 'pixelforge[bg] @ git+https://github.com/colebrumley/pixelforge'
 ```
 
-Without it the sprite preset still keys out flat opaque backdrops (`--no-key-bg` to disable).
+Without it the sprite preset still keys out flat opaque backdrops (`--no-key-bg` to disable),
+including the anti-aliased fringe where the subject blends into them (`key_bg_fringe`).
 
 To work on it:
 
