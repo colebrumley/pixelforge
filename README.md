@@ -43,7 +43,9 @@ Python 3.11+. Not published to PyPI; install straight from GitHub:
 uv tool install git+https://github.com/colebrumley/pixelforge
 ```
 
-or `pip install git+https://github.com/colebrumley/pixelforge`.
+or `pip install git+https://github.com/colebrumley/pixelforge`. Both resolve the dependency
+ranges in `pyproject.toml`, not `uv.lock`, so they can pick other numpy/scipy versions; for
+output that matches someone else's byte for byte, use the locked checkout below.
 
 Optional AI background removal via `rembg`:
 
@@ -51,14 +53,18 @@ Optional AI background removal via `rembg`:
 pip install 'pixelforge[bg] @ git+https://github.com/colebrumley/pixelforge'
 ```
 
-Without it the sprite preset still keys out flat opaque backdrops (`--no-key-bg` to disable),
+AI matting is opt-in with `--remove-bg` (no preset enables it, installed or not). rembg
+downloads its model on first use, the model is outside the determinism guarantee, and its
+license is the model's own; `_meta.json` records the rembg and onnxruntime versions.
+
+The sprite preset keys out flat opaque backdrops without it (`--no-key-bg` to disable),
 including the anti-aliased fringe where the subject blends into them (`key_bg_fringe`).
 
-To work on it:
+To work on it, or to reproduce outputs exactly:
 
 ```bash
 git clone https://github.com/colebrumley/pixelforge && cd pixelforge
-uv sync
+uv sync --locked
 uv run pytest -q
 ```
 
@@ -95,14 +101,18 @@ With a tileset, a derived size must be a multiple of `--tile-size`: `--fit pad` 
 the aspect and pads with transparent pixels, centered; `--fit stretch` scales to fill (warns
 if the aspect changes by more than 2 %); `--fit crop` crops the input centered.
 
+`--palette-name` takes a bundled name, a `.hex`/`.gpl` path, or inline colors
+(`hex:ff0000,00ff00,…`). `batch` writes its shared palette to `shared_palette.hex` and hands it
+to every frame inline, so the frames' metadata carries the colors, not the output path.
+
 `convert` writes to `OUTDIR` (default `out/`):
 
 | file | content |
 | --- | --- |
 | `NAME.png` | native-resolution result (palette-indexed PNG) |
 | `NAME_preview.png` | nearest-neighbor upscale |
-| `NAME_palette.json`, `NAME_palette.hex` | the palette; `.hex` is reusable via `--palette-name`; `.json` entries carry `"used"` (unused entries are kept, so named palettes stay complete) |
-| `NAME_meta.json` | stats, timings, config, config hash, input hash |
+| `NAME_palette.json`, `NAME_palette.hex` | the palette (LAB rounded to 6 decimals); `.hex` is reusable via `--palette-name`; `.json` entries carry `"used"` (unused entries are kept, so named palettes stay complete) |
+| `NAME_meta.json` | stats, timings, config, config hash, input hash, palette, environment (Python, numpy, scipy, scikit-image, Pillow, platform; not hashed) |
 | `NAME_tileset.png`, `NAME_tilemap.json` | background preset only; tiles merge when mean ΔE < `tile_dedupe_tolerance` and every pixel's ΔE < 10 (flips included) |
 | `NAME.tmj` | background preset only: Tiled JSON map (one `background` layer, flips in the GID high bits, tileset embedded and pointing at `NAME_tileset.png`) |
 | `NAME_tilemap.csv` | background preset only: one line per tile row of GIDs (1-based, 0 = empty, no flip bits) |
@@ -148,10 +158,20 @@ everything else pixelforge reports, such as undecodable, oversized or fully tran
 ## Determinism
 
 No unseeded randomness, no thread scheduling or wall-clock dependence, float64 throughout.
-Each output PNG carries the canonical config JSON and the input SHA-256 as `tEXt` chunks.
 `tests/test_determinism.py` enforces identical output bytes for every method and preset.
-Cross-machine reproducibility additionally assumes the pinned numpy/scipy/scikit-image/Pillow
-versions in `uv.lock`.
+
+- Byte identity across machines requires `git clone && uv sync --locked`: installing from git
+  resolves the ranged dependencies, and the lock itself pins different numpy/scipy for
+  Python 3.11 than for 3.12+, so use the same Python minor version too.
+- Across CPU architectures (x86-64 vs arm64, different SIMD paths) identity is best-effort:
+  float64 results can differ in the last bits, which rounding to 8-bit colors usually absorbs.
+- `--remove-bg` (rembg) is outside the guarantee and is never on by default.
+- Each output PNG carries `tEXt` chunks: `pixelforge:config` (canonical config JSON),
+  `pixelforge:input_sha256` (input file bytes) and, when a palette is given,
+  `pixelforge:palette_sha256` and `pixelforge:palette` (its `rrggbb` colors). `Config.hash()`
+  covers the config, the version and the palette's colors, so editing a palette file changes it.
+- `_meta.json` also records the Python, numpy, scipy, scikit-image and Pillow versions and the
+  platform (not hashed), to tell which of these differ when two outputs do.
 
 ## Gallery
 

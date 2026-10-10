@@ -451,3 +451,31 @@ def test_unknown_palette_fails_fast(fixture_path, monkeypatch, tmp_path):
     bad.write_text("not a color\n")
     with pytest.raises(ConfigError, match="not a hex color"):
         run(fixture_path("two_color"), Config(palette_name=str(bad)))
+
+
+def test_meta_records_matting_versions_only_with_remove_bg(fixture_path, tmp_path):
+    import dataclasses
+
+    config = Config(method="box", out_height=16, palette_size=4)
+    result = run(fixture_path("circle_alpha"), config)
+    result.save(tmp_path / "plain")
+    assert "remove_bg_versions" not in json.loads((tmp_path / "plain_meta.json").read_text())
+    # Saving does not run rembg, so a result relabelled remove_bg=True exercises the meta.
+    result = dataclasses.replace(result, config=config.replace(remove_bg=True))
+    result.save(tmp_path / "matted")
+    versions = json.loads((tmp_path / "matted_meta.json").read_text())["remove_bg_versions"]
+    assert set(versions) == {"rembg", "onnxruntime"}
+    assert all(v is None or isinstance(v, str) for v in versions.values())
+
+
+def test_meta_environment_and_rounded_palette_lab(fixture_path, tmp_path):
+    config = Config(method="box", out_height=16, palette_size=4)
+    result = run(fixture_path("circle_alpha"), config)
+    result.save(tmp_path / "a")
+    meta = json.loads((tmp_path / "a_meta.json").read_text())
+    assert set(meta["environment"]) == {"python", "numpy", "scipy", "scikit_image", "pillow",
+                                        "platform"}
+    assert meta["environment"]["numpy"] == np.__version__
+    assert meta["config_hash"] == config.hash()     # environment is not hashed
+    for entry in json.loads((tmp_path / "a_palette.json").read_text()):
+        assert all(v == round(v, 6) for v in entry["lab"])

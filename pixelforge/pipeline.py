@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import os
+import platform
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +16,8 @@ import numpy as np
 from . import color, downscale, io, palette, postprocess, preprocess, quantize, tiles
 from .config import Config
 from .version import __version__
+
+LAB_DECIMALS = 6   # precision of the LAB values in _palette.json
 
 
 @dataclass
@@ -29,8 +34,13 @@ class Result:
     tileset_indices: np.ndarray | None = None
 
     def png_text(self) -> dict:
-        return {io.META_CONFIG_KEY: self.config.canonical_json(),
+        text = {io.META_CONFIG_KEY: self.config.canonical_json(),
                 io.META_INPUT_KEY: self.input_sha256}
+        provenance = self.config.provenance()
+        if provenance["palette"] is not None:
+            text[io.META_PALETTE_SHA_KEY] = provenance["palette_sha256"]
+            text[io.META_PALETTE_KEY] = "\n".join(provenance["palette"])
+        return text
 
     def save(self, prefix) -> dict:
         """Write <prefix>.png, _preview.png, _palette.json, _palette.hex, _meta.json and, for
@@ -46,7 +56,9 @@ class Result:
                     scale=self.config.scale_preview, transparent_index=layout)
         used = np.zeros(len(self.palette), dtype=bool)
         used[np.unique(self.indices[self.indices >= 0])] = True
-        entries = [{"hex": color.rgb8_to_hex(rgb), "lab": [float(v) for v in lab],
+        # LAB_DECIMALS: float64 LAB can differ at ~1e-12 across SIMD paths; the PNG does not.
+        entries = [{"hex": color.rgb8_to_hex(rgb),
+                    "lab": [round(float(v), LAB_DECIMALS) + 0.0 for v in lab],
                     "used": bool(u)}
                    for rgb, lab, u in zip(self.palette, self.palette_lab, used)]
         if first:
@@ -54,10 +66,17 @@ class Result:
                                "used": bool((self.indices < 0).any())})
         paths["palette"].write_text(json.dumps(entries, indent=2) + "\n")
         palette.write_hex(paths["palette_hex"], self.palette, transparent_first=first)
-        meta = {"version": __version__, "config": self.config.to_dict(),
+        provenance = self.config.provenance()
+        meta = {"version": __version__, "config": provenance["config"],
                 "config_hash": self.config.hash(), "input_sha256": self.input_sha256,
+                "palette_sha256": provenance["palette_sha256"],
+                "palette": provenance["palette"],
                 "width": int(self.indices.shape[1]), "height": int(self.indices.shape[0]),
-                "stats": self.stats}
+                "stats": self.stats, "environment": environment()}
+        if self.config.remove_bg:
+            # The matting model is outside the determinism contract; record what ran.
+            meta["remove_bg_versions"] = {name: package_version(name)
+                                          for name in ("rembg", "onnxruntime")}
         paths["meta"].write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
         if self.tilemap is not None:
             # With "last", an opaque image has no transparent entry while a tileset whose
@@ -71,6 +90,22 @@ class Result:
             paths["tilemap_tmj"].write_text(json.dumps(tmj, indent=1) + "\n")
             paths["tilemap_csv"].write_text(tiles.tilemap_csv(self.tilemap))
         return {name: str(path) for name, path in paths.items()}
+
+
+def environment() -> dict:
+    """Interpreter, numerical library versions and platform; recorded, never hashed."""
+    return {"python": platform.python_version(), "numpy": package_version("numpy"),
+            "scipy": package_version("scipy"), "scikit_image": package_version("scikit-image"),
+            "pillow": package_version("Pillow"),
+            "platform": f"{sys.platform} {platform.machine()}"}
+
+
+def package_version(name: str) -> str | None:
+    """Installed version of a distribution, or None if it is not installed."""
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
 
 
 def output_paths(prefix, tileset: bool) -> dict:

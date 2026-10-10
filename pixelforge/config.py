@@ -20,9 +20,12 @@ PALETTE_SOURCES = ("auto", "median_cut", "mcda")
 TRANSPARENT_INDICES = ("last", "first")
 FITS = ("pad", "stretch", "crop")
 
+# DEVIATION: Section 4 — the spec's sprite preset has remove_bg=None ("True if rembg is
+# importable"), so one command gave different hashes and alpha on different machines and
+# silently downloaded a model. remove_bg is opt-in (--remove-bg) in every preset.
 # Read-only: a caller mutating a preset must not change every later Config.
 PRESETS = MappingProxyType({name: MappingProxyType(values) for name, values in {
-    "sprite": dict(remove_bg=None, key_bg=True, crop_to_alpha=True, method="gerstner",
+    "sprite": dict(remove_bg=False, key_bg=True, crop_to_alpha=True, method="gerstner",
                    palette_size=16, dither="none", outline="auto", tileset=False,
                    denoise="bilateral"),
     "background": dict(remove_bg=False, key_bg=False, crop_to_alpha=False, method="kopf",
@@ -43,6 +46,7 @@ UPPER_BOUNDS = {"out_width": 4096, "out_height": 4096, "scale": 4096, "scale_pre
 
 
 def rembg_available() -> bool:
+    """Whether rembg is importable (used for the error message; never changes a default)."""
     return importlib.util.find_spec("rembg") is not None
 
 
@@ -55,7 +59,7 @@ class Config:
     scale: float | None = None        # fixed downscale: output = round(cropped input / scale)
     canvas: str | None = None         # "WxH": fit the subject inside, centered (outline inside)
     # --- preprocess ---
-    remove_bg: bool = False           # sprite preset default True if rembg installed, else False
+    remove_bg: bool = False           # rembg AI matting; opt-in only (never environment-derived)
     key_bg: bool = False              # key out a flat opaque background (sprite default True)
     key_bg_tolerance: float = 0.08    # max per-channel sRGB distance from the background color
     key_bg_fringe: int = 3            # max passes keying out the anti-aliased edge (0 = off)
@@ -123,8 +127,6 @@ class Config:
         values = {name: f.default for name, f in specs.items()}
         values.update(dict(PRESETS[preset]))
         values.update(kwargs)
-        if values["remove_bg"] is None:
-            values["remove_bg"] = rembg_available()
         for name, f in specs.items():
             object.__setattr__(self, name, _coerce(name, f.type, values[name]))
         # Not a dataclass field: invisible to to_dict(), hashing and equality. replace() uses it
@@ -144,9 +146,36 @@ class Config:
     def canonical_json(self) -> str:
         return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
 
+    def palette_hex_lines(self) -> list[str] | None:
+        """The resolved palette_name colors as 'rrggbb' lines (cached), or None."""
+        if self.palette_name is None:
+            return None
+        cached = self.__dict__.get("_palette_lines")
+        if cached is None:
+            from .palette import parse_hex_lines   # palette imports io, which must not cycle
+            cached = tuple(parse_hex_lines(self.palette_name))
+            object.__setattr__(self, "_palette_lines", cached)
+        return list(cached)
+
+    def palette_sha256(self) -> str | None:
+        """SHA-256 of the resolved palette's newline-joined hex lines, or None."""
+        lines = self.palette_hex_lines()
+        if lines is None:
+            return None
+        return hashlib.sha256("\n".join(lines).encode("ascii")).hexdigest()
+
     def hash(self) -> str:
+        """SHA-256 of the canonical JSON, the version and, with palette_name, the palette's
+        contents, so rewriting a palette file (or a bundled palette) changes the hash."""
         payload = self.canonical_json() + "\n" + __version__
+        if self.palette_name is not None:
+            payload += "\npalette:" + self.palette_sha256()
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def provenance(self) -> dict:
+        """Everything needed to reproduce a run besides the input image."""
+        return {"config": self.to_dict(), "palette_sha256": self.palette_sha256(),
+                "palette": self.palette_hex_lines(), "version": __version__}
 
     @property
     def canvas_size(self) -> tuple[int, int] | None:
@@ -181,13 +210,14 @@ class Config:
 
     def _validate(self) -> None:
         if self.palette_name is not None:
-            from .palette import PALETTE_SUFFIXES, bundled_palettes
+            from .palette import INLINE_PREFIX, PALETTE_SUFFIXES, bundled_palettes
 
             if (self.palette_name not in bundled_palettes()
-                    and not self.palette_name.lower().endswith(PALETTE_SUFFIXES)):
+                    and not self.palette_name.lower().endswith(PALETTE_SUFFIXES)
+                    and not self.palette_name.startswith(INLINE_PREFIX)):
                 raise ConfigError(
-                    f"unknown palette {self.palette_name!r}: not one of {bundled_palettes()} "
-                    "and not a path to a .hex or .gpl file")
+                    f"unknown palette {self.palette_name!r}: not one of {bundled_palettes()}, "
+                    "not a path to a .hex or .gpl file and not 'hex:rrggbb,...'")
         for name in ("out_width", "out_height"):
             v = getattr(self, name)
             if v is not None and v < 8:
