@@ -161,7 +161,7 @@ def test_cli_rejects_non_finite_json_and_oversize_config(fixture_path, tmp_path)
     image = str(fixture_path("two_color"))
     for literal in ("NaN", "Infinity", "-Infinity"):
         config_path = tmp_path / "cfg.json"
-        config_path.write_text('{"saturation_beta": %s}' % literal)
+        config_path.write_text(f'{{"saturation_beta": {literal}}}')
         result = runner.invoke(cli, ["convert", image, "-o", str(tmp_path),
                                      "--config", str(config_path)])
         assert result.exit_code == 2 and literal in result.output, literal
