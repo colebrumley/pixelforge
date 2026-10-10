@@ -17,11 +17,11 @@
   },
   "circle_alpha/kopf/background": {
     "config_hash": "571cd80c08120ff6dcea8c469e123fd1110d4fb1036adb21e9fcbcf17ebc51c3",
-    "pixels_sha256": "e9495a1563b8f07cd437a75285d0ffcad6b91fe2f3b20404413c55a970f69f69"
+    "pixels_sha256": "f1f42662643cb18e092596830916ef10baf64c0dcef2a70e045f317d8260882c"
   },
   "circle_alpha/kopf/sprite": {
     "config_hash": "34e2720ed85d7bf88692ae9325635a94c3f562163378ae9b97b221d1e6832c13",
-    "pixels_sha256": "e290f10af0e18de5a297889a82e244f0a5f366e266f4613f9d281d734c1cf31a"
+    "pixels_sha256": "405c16ab6fd4224553fca7b19ed504f003ed4542af8301843c75bd7007dee4cc"
   },
   "gradient6/box/background": {
     "config_hash": "282d6ac68f63cdba9323edb911c5823fbd31048040dd4f87ca35e6c5f47d79e8",

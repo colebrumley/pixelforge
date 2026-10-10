@@ -15,7 +15,7 @@ import math
 
 import numpy as np
 
-from . import Downscaled
+from . import Downscaled, neighbor_mean4
 from .box import cell_index
 
 RK_HALF_WIDTH = 2.0          # R_k half-width in output units
@@ -124,20 +124,6 @@ def _clamp_singular_values(cov: np.ndarray) -> np.ndarray:
     evals, evecs = np.linalg.eigh(cov)
     evals = np.clip(evals, SINGULAR_MIN, SINGULAR_MAX)
     return (evecs * evals[..., None, :]) @ np.swapaxes(evecs, -1, -2)
-
-
-def _neighbor_mean4(grid: np.ndarray) -> np.ndarray:
-    total = np.zeros_like(grid)
-    count = np.zeros_like(grid)
-    total[1:] += grid[:-1]
-    count[1:] += 1
-    total[:-1] += grid[1:]
-    count[:-1] += 1
-    total[:, 1:] += grid[:, :-1]
-    count[:, 1:] += 1
-    total[:, :-1] += grid[:, 1:]
-    count[:, :-1] += 1
-    return np.where(count > 0, total / np.maximum(count, 1), grid)
 
 
 def _shift(grid: np.ndarray, dy: int, dx: int, fill=0.0) -> np.ndarray:
@@ -315,8 +301,8 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         # them inward every iteration, a disturbance that then diffuses across the whole grid
         # and keeps |Δμ| above kopf_tol.
         off_x, off_y = m_mu_x - grid_x, m_mu_y - grid_y
-        mu_x = grid_x + np.clip(0.5 * off_x + 0.5 * _neighbor_mean4(off_x), -CLAMP_BOX, CLAMP_BOX)
-        mu_y = grid_y + np.clip(0.5 * off_y + 0.5 * _neighbor_mean4(off_y), -CLAMP_BOX, CLAMP_BOX)
+        mu_x = grid_x + np.clip(0.5 * off_x + 0.5 * neighbor_mean4(off_x), -CLAMP_BOX, CLAMP_BOX)
+        mu_y = grid_y + np.clip(0.5 * off_y + 0.5 * neighbor_mean4(off_y), -CLAMP_BOX, CLAMP_BOX)
         cov = _clamp_singular_values(cov)
 
         # Shape constraints, with (p_i − μ_k) relative to the constrained μ_k.
