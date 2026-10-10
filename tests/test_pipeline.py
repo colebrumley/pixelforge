@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+import pytest
 from click.testing import CliRunner
 from PIL import Image
 
@@ -41,7 +42,9 @@ def test_cli_convert_sprite(fixture_path, tmp_path):
     assert meta["config_hash"] == config.hash() == payload["stats"]["config_hash"]
     palette = json.loads((tmp_path / "circle_alpha_palette.json").read_text())
     assert len(palette) == payload["stats"]["final_palette_size"]
-    assert set(palette[0]) == {"hex", "lab"}
+    assert set(palette[0]) == {"hex", "lab", "used"}
+    assert sum(e["used"] for e in palette) == meta["stats"]["colors_used"]
+    assert meta["stats"]["colors_unused"] == len(palette) - meta["stats"]["colors_used"]
 
 
 def test_cli_exit_codes(fixture_path, tmp_path):
@@ -281,3 +284,64 @@ def test_tileset_outline_is_clipped_not_padded():
     result = run_loaded(_opaque_square(), config)
     assert result.indices.shape == (32, 32)
     assert result.stats["outline_margin"] == 0 and result.stats["outline_clipped"] is True
+
+
+def _sprite_rgba() -> np.ndarray:
+    rgba = np.zeros((16, 16, 4), dtype=np.uint8)
+    rgba[3:13, 3:13] = (200, 60, 40, 255)
+    rgba[5:9, 5:11] = (40, 90, 210, 255)
+    rgba[10:12, 4:8] = (250, 240, 200, 255)
+    return rgba
+
+
+def _sprite_config(**overrides) -> Config:
+    return Config(method="box", out_width=16, out_height=16, crop_to_alpha=False,
+                  key_bg=False, remove_bg=False, denoise="none", dither="none",
+                  outline="none", remove_orphans=False, fix_jaggies=False, **overrides)
+
+
+def test_transparent_index_first(tmp_path):
+    result = run_loaded(io.from_rgba(_sprite_rgba()), _sprite_config(transparent_index="first"))
+    assert (result.indices == -1).any() and result.indices.min() == -1
+    result.save(tmp_path / "s")
+    with Image.open(tmp_path / "s.png") as im:
+        assert im.mode == "P" and im.info["transparency"] == 0
+        assert np.array_equal(np.asarray(im), result.indices + 1)
+        assert np.array_equal(np.asarray(im.convert("RGBA")), result.image)
+    entries = json.loads((tmp_path / "s_palette.json").read_text())
+    assert entries[0] == {"hex": None, "transparent": True, "used": True}
+    assert len(entries) == len(result.palette) + 1
+    lines = (tmp_path / "s_palette.hex").read_text().splitlines()
+    assert lines[0] == palette.TRANSPARENT_HEX_LINE and len(lines) == len(result.palette) + 1
+    assert np.array_equal(palette.load_palette(str(tmp_path / "s_palette.hex")), result.palette)
+
+    with pytest.raises(ValueError, match="transparent_index"):
+        Config(transparent_index="middle")
+
+
+def test_transparent_first_hex_round_trips_named_palette(fixture_path, tmp_path):
+    runner = CliRunner()
+    args = ["--method", "box", "--out-height", "16", "--transparent-index", "first"]
+    first = runner.invoke(cli, ["convert", str(fixture_path("circle_alpha")), "-o",
+                                str(tmp_path / "a"), "--palette-name", "gameboy", *args])
+    assert first.exit_code == 0, first.output
+    hex_path = tmp_path / "a" / "circle_alpha_palette.hex"
+    assert hex_path.read_text().splitlines()[0] == "; transparent"
+    assert len(palette.load_palette(str(hex_path))) == 4
+    again = runner.invoke(cli, ["convert", str(fixture_path("circle_alpha")), "-o",
+                                str(tmp_path / "b"), "--palette-name", str(hex_path), *args])
+    assert again.exit_code == 0, again.output
+    assert _last_json(again.output)["stats"]["final_palette_size"] == 4
+    assert (tmp_path / "b" / "circle_alpha_palette.hex").read_text() == hex_path.read_text()
+
+
+def test_unused_named_palette_entries_are_kept_and_flagged(fixture_path, tmp_path):
+    config = Config(method="box", out_height=16, palette_name="pico8", dither="none")
+    result = run(fixture_path("two_color"), config)
+    result.save(tmp_path / "t")
+    entries = json.loads((tmp_path / "t_palette.json").read_text())
+    assert len(entries) == 16
+    used = sorted(int(i) for i in np.unique(result.indices[result.indices >= 0]))
+    assert [i for i, e in enumerate(entries) if e["used"]] == used
+    meta = json.loads((tmp_path / "t_meta.json").read_text())
+    assert meta["stats"]["colors_unused"] == 16 - len(used) > 0

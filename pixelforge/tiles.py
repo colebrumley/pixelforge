@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
 
 from . import color
 
-TILESET_COLUMNS = 16
+# Tiled GID flip flags (https://doc.mapeditor.org/en/stable/reference/global-tile-ids/).
+GID_FLIP_H = 0x80000000
+GID_FLIP_V = 0x40000000
 # ΔE charged when a transparent pixel is compared with an opaque one.
 TRANSPARENT_DISTANCE = 100.0
 # DEVIATION: Section 9 — near-duplicate tiles must also agree pixel by pixel: every pixel's
@@ -26,15 +29,29 @@ class Tiles:
     tiles: np.ndarray     # (n, t, t) index arrays, -1 = transparent
     tilemap: dict         # the out_tilemap.json payload
 
+    @property
+    def columns(self) -> int:
+        return int(self.tilemap["tileset_columns"])
+
     def tileset_indices(self) -> np.ndarray:
-        """Tileset as an index image: row-major grid, TILESET_COLUMNS tiles wide."""
-        n, t = len(self.tiles), self.tiles.shape[1]
-        rows = -(-n // TILESET_COLUMNS)
-        sheet = np.full((rows * t, TILESET_COLUMNS * t), -1, dtype=np.int64)
+        """Tileset as an index image: row-major grid, `columns` tiles wide; only the last row
+        is padded (with transparent pixels)."""
+        n, t, columns = len(self.tiles), self.tiles.shape[1], self.columns
+        rows = -(-n // columns)
+        sheet = np.full((rows * t, columns * t), -1, dtype=np.int64)
         for i, tile in enumerate(self.tiles):
-            y, x = (i // TILESET_COLUMNS) * t, (i % TILESET_COLUMNS) * t
+            y, x = (i // columns) * t, (i % columns) * t
             sheet[y:y + t, x:x + t] = tile
         return sheet
+
+
+def tileset_columns(n_tiles: int, requested: int) -> int:
+    """Tiles per tileset row: `requested`, or ceil(sqrt(n_tiles)) when it is 0."""
+    # DEVIATION: Section 9 — the spec fixes 16 columns, which leaves a 15-tile sheet 94 %
+    # empty. `tileset_columns=16` restores it; the default 0 makes a near-square sheet.
+    if requested:
+        return int(requested)
+    return max(1, math.isqrt(max(n_tiles, 1) - 1) + 1)
 
 
 def flip(tile: np.ndarray, flip_h: int, flip_v: int) -> np.ndarray:
@@ -133,7 +150,8 @@ def extract(idx: np.ndarray, palette_lab: np.ndarray, config) -> Tiles:
         entries.append([int(tile_id), _FLIPS[order][0], _FLIPS[order][1]])
 
     tilemap = {"tile_size": t, "width_tiles": wt, "height_tiles": ht,
-               "tileset_columns": TILESET_COLUMNS, "tiles": entries}
+               "tileset_columns": tileset_columns(n_unique, config.tileset_columns),
+               "tiles": entries}
     out = unique[:n_unique].copy()
     out[out == clear] = -1
     return Tiles(tiles=out, tilemap=tilemap)
@@ -148,3 +166,41 @@ def reconstruct(tiles: np.ndarray, tilemap: dict) -> np.ndarray:
         y, x = (i // wt) * t, (i % wt) * t
         out[y:y + t, x:x + t] = flip(tiles[tile_id], flip_h, flip_v)
     return out
+
+
+def gids(tilemap: dict, flips: bool = True) -> list[int]:
+    """Tiled global tile ids, row-major (firstgid 1), with the flip flags when `flips`."""
+    out = []
+    for tile_id, flip_h, flip_v in tilemap["tiles"]:
+        gid = tile_id + 1
+        if flips:
+            gid |= (GID_FLIP_H if flip_h else 0) | (GID_FLIP_V if flip_v else 0)
+        out.append(gid)
+    return out
+
+
+def tiled_map(tilemap: dict, n_tiles: int, image: str, image_size: tuple[int, int],
+              name: str) -> dict:
+    """A Tiled JSON map (.tmj): one tile layer and one embedded tileset whose image is
+    `image` (a path relative to the .tmj) of `image_size` = (width, height) pixels."""
+    t = tilemap["tile_size"]
+    wt, ht = tilemap["width_tiles"], tilemap["height_tiles"]
+    tileset = {"firstgid": 1, "name": name, "image": image,
+               "imagewidth": int(image_size[0]), "imageheight": int(image_size[1]),
+               "columns": tilemap["tileset_columns"], "tilecount": int(n_tiles),
+               "tilewidth": t, "tileheight": t, "margin": 0, "spacing": 0}
+    layer = {"id": 1, "name": "background", "type": "tilelayer", "x": 0, "y": 0,
+             "width": wt, "height": ht, "opacity": 1, "visible": True,
+             "data": gids(tilemap)}
+    return {"type": "map", "version": "1.10", "orientation": "orthogonal",
+            "renderorder": "right-down", "infinite": False, "width": wt, "height": ht,
+            "tilewidth": t, "tileheight": t, "nextlayerid": 2, "nextobjectid": 1,
+            "layers": [layer], "tilesets": [tileset]}
+
+
+def tilemap_csv(tilemap: dict) -> str:
+    """One line per tile row of comma-separated GIDs (firstgid 1, no flip flags)."""
+    wt = tilemap["width_tiles"]
+    values = gids(tilemap, flips=False)
+    rows = [",".join(map(str, values[i:i + wt])) for i in range(0, len(values), wt)]
+    return "\n".join(rows) + "\n"

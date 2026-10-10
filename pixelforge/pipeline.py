@@ -33,25 +33,42 @@ class Result:
 
     def save(self, prefix) -> dict:
         """Write <prefix>.png, _preview.png, _palette.json, _palette.hex, _meta.json and, for
-        tilesets, _tileset.png and _tilemap.json. Returns {name: path}."""
+        tilesets, _tileset.png, _tilemap.json, .tmj (Tiled) and _tilemap.csv. Returns
+        {name: path}."""
         paths = output_paths(prefix, tileset=self.tilemap is not None)
         Path(prefix).parent.mkdir(parents=True, exist_ok=True)
         text = self.png_text()
-        io.save_png(paths["image"], self.indices, self.palette, text)
+        layout = self.config.transparent_index
+        first = layout == "first"
+        io.save_png(paths["image"], self.indices, self.palette, text, transparent_index=layout)
         io.save_png(paths["preview"], self.indices, self.palette, text,
-                    scale=self.config.scale_preview)
-        entries = [{"hex": color.rgb8_to_hex(rgb), "lab": [float(v) for v in lab]}
-                   for rgb, lab in zip(self.palette, self.palette_lab)]
+                    scale=self.config.scale_preview, transparent_index=layout)
+        used = np.zeros(len(self.palette), dtype=bool)
+        used[np.unique(self.indices[self.indices >= 0])] = True
+        entries = [{"hex": color.rgb8_to_hex(rgb), "lab": [float(v) for v in lab],
+                    "used": bool(u)}
+                   for rgb, lab, u in zip(self.palette, self.palette_lab, used)]
+        if first:
+            entries.insert(0, {"hex": None, "transparent": True,
+                               "used": bool((self.indices < 0).any())})
         paths["palette"].write_text(json.dumps(entries, indent=2) + "\n")
-        palette.write_hex(paths["palette_hex"], self.palette)
+        palette.write_hex(paths["palette_hex"], self.palette, transparent_first=first)
         meta = {"version": __version__, "config": self.config.to_dict(),
                 "config_hash": self.config.hash(), "input_sha256": self.input_sha256,
                 "width": int(self.indices.shape[1]), "height": int(self.indices.shape[0]),
                 "stats": self.stats}
         paths["meta"].write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
         if self.tilemap is not None:
-            io.save_png(paths["tileset"], self.tileset_indices, self.palette, text)
+            # With "last", an opaque image has no transparent entry while a tileset whose
+            # last row is padded gets one appended; the K colors keep their indices.
+            io.save_png(paths["tileset"], self.tileset_indices, self.palette, text,
+                        transparent_index=layout)
             paths["tilemap"].write_text(json.dumps(self.tilemap, separators=(",", ":")) + "\n")
+            sheet_h, sheet_w = self.tileset_indices.shape
+            tmj = tiles.tiled_map(self.tilemap, self.stats["tiles"], paths["tileset"].name,
+                                  (sheet_w, sheet_h), Path(prefix).name)
+            paths["tilemap_tmj"].write_text(json.dumps(tmj, indent=1) + "\n")
+            paths["tilemap_csv"].write_text(tiles.tilemap_csv(self.tilemap))
         return {name: str(path) for name, path in paths.items()}
 
 
@@ -68,6 +85,8 @@ def output_paths(prefix, tileset: bool) -> dict:
     if tileset:
         paths["tileset"] = sibling("_tileset.png")
         paths["tilemap"] = sibling("_tilemap.json")
+        paths["tilemap_tmj"] = sibling(".tmj")
+        paths["tilemap_csv"] = sibling("_tilemap.csv")
     return paths
 
 
@@ -151,6 +170,7 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
     stats = {"iterations": int(small.stats.get("iterations", 0)),
              "final_palette_size": int(len(palette_rgb8)),
              "colors_used": int(len(np.unique(indices[indices >= 0]))),
+             "colors_unused": int(len(palette_rgb8) - len(np.unique(indices[indices >= 0]))),
              "config_hash": config.hash(),
              "background_keyed": bool(pre.background_keyed),
              "outline_index": post_stats["outline_index"],

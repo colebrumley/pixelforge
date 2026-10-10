@@ -170,6 +170,18 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
 - After near-duplicate tiles are merged, the output image is re-rendered from the tileset so
   it matches the tilemap exactly; `stats.tiles_rerender_px_changed` counts the pixels this
   changed (0 when `tile_dedupe_tolerance=0`).
+- The tileset sheet is `tileset_columns` tiles wide (0, the default, = `ceil(sqrt(n))`; the
+  spec's fixed 16 left small sets mostly empty); only the last row is padded. Besides the
+  spec's `NAME_tilemap.json` (unchanged schema), tilesets also write `NAME.tmj`, a Tiled JSON
+  map with an embedded tileset and the standard GID flip bits (0x80000000 horizontal,
+  0x40000000 vertical), and `NAME_tilemap.csv` (GIDs without flip bits).
+- `transparent_index` ("last" | "first") places the PNG's transparent palette entry. With
+  "first" it is always index 0 (even for an opaque image) in the image, preview and tileset,
+  so all three share one PLTE; a 256-color palette then no longer fits and is written as
+  RGBA. With "last" (the spec) the entry is appended only when a PNG has transparent pixels,
+  so an opaque image's tileset with a padded last row carries one extra trailing entry; the K
+  color indices agree either way. `_palette.json` marks each entry `"used"` and
+  `stats.colors_unused` counts the unused ones; they are kept so named palettes stay whole.
 - Seamless padding is 2 output pixels per side, i.e. `2·rx` × `2·ry` input pixels per axis.
 - Preprocessing fills transparent pixels with the nearest opaque color before denoising,
   uses `mode="edge"` for the bilateral filter, and repeats inputs that are smaller than the

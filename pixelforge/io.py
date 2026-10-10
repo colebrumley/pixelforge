@@ -129,8 +129,13 @@ def upscale_nearest(arr: np.ndarray, factor: int) -> np.ndarray:
 
 
 def save_png(path, indices: np.ndarray, palette_rgb8: np.ndarray, text: dict | None = None,
-             scale: int = 1) -> None:
-    """Write an index image as PNG: palette-indexed if it fits in 256 entries, else RGBA."""
+             scale: int = 1, transparent_index: str = "last") -> None:
+    """Write an index image as PNG: palette-indexed if it fits in 256 entries, else RGBA.
+
+    ``transparent_index="last"`` appends a transparent entry after the K colors, only when
+    some pixel is transparent. ``"first"`` always puts it at index 0 and shifts every color
+    up by one, so every PNG written with the same palette has the same PLTE.
+    """
     indices = np.asarray(indices)
     palette_rgb8 = np.asarray(palette_rgb8, dtype=np.uint8).reshape(-1, 3)
     if scale > 1:
@@ -138,20 +143,26 @@ def save_png(path, indices: np.ndarray, palette_rgb8: np.ndarray, text: dict | N
     info = PngInfo()
     for key in sorted(text or {}):
         info.add_text(key, text[key])
-    has_transparency = bool((indices < 0).any())
+    first = transparent_index == "first"
+    has_transparency = first or bool((indices < 0).any())
     n_entries = len(palette_rgb8) + (1 if has_transparency else 0)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if n_entries <= 256:
-        transparent_index = len(palette_rgb8)
-        data = np.where(indices < 0, transparent_index, indices).astype(np.uint8)
-        im = Image.fromarray(data, mode="P")
         flat = palette_rgb8.reshape(-1).tolist()
-        if has_transparency:
-            flat += [0, 0, 0]
+        if first:
+            clear = 0
+            data = (indices + 1).astype(np.uint8)          # -1 (transparent) becomes 0
+            flat = [0, 0, 0] + flat
+        else:
+            clear = len(palette_rgb8)
+            data = np.where(indices < 0, clear, indices).astype(np.uint8)
+            if has_transparency:
+                flat += [0, 0, 0]
+        im = Image.fromarray(data, mode="P")
         im.putpalette(flat)
         if has_transparency:
-            im.save(path, format="PNG", pnginfo=info, transparency=transparent_index)
+            im.save(path, format="PNG", pnginfo=info, transparency=clear)
         else:
             im.save(path, format="PNG", pnginfo=info)
     else:

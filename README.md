@@ -93,9 +93,18 @@ frames cropped to their alpha keep a constant size; the first JSON line reports 
 | --- | --- |
 | `NAME.png` | native-resolution result (palette-indexed PNG) |
 | `NAME_preview.png` | nearest-neighbor upscale |
-| `NAME_palette.json`, `NAME_palette.hex` | the palette; `.hex` is reusable via `--palette-name` |
+| `NAME_palette.json`, `NAME_palette.hex` | the palette; `.hex` is reusable via `--palette-name`; `.json` entries carry `"used"` (unused entries are kept, so named palettes stay complete) |
 | `NAME_meta.json` | stats, timings, config, config hash, input hash |
 | `NAME_tileset.png`, `NAME_tilemap.json` | background preset only; tiles merge when mean ΔE < `tile_dedupe_tolerance` and every pixel's ΔE < 10 (flips included) |
+| `NAME.tmj` | background preset only: Tiled JSON map (one `background` layer, flips in the GID high bits, tileset embedded and pointing at `NAME_tileset.png`) |
+| `NAME_tilemap.csv` | background preset only: one line per tile row of GIDs (1-based, 0 = empty, no flip bits) |
+
+`--tileset-columns N` sets the tileset sheet width in tiles (default 0: `ceil(sqrt(tiles))`). The PNG
+palette puts transparency after the colors (`--transparent-index last`, the default) or at index
+0 with every color shifted by one (`--transparent-index first`, as Aseprite and console tools
+expect); `first` also adds a leading `{"hex": null, "transparent": true}` entry to
+`_palette.json` and a `; transparent` comment line to `_palette.hex`. `Result.indices` always
+uses −1 for transparent.
 
 ### Limits
 
