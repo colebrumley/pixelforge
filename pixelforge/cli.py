@@ -18,6 +18,7 @@ from .config import METHODS, PRESETS, Config
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff")
 BATCH_PIXELS_PER_IMAGE = 50_000
 SHARED_PALETTE_NAME = "shared_palette.hex"
+MAX_CONFIG_FILE_BYTES = 1024 * 1024
 
 _CLICK_TYPES = {"int": int, "float": float, "str": str}
 
@@ -40,6 +41,10 @@ def config_options(command):
         else:
             option = click.option(flag, f.name, type=_CLICK_TYPES[base], default=None)
         command = option(command)
+    command = click.option(
+        "--max-input-pixels", "max_input_pixels", type=click.IntRange(min=1), default=None,
+        help=f"Refuse inputs with more pixels than this [default: {io.MAX_INPUT_PIXELS}].",
+    )(command)
     return click.option("--config", "config_path", type=click.Path(dir_okay=False),
                         default=None, help="JSON file of Config fields; flags override it.")(command)
 
@@ -49,7 +54,8 @@ def build_config(config_path, flags: dict) -> Config:
     values = {}
     try:
         if config_path is not None:
-            loaded = json.loads(Path(config_path).read_text())
+            loaded = json.loads(_read_config_text(config_path),
+                                parse_constant=_reject_json_constant)
             if not isinstance(loaded, dict):
                 raise ValueError(f"{config_path} must contain a JSON object of Config fields")
             values.update(loaded)
@@ -60,6 +66,25 @@ def build_config(config_path, flags: dict) -> Config:
     except (ValueError, OSError) as exc:
         raise ConfigError(str(exc)) from exc
     return config
+
+
+def _reject_json_constant(name: str):
+    raise ValueError(f"config JSON must not contain {name}")
+
+
+def _read_config_text(config_path) -> str:
+    """A regular file of at most MAX_CONFIG_FILE_BYTES, decoded as UTF-8."""
+    try:
+        with io.open_regular(config_path) as f:
+            data = f.read(MAX_CONFIG_FILE_BYTES + 1)
+    except preprocess.PixelforgeError as exc:
+        raise ValueError(str(exc)) from None
+    if len(data) > MAX_CONFIG_FILE_BYTES:
+        raise ValueError(f"{config_path} is larger than {MAX_CONFIG_FILE_BYTES} bytes")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError(f"{config_path} is not a UTF-8 text file") from None
 
 
 def handle_errors(func):
@@ -74,7 +99,7 @@ def handle_errors(func):
         except click.exceptions.Exit:
             raise
         except Exception as exc:  # noqa: BLE001 - the CLI reports every failure the same way
-            click.echo(f"error: {exc}", err=True)
+            click.echo(f"error: {exc or type(exc).__name__}", err=True)
             sys.exit(1)
     return wrapper
 
@@ -95,19 +120,20 @@ def cli():
               show_default=True)
 @config_options
 @handle_errors
-def convert(input_path, outdir, config_path, **flags):
+def convert(input_path, outdir, config_path, max_input_pixels, **flags):
     """Convert one image."""
     config = build_config(config_path, flags)
-    result = pipeline.run(input_path, config)
+    result = pipeline.run(input_path, config, max_input_pixels)
     outputs = result.save(Path(outdir) / Path(input_path).stem)
     _emit({"outputs": outputs, "stats": result.stats})
 
 
-def shared_palette(paths: list[Path], config: Config) -> np.ndarray:
+def shared_palette(paths: list[Path], config: Config,
+                   max_pixels: int | None = None) -> np.ndarray:
     """One palette (K, 3) uint8 from the union of all images' preprocessed LAB pixels."""
     samples = []
     for path in paths:
-        loaded = io.load(path)
+        loaded = io.load(path, io.MAX_INPUT_PIXELS if max_pixels is None else max_pixels)
         pre = preprocess.run(loaded.rgb, loaded.alpha, config)
         pixels = pre.lab[pre.mask]
         stride = max(1, math.ceil(len(pixels) / BATCH_PIXELS_PER_IMAGE))   # fixed, not random
@@ -126,7 +152,7 @@ def shared_palette(paths: list[Path], config: Config) -> np.ndarray:
               show_default=True)
 @config_options
 @handle_errors
-def batch(input_dir, outdir, config_path, **flags):
+def batch(input_dir, outdir, config_path, max_input_pixels, **flags):
     """Convert every image in a directory with ONE shared palette."""
     config = build_config(config_path, flags)
     paths = sorted(p for p in Path(input_dir).iterdir()
@@ -137,11 +163,11 @@ def batch(input_dir, outdir, config_path, **flags):
     outdir.mkdir(parents=True, exist_ok=True)
     if config.palette_name is None:
         palette_path = outdir / SHARED_PALETTE_NAME
-        palette.write_hex(palette_path, shared_palette(paths, config))
+        palette.write_hex(palette_path, shared_palette(paths, config, max_input_pixels))
         config = config.replace(palette_name=str(palette_path))
         _emit({"shared_palette": str(palette_path)})
     for path in paths:
-        result = pipeline.run(path, config)
+        result = pipeline.run(path, config, max_input_pixels)
         _emit({"input": str(path), "outputs": result.save(outdir / path.stem),
                "stats": result.stats})
 
@@ -164,7 +190,7 @@ def side_by_side(images: list[np.ndarray], gap: int) -> np.ndarray:
               show_default=True)
 @config_options
 @handle_errors
-def compare(input_path, outdir, config_path, **flags):
+def compare(input_path, outdir, config_path, max_input_pixels, **flags):
     """Run box, kopf and gerstner with the same config; write a side-by-side PNG."""
     from PIL import Image
 
@@ -174,7 +200,7 @@ def compare(input_path, outdir, config_path, **flags):
     previews, report = [], {}
     for method in METHODS:
         config = base.replace(method=method)
-        result = pipeline.run(input_path, config)
+        result = pipeline.run(input_path, config, max_input_pixels)
         report[method] = {"outputs": result.save(Path(outdir) / f"{stem}_{method}"),
                           "stats": result.stats}
         previews.append(io.upscale_nearest(result.image, config.scale_preview))

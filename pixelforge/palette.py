@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
 
-from . import color
+from . import color, io
+from .errors import PixelforgeError
 
 PALETTE_DIR = Path(__file__).parent / "palettes"
+PALETTE_SUFFIXES = (".hex", ".gpl")
+MAX_PALETTE_FILE_BYTES = 64 * 1024
+_HEX_LINE = re.compile(r"#?[0-9a-fA-F]{6}")
 
 # Boxes spanning less than this (LAB units; ΔE ≈ 2.3 is one just-noticeable difference) are not split.
 MEDIAN_CUT_MIN_RANGE = 2.3
@@ -111,33 +116,60 @@ def bundled_palettes() -> list[str]:
 
 
 def parse_hex(text: str) -> np.ndarray:
+    """One 'rrggbb' or '#rrggbb' per line; ';' starts a comment. Errors name the line number
+    only, never its content."""
     colors = []
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines(), start=1):
         line = line.split(";")[0].strip()
         if not line or line.startswith("//"):
             continue
+        if not _HEX_LINE.fullmatch(line):
+            raise ValueError(f"line {number}: not a hex color")
         colors.append(color.hex_to_rgb8(line))
     return np.array(colors, dtype=np.uint8).reshape(-1, 3)
 
 
 def parse_gpl(text: str) -> np.ndarray:
     colors = []
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines(), start=1):
         parts = line.split()
         if len(parts) >= 3 and all(p.isdigit() for p in parts[:3]):
-            colors.append([int(p) for p in parts[:3]])
+            rgb = [int(p) for p in parts[:3]]
+            if max(rgb) > 255:
+                raise ValueError(f"line {number}: color channel above 255")
+            colors.append(rgb)
     return np.array(colors, dtype=np.uint8).reshape(-1, 3)
+
+
+def _read_palette_text(path: Path) -> str:
+    """Read a palette file: regular files of at most MAX_PALETTE_FILE_BYTES, UTF-8 text."""
+    try:
+        with io.open_regular(path) as f:
+            data = f.read(MAX_PALETTE_FILE_BYTES + 1)
+    except PixelforgeError as exc:
+        raise ValueError(str(exc)) from None
+    if len(data) > MAX_PALETTE_FILE_BYTES:
+        raise ValueError(f"palette file {path} is larger than {MAX_PALETTE_FILE_BYTES} bytes")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError(f"palette file {path} is not a UTF-8 text file") from None
 
 
 def load_palette(name: str) -> np.ndarray:
     """Load a bundled palette by name, or a .hex / .gpl file by path. Returns (K, 3) uint8."""
-    bundled = PALETTE_DIR / f"{name}.hex"
-    path = bundled if bundled.is_file() else Path(name)
-    if not path.is_file():
-        raise ValueError(f"unknown palette {name!r}: not one of {bundled_palettes()} "
-                         "and not a path to a .hex or .gpl file")
-    text = path.read_text()
-    rgb8 = parse_gpl(text) if path.suffix.lower() == ".gpl" else parse_hex(text)
+    if name in bundled_palettes():
+        path = PALETTE_DIR / f"{name}.hex"
+    else:
+        path = Path(name)
+        if path.suffix.lower() not in PALETTE_SUFFIXES or not path.exists():
+            raise ValueError(f"unknown palette {name!r}: not one of {bundled_palettes()} "
+                             "and not a path to a .hex or .gpl file")
+    text = _read_palette_text(path)
+    try:
+        rgb8 = parse_gpl(text) if path.suffix.lower() == ".gpl" else parse_hex(text)
+    except ValueError as exc:
+        raise ValueError(f"palette file {path}: {exc}") from None
     if not 1 <= len(rgb8) <= 256:
         raise ValueError(f"palette {name!r} must have between 1 and 256 colors, "
                          f"got {len(rgb8)}")

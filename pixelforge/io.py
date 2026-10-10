@@ -37,7 +37,7 @@ class Loaded:
         return self.alpha.astype(np.float64) / 255.0
 
 
-def _open_regular(path):
+def open_regular(path):
     """Open a regular file for binary reading; refuse FIFOs, devices and directories.
 
     O_NONBLOCK keeps the open itself from hanging on a FIFO; the check runs on the opened
@@ -60,7 +60,7 @@ def _open_regular(path):
 
 
 def sha256_file(path) -> str:
-    with _open_regular(path) as f:
+    with open_regular(path) as f:
         return hashlib.file_digest(f, "sha256").hexdigest()
 
 
@@ -80,7 +80,7 @@ def load(path, max_pixels: int = MAX_INPUT_PIXELS) -> Loaded:
     with more than ``max_pixels`` pixels. Multi-frame images use their first frame (with a
     warning); EXIF orientation is applied.
     """
-    with _open_regular(path) as f:
+    with open_regular(path) as f:
         digest = hashlib.file_digest(f, "sha256").hexdigest()
         f.seek(0)
         try:

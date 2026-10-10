@@ -117,3 +117,35 @@ def test_mcda_does_not_spend_the_palette_on_coincident_colors():
     distances = color.palette_distance_matrix(found)
     np.fill_diagonal(distances, np.inf)
     assert distances.min() > 3.0
+
+
+def test_bad_palette_line_reports_number_not_content(tmp_path):
+    path = tmp_path / "secret.hex"
+    path.write_text("ff0000\nhunter2-password\n")
+    with pytest.raises(ValueError) as info:
+        palette.load_palette(str(path))
+    assert "line 2" in str(info.value) and "secret.hex" in str(info.value)
+    assert "hunter2" not in str(info.value)
+
+
+def test_palette_files_are_size_suffix_and_type_checked(tmp_path):
+    big = tmp_path / "big.hex"
+    big.write_text("ff0000\n" * 10000)
+    with pytest.raises(ValueError, match="larger than"):
+        palette.load_palette(str(big))
+    binary = tmp_path / "blob.gpl"
+    binary.write_bytes(b"\xff\xfe\x00\x80" * 8)
+    with pytest.raises(ValueError, match="not a UTF-8 text file"):
+        palette.load_palette(str(binary))
+    other = tmp_path / "colors.txt"
+    other.write_text("ff0000\n")
+    with pytest.raises(ValueError, match="unknown palette"):
+        palette.load_palette(str(other))
+    folder = tmp_path / "dir.hex"
+    folder.mkdir()
+    with pytest.raises(ValueError, match="not a regular file"):
+        palette.load_palette(str(folder))
+    high = tmp_path / "high.gpl"
+    high.write_text("GIMP Palette\n300 0 0\n")
+    with pytest.raises(ValueError, match="line 2"):
+        palette.load_palette(str(high))
