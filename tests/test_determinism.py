@@ -1,3 +1,9 @@
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from click.testing import CliRunner
 
@@ -47,3 +53,55 @@ def test_seed_only_changes_gerstner_jitter(fixture_path, tmp_path):
         assert result.exit_code == 0, result.output
         runs.append((outdir / "gradient6.png").read_bytes())
     assert runs[0] == runs[1]
+
+
+# --- across process boundaries ---------------------------------------------------------------
+
+ROOT = Path(__file__).resolve().parent.parent
+_ENVIRONMENTS = (
+    {"PYTHONHASHSEED": "0", "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1",
+     "MKL_NUM_THREADS": "1"},
+    {"PYTHONHASHSEED": "12345", "OPENBLAS_NUM_THREADS": "4", "OMP_NUM_THREADS": "4",
+     "MKL_NUM_THREADS": "4"},
+)
+# Sprite (no tileset) and background (tileset + tilemap .json/.tmj/.csv), both at 16 px.
+_SUBPROCESS_PRESETS = {"sprite": ["--out-width", "16"],
+                       "background": ["--out-width", "16", "--out-height", "16",
+                                      "--tile-size", "8"]}
+
+
+def _convert_in_subprocess(path, outdir, method, preset, env_overrides):
+    env = dict(os.environ, **env_overrides)
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(ROOT), env.get("PYTHONPATH")]))
+    args = [sys.executable, "-m", "pixelforge", "convert", str(path), "-o", str(outdir),
+            "--method", method, "--preset", preset, *_SUBPROCESS_PRESETS[preset]]
+    done = subprocess.run(args, env=env, capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stdout + done.stderr
+    outputs = {}
+    for p in sorted(outdir.iterdir()):
+        data = p.read_bytes()
+        if p.name.endswith("_meta.json"):
+            meta = json.loads(data)
+            del meta["stats"]["timings"], meta["environment"]   # wall clock and host only
+            data = json.dumps(meta, sort_keys=True).encode()
+        outputs[p.name] = data
+    return outputs
+
+
+@pytest.mark.parametrize("preset", sorted(_SUBPROCESS_PRESETS))
+@pytest.mark.parametrize("method", METHODS)
+def test_outputs_identical_across_processes_and_environments(fixture_path, tmp_path, method,
+                                                              preset):
+    """Fresh interpreters with different hash seeds and BLAS/OpenMP thread counts agree on
+    every output file, apart from the timings and environment recorded in _meta.json."""
+    runs = [_convert_in_subprocess(fixture_path("two_color"), tmp_path / str(i), method,
+                                   preset, env)
+            for i, env in enumerate(_ENVIRONMENTS)]
+    expected = {"two_color.png", "two_color_preview.png", "two_color_palette.json",
+                "two_color_palette.hex", "two_color_meta.json"}
+    if preset == "background":
+        expected |= {"two_color_tileset.png", "two_color_tilemap.json", "two_color.tmj",
+                     "two_color_tilemap.csv"}
+    assert set(runs[0]) == expected and set(runs[1]) == expected
+    for name in sorted(expected):
+        assert runs[0][name] == runs[1][name], f"{name} differs between processes"
