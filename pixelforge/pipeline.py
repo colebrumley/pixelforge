@@ -111,7 +111,11 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
         palette_lab = small.palette_lab
         indices = np.where(small.small_mask, small.indices, -1)
         if config.dither != "none":
-            indices = quantize.run(small.small_lab, small.small_mask, palette_lab, config)
+            # DEVIATION: Section 8.2 — small_lab is the palette color per pixel, so dithering it
+            # rarely moves a pixel. Dither the smoothed superpixel means against the annealer's
+            # colors before β instead; palette_lab (index-aligned) already carries β once.
+            indices = quantize.run(small.mean_lab, small.small_mask,
+                                   small.palette_lab_unsaturated, config)
     else:
         # box / kopf, or gerstner with an external palette: quantize the (mean) colors.
         source = small.mean_lab if small.mean_lab is not None else small.small_lab

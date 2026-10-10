@@ -140,6 +140,10 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
 
 - When gerstner is combined with `palette_name` or `palette_source="median_cut"`, its
   smoothed superpixel mean colors are quantized against that palette.
+- With gerstner's own palette and `dither` other than `"none"`, the smoothed superpixel means
+  (not the per-pixel palette colors, which dithering cannot move) are dithered against the
+  annealer's colors before β, and the indices are then used with the saturated palette. The
+  `"auto"` local-std criterion is computed on those means, and only over opaque cells.
 - After near-duplicate tiles are merged, the output image is re-rendered from the tileset so
   it matches the tilemap exactly.
 - Seamless padding is 2 output pixels per side, i.e. `2·rx` × `2·ry` input pixels per axis.

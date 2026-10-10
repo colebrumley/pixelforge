@@ -412,7 +412,8 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
             break
 
     # POST: saturation, then indices / palette / mask.
-    palette = annealer.colors.copy()
+    unsaturated = annealer.colors.copy()
+    palette = unsaturated.copy()
     palette[:, 1:] *= config.saturation_beta
 
     # small_mask[s] = opaque fraction of superpixel s >= 0.5. Transparent pixels are never
@@ -427,6 +428,7 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         small_lab=palette[k].reshape(ho, wo, 3),
         small_mask=small_mask.reshape(ho, wo),
         palette_lab=palette,
+        palette_lab_unsaturated=unsaturated,
         indices=k.reshape(ho, wo).copy(),
         mean_lab=smooth,
         stats={"iterations": iterations, "palette_size": int(len(palette)),
