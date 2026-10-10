@@ -70,7 +70,11 @@ needs.
    `pytest tests/test_determinism.py` enforces this for every method and preset.
 
 Byte-identical output across *different machines* additionally assumes the same versions of
-numpy, scipy, scikit-image and Pillow (`uv.lock` pins them).
+numpy, scipy, scikit-image and Pillow, which only `git clone && uv sync --locked` (same Python
+minor version) guarantees; `_meta.json` records them under `environment`. Across CPU
+architectures it is best-effort: float64 results can differ at ~1e-12 between SIMD paths, which
+the 8-bit rounding absorbs in every case tested, and `_palette.json` rounds LAB to 6 decimals
+for the same reason.
 
 ## Known deviations
 

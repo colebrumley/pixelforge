@@ -43,7 +43,9 @@ Python 3.11+. Not published to PyPI; install straight from GitHub:
 uv tool install git+https://github.com/colebrumley/pixelforge
 ```
 
-or `pip install git+https://github.com/colebrumley/pixelforge`.
+or `pip install git+https://github.com/colebrumley/pixelforge`. Both resolve the dependency
+ranges in `pyproject.toml`, not `uv.lock`, so they can pick other numpy/scipy versions; for
+output that matches someone else's byte for byte, use the locked checkout below.
 
 Optional AI background removal via `rembg`:
 
@@ -58,11 +60,11 @@ license is the model's own; `_meta.json` records the rembg and onnxruntime versi
 The sprite preset keys out flat opaque backdrops without it (`--no-key-bg` to disable),
 including the anti-aliased fringe where the subject blends into them (`key_bg_fringe`).
 
-To work on it:
+To work on it, or to reproduce outputs exactly:
 
 ```bash
 git clone https://github.com/colebrumley/pixelforge && cd pixelforge
-uv sync
+uv sync --locked
 uv run pytest -q
 ```
 
@@ -128,10 +130,20 @@ res.indices            # (H, W) palette index, -1 = transparent
 ## Determinism
 
 No unseeded randomness, no thread scheduling or wall-clock dependence, float64 throughout.
-Each output PNG carries the canonical config JSON and the input SHA-256 as `tEXt` chunks.
 `tests/test_determinism.py` enforces identical output bytes for every method and preset.
-Cross-machine reproducibility additionally assumes the pinned numpy/scipy/scikit-image/Pillow
-versions in `uv.lock`.
+
+- Byte identity across machines requires `git clone && uv sync --locked`: installing from git
+  resolves the ranged dependencies, and the lock itself pins different numpy/scipy for
+  Python 3.11 than for 3.12+, so use the same Python minor version too.
+- Across CPU architectures (x86-64 vs arm64, different SIMD paths) identity is best-effort:
+  float64 results can differ in the last bits, which rounding to 8-bit colors usually absorbs.
+- `--remove-bg` (rembg) is outside the guarantee and is never on by default.
+- Each output PNG carries `tEXt` chunks: `pixelforge:config` (canonical config JSON),
+  `pixelforge:input_sha256` (input file bytes) and, when a palette is given,
+  `pixelforge:palette_sha256` and `pixelforge:palette` (its `rrggbb` colors). `Config.hash()`
+  covers the config, the version and the palette's colors, so editing a palette file changes it.
+- `_meta.json` also records the Python, numpy, scipy, scikit-image and Pillow versions and the
+  platform (not hashed), to tell which of these differ when two outputs do.
 
 ## Gallery
 
