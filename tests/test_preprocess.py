@@ -69,4 +69,23 @@ def test_pipeline_reports_keying_and_palette_ignores_background():
     # stay transparent.
     assert result.indices[0, 0] == -1 and result.indices[-1, -1] == -1
     assert (result.indices[2:-2, 2:-2] >= 0).all()
-    assert result.indices.shape[0] in (64, 66) and result.indices.shape[1] < 50
+    assert result.indices.shape[0] == 64 and result.indices.shape[1] < 50
+
+
+def test_resolve_dims_reserves_the_outline_margin_inside_the_canvas():
+    assert preprocess.outline_margin(Config(preset="sprite")) == 1
+    assert preprocess.outline_margin(Config(preset="sprite", outline="none")) == 0
+    assert preprocess.outline_margin(Config(preset="sprite", tileset=True)) == 0
+    sprite = Config(preset="sprite")
+    # Longest edge is exactly 64; the other side keeps the aspect of the 62-px inner area.
+    assert preprocess.resolve_dims(100, 50, sprite) == (64, 33)        # round(62 / 2) + 2
+    assert preprocess.resolve_dims(50, 100, sprite) == (33, 64)
+    assert preprocess.resolve_dims(64, 64, sprite.replace(out_width=32, out_height=32)) == \
+        (32, 32)
+    assert preprocess.resolve_dims(64, 48, sprite.replace(out_height=24)) == (31, 24)  # 22·4/3
+    assert preprocess.resolve_dims(100, 50, sprite.replace(outline="none")) == (64, 32)
+    assert preprocess.resolve_dims(1000, 10, sprite) == (64, 8)       # never below 8
+    pre = preprocess.run(np.full((64, 64, 3), 0.5), np.full((64, 64), 255, dtype=np.uint8),
+                         sprite.replace(out_width=32, out_height=32, key_bg=False))
+    assert pre.outline_margin == 1 and (pre.out_width, pre.out_height) == (32, 32)
+    assert (pre.target_width, pre.target_height) == (30, 30)
