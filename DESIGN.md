@@ -162,8 +162,14 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
   (not the per-pixel palette colors, which dithering cannot move) are dithered against the
   annealer's colors before β, and the indices are then used with the saturated palette. The
   `"auto"` local-std criterion is computed on those means, and only over opaque cells.
+- Two tiles (any flip) are near-duplicates only if the mean ΔE over the tile is below
+  `tile_dedupe_tolerance` and every pixel's ΔE is below `TILE_DEDUPE_MAX_PIXEL_DELTA` (10,
+  fixed; a transparent/opaque pair costs 100). The spec's mean-only test let a few very
+  different pixels (stars, highlights) merge into a plain tile and vanish. A tile joins the
+  nearest qualifying entry (lowest mean ΔE, then lowest id, then flip order), not the first.
 - After near-duplicate tiles are merged, the output image is re-rendered from the tileset so
-  it matches the tilemap exactly.
+  it matches the tilemap exactly; `stats.tiles_rerender_px_changed` counts the pixels this
+  changed (0 when `tile_dedupe_tolerance=0`).
 - Seamless padding is 2 output pixels per side, i.e. `2·rx` × `2·ry` input pixels per axis.
 - Preprocessing fills transparent pixels with the nearest opaque color before denoising,
   uses `mode="edge"` for the bilateral filter, and repeats inputs that are smaller than the
