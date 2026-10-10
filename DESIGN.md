@@ -144,6 +144,8 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
 - With `tileset=True` nothing is reserved or padded (the canvas must stay a multiple of
   `tile_size`); where the silhouette touches the edge the outline is clipped and
   `stats.outline_clipped` is true.
+- Orphan removal merges a region only if its ΔE to the replacement is below `orphan_max_delta`
+  (25), other orphans do not vote, and passes stop early on no change or a repeated image.
 
 **Pipeline, tiles, preprocessing (Sections 5 and 9).**
 

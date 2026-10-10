@@ -14,6 +14,8 @@ Three downscalers, selectable per run:
 Post-processing adds palette ramp regularization, selective ordered dithering, orphan-pixel
 removal, jaggy cleanup, sprite outlines and optional tileset + tilemap extraction. Bundled
 palettes: NES, Game Boy, Genesis, SNES, PICO-8.
+Orphan removal keeps high-contrast singles such as 1-px eyes and highlights: a stray pixel is
+merged only when it is within ΔE `orphan_max_delta` (default 25) of its replacement.
 
 ## Samples
 
