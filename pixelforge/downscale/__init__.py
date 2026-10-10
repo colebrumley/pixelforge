@@ -11,7 +11,8 @@ import numpy as np
 class Downscaled:
     small_lab: np.ndarray                  # (ho, wo, 3) float64 CIELAB
     small_mask: np.ndarray                 # (ho, wo) bool, True = opaque
-    palette_lab: np.ndarray | None = None  # gerstner only: converged palette (K, 3)
+    palette_lab: np.ndarray | None = None  # gerstner only: converged palette (K, 3), β applied
+    palette_lab_unsaturated: np.ndarray | None = None  # gerstner only: palette before β
     indices: np.ndarray | None = None      # gerstner only: (ho, wo) palette index per pixel
     mean_lab: np.ndarray | None = None     # gerstner only: smoothed superpixel mean colors
     stats: dict = field(default_factory=dict)

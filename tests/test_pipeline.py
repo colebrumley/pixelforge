@@ -4,8 +4,9 @@ import numpy as np
 from click.testing import CliRunner
 from PIL import Image
 
-from pixelforge import Config, color, io, palette, run
+from pixelforge import Config, color, io, palette, quantize, run
 from pixelforge.cli import cli
+from pixelforge.pipeline import run_loaded
 
 
 def _last_json(output: str) -> dict:
@@ -113,3 +114,54 @@ def test_named_palette_and_dither(fixture_path):
         assert len(np.unique(result.indices)) >= 6
     assert (plain.indices != dithered.indices).any()
     assert plain.stats["final_palette_size"] == 16
+
+
+GERSTNER_DITHER = dict(method="gerstner", out_width=24, out_height=24, palette_size=8,
+                       denoise="none", key_bg=False, outline="none", remove_orphans=False,
+                       fix_jaggies=False)
+
+
+def _opaque(rgb: np.ndarray) -> io.Loaded:
+    rgba = np.full(rgb.shape[:2] + (4,), 255, dtype=np.uint8)
+    rgba[..., :3] = np.clip(np.round(rgb), 0, 255).astype(np.uint8)
+    return io.from_rgba(rgba, "test")
+
+
+def test_gerstner_dither_changes_smooth_gradient():
+    y, x = np.mgrid[0:64, 0:64] / 63.0
+    # Palette entries are far enough apart that dithering the palette colors themselves (the
+    # old behavior) changed no pixel at all here.
+    loaded = _opaque(np.stack([40 + 200 * x, 30 + 75 * (x + y), 20 + 100 * y], axis=-1))
+    plain = run_loaded(loaded, Config(dither="none", **GERSTNER_DITHER))
+    dithered = run_loaded(loaded, Config(dither="bayer4", dither_strength=1.0, **GERSTNER_DITHER))
+    opaque = plain.indices >= 0
+    assert np.array_equal(opaque, dithered.indices >= 0)
+    assert (plain.indices != dithered.indices)[opaque].mean() > 0.05
+    assert dithered.indices[opaque].min() >= 0
+    assert dithered.indices.max() < len(dithered.palette)
+    # Same palette (β applied exactly once); only the index image changes.
+    assert np.array_equal(plain.palette, dithered.palette)
+
+
+def test_gerstner_auto_dither_leaves_hard_edge_alone():
+    rgb = np.empty((64, 64, 3))
+    rgb[:, :32] = (200, 40, 40)
+    rgb[:, 32:] = (40, 40, 200)
+    loaded = _opaque(rgb)
+    plain = run_loaded(loaded, Config(dither="none", **GERSTNER_DITHER))
+    auto = run_loaded(loaded, Config(dither="auto", dither_strength=1.0, **GERSTNER_DITHER))
+    edge = slice(10, 14)    # output columns on both sides of the red/blue boundary at x = 12
+    assert len(np.unique(plain.indices[:, edge])) == 2
+    assert np.array_equal(plain.indices[:, edge], auto.indices[:, edge])
+
+
+def test_local_std_ignores_transparent_cells():
+    lab = np.zeros((5, 5, 3))
+    mask = np.zeros((5, 5), dtype=bool)
+    mask[1:4, 1:4] = True
+    lab[mask, 0] = 50.0               # flat opaque 3×3 block; transparent cells hold L = 0
+    assert quantize.local_std(lab)[1, 1] > 20          # unmasked: the silhouette looks like detail
+    std = quantize.local_std(lab, mask)
+    assert std[mask].max() < 1e-3 and std[~mask].max() == 0.0
+    lab[2, 2, 0] = 80.0               # real detail inside the opaque block is still seen
+    assert quantize.local_std(lab, mask)[2, 2] > 5
