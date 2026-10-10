@@ -28,6 +28,12 @@ OVERLAP_MIN = 0.08
 ORIENTATION_MAX_DEGREES = 25.0
 # A kernel holding less than this fraction of a cell's worth of pixels counts as starved.
 STARVED_FRACTION = 0.02
+# Convergence allows σ to still change on fewer than this fraction of the kernels. On noisy
+# content 0.5–1 % of the kernels keep growing σ by 1.1× per iteration long after μ and ν
+# have settled (σ starts at 1e-4, so reaching the cap takes ~100 steps), and at 0.1 % no
+# real image converged within 50 iterations. At 2 % the result differs from the
+# 50-iteration one by a mean ΔE below 0.1 on the noisy fixtures.
+CHANGED_SIGMA_FRACTION = 0.02
 
 _NEIGHBORS8 = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
@@ -352,9 +358,22 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
             nu[ky[usable], kx[usable]] = cube[seed_y[usable], seed_x[usable]]
 
         # ------------------------------------------------------------- CONVERGENCE
-        d_mu = max(float(np.abs(mu_x - old_mu_x).max()), float(np.abs(mu_y - old_mu_y).max()))
-        d_nu = float(np.abs(nu - old_nu).max())
-        if d_mu < config.kopf_tol and d_nu < config.kopf_tol and np.array_equal(sigma, old_sigma):
+        # DEVIATION: Section 6 — the spec's test (max |Δμ| and max |Δν| < kopf_tol, no σ
+        # change) is never met on real content: border truncation and non-integer ratios
+        # keep a few centroids moving by ~1e-3 to 5e-2 output pixels, and a handful of
+        # kernels grow σ every iteration. Converged instead means: RMS |Δμ| over fed kernels
+        # < 10·kopf_tol output pixels, RMS |Δν| (unit-cube color) < kopf_tol, and σ changed
+        # on fewer than CHANGED_SIGMA_FRACTION of the kernels (those already at the cap
+        # cannot change and do not count).
+        if fed.any():
+            d_mu = math.sqrt(float(np.mean(((mu_x - old_mu_x) ** 2
+                                             + (mu_y - old_mu_y) ** 2)[fed])))
+            d_nu = math.sqrt(float(np.mean(((nu - old_nu) ** 2).sum(axis=-1)[fed])))
+        else:
+            d_mu = d_nu = 0.0
+        sigma_changed = int(np.count_nonzero((sigma != old_sigma) & (old_sigma < SIGMA_CAP)))
+        if (d_mu < 10.0 * config.kopf_tol and d_nu < config.kopf_tol
+                and sigma_changed < CHANGED_SIGMA_FRACTION * ho * wo):
             converged = True
             break
 

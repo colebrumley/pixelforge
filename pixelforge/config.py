@@ -53,7 +53,7 @@ class Config:
     # --- downscale ---
     method: str = "gerstner"          # "box" | "kopf" | "gerstner"
     kopf_max_iters: int = 50
-    kopf_tol: float = 1e-3
+    kopf_tol: float = 1e-3            # RMS Δν (unit-cube color); RMS Δμ < 10× this, output px
     # --- palette ---
     palette_size: int = 16            # K. Ignored if palette_name set.
     palette_name: str | None = None   # bundled name or path to .hex/.gpl
