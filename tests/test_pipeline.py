@@ -153,3 +153,27 @@ def test_outline_index_in_stats(fixture_path):
     json.dumps(result.stats)
     plain = run(fixture_path("circle_alpha"), Config(outline="none", **base))
     assert plain.stats["outline_index"] is None
+
+
+def test_cli_rejects_non_finite_json_and_oversize_config(fixture_path, tmp_path):
+    runner = CliRunner()
+    image = str(fixture_path("two_color"))
+    for literal in ("NaN", "Infinity", "-Infinity"):
+        config_path = tmp_path / "cfg.json"
+        config_path.write_text('{"saturation_beta": %s}' % literal)
+        result = runner.invoke(cli, ["convert", image, "-o", str(tmp_path),
+                                     "--config", str(config_path)])
+        assert result.exit_code == 2 and literal in result.output, literal
+    big = tmp_path / "big.json"
+    big.write_text('{"palette_size": 4' + " " * (1024 * 1024) + "}")
+    result = runner.invoke(cli, ["convert", image, "-o", str(tmp_path), "--config", str(big)])
+    assert result.exit_code == 2 and "larger than" in result.output
+    result = runner.invoke(cli, ["convert", image, "-o", str(tmp_path),
+                                 "--config", str(tmp_path)])
+    assert result.exit_code != 0
+
+
+def test_cli_max_input_pixels(fixture_path, tmp_path):
+    result = CliRunner().invoke(cli, ["convert", str(fixture_path("two_color")), "-o",
+                                      str(tmp_path), "--max-input-pixels", "100"])
+    assert result.exit_code == 1 and "input budget of 100 pixels" in result.output

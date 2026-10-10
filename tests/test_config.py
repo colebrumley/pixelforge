@@ -80,3 +80,47 @@ def test_cli_warns_when_json_shadows_preset(tmp_path, capsys):
     assert "warning" in err and "method" in err and "palette_size" not in err
     build_config(str(path), {"palette_size": 8})
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("name, limit", [
+    ("out_width", 4096), ("out_height", 4096), ("scale_preview", 64),
+    ("denoise_sigma_spatial", 16), ("kopf_max_iters", 1000), ("g_max_iters", 10000),
+    ("saturation_beta", 5), ("tile_size", 512), ("seed", 2**63 - 1),
+])
+def test_upper_bounds(name, limit):
+    Config(**{name: limit})
+    with pytest.raises(ValueError, match=name):
+        Config(**{name: limit + 1})
+
+
+@pytest.mark.parametrize("kwargs", [
+    dict(seed=-1), dict(dither_variance_threshold=-0.1), dict(tile_dedupe_tolerance=-1.0),
+    dict(key_bg_tolerance=-0.01), dict(g_m=0.0), dict(kopf_tol=0.0), dict(seed=2**64),
+    dict(orphan_min_region=-2**63 - 1),
+])
+def test_lower_and_range_bounds(kwargs):
+    with pytest.raises(ValueError):
+        Config(**kwargs)
+
+
+@pytest.mark.parametrize("name", ["saturation_beta", "g_m", "kopf_tol", "dither_strength",
+                                  "dither_variance_threshold", "tile_dedupe_tolerance",
+                                  "key_bg_tolerance", "g_T_final"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_floats_are_rejected(name, value):
+    with pytest.raises(ValueError, match=name):
+        Config(**{name: value})
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("nan")])
+def test_non_finite_values_for_int_fields_are_rejected(value):
+    with pytest.raises(ValueError, match="kopf_max_iters"):
+        Config(kopf_max_iters=value)
+
+
+def test_outline_is_normalised_to_lowercase():
+    upper, lower = Config(outline="#AABBCC"), Config(outline="#aabbcc")
+    assert upper.outline == "#aabbcc" and upper.hash() == lower.hash()
+    for bad in ("#aabbcc\n", "#aabbccdd", "aabbcc"):
+        with pytest.raises(ValueError, match="outline"):
+            Config(outline=bad)

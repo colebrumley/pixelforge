@@ -84,6 +84,13 @@ refuses inputs that share a name (`a.png`, `a.bmp`); `--force` overrides both. `
 | `NAME_meta.json` | stats, timings, config, config hash, input hash |
 | `NAME_tileset.png`, `NAME_tilemap.json` | background preset only |
 
+### Limits
+
+Inputs larger than 24 million pixels (`width × height`) are refused before decoding; raise or
+lower the budget with `--max-input-pixels N` (`max_pixels=` in `pipeline.run`). Only PNG, JPEG,
+GIF, WEBP, BMP and TIFF are read, and only regular files. Numeric config fields have upper
+bounds (e.g. output edges ≤ 4096, `--scale-preview` ≤ 64), and non-finite numbers are rejected.
+
 ## Library
 
 ```python

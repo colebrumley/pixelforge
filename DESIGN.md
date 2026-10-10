@@ -147,6 +147,12 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
   uses `mode="edge"` for the bilateral filter, and repeats inputs that are smaller than the
   output by an integer factor.
 - `convert` writes a fifth file, `NAME_palette.hex`.
+- Input loading (not in the spec) only enables Pillow's PNG, JPEG, GIF, WEBP, BMP and TIFF
+  decoders, so content under a misleading name cannot reach other plugins (EPS would run
+  Ghostscript). It applies the EXIF orientation, rescales 16-bit grayscale to 8 bit instead
+  of clipping it, uses the first frame of animations (with a warning), refuses non-regular
+  files and enforces a pixel budget (`io.MAX_INPUT_PIXELS`) before decoding. A small input
+  whose integer repeat would exceed that budget is refused.
 - `Config` has two fields that are not in the spec, `key_bg` and `key_bg_tolerance` (see
   Install), and the sprite preset sets `key_bg=True`. The gallery runs the fixtures with
   `key_bg=False` because they are test patterns, not sprites; images in `samples/` use the

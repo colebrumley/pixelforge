@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import math
 import re
 from dataclasses import asdict, dataclass, fields
 
@@ -27,7 +28,12 @@ PRESETS = {
 # Longest output edge when neither out_width nor out_height is given.
 PRESET_LONGEST_EDGE = {"sprite": 64, "background": 256}
 
-_HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+_HEX_COLOR = re.compile(r"#[0-9a-f]{6}")
+
+# Upper bounds that keep a single run's memory and CPU finite (inclusive).
+UPPER_BOUNDS = {"out_width": 4096, "out_height": 4096, "scale_preview": 64,
+                "denoise_sigma_spatial": 16, "kopf_max_iters": 1000, "g_max_iters": 10000,
+                "saturation_beta": 5, "seed": 2**63 - 1, "tile_size": 512}
 
 
 def rembg_available() -> bool:
@@ -142,7 +148,7 @@ class Config:
         _choice("denoise", self.denoise, DENOISERS)
         _choice("dither", self.dither, DITHERS)
         _choice("palette_source", self.palette_source, PALETTE_SOURCES)
-        if self.outline not in ("none", "auto") and not _HEX_COLOR.match(self.outline):
+        if self.outline not in ("none", "auto") and not _HEX_COLOR.fullmatch(self.outline):
             raise ValueError(f'outline must be "none", "auto" or "#rrggbb", got {self.outline!r}')
         if not 0.0 < self.g_alpha < 1.0:
             raise ValueError(f"g_alpha must be in (0, 1), got {self.g_alpha}")
@@ -164,6 +170,15 @@ class Config:
                      "g_bilateral_sigma_spatial"):
             if not getattr(self, name) > 0:
                 raise ValueError(f"{name} must be > 0, got {getattr(self, name)}")
+        for name in ("dither_variance_threshold", "tile_dedupe_tolerance"):
+            if not getattr(self, name) >= 0:
+                raise ValueError(f"{name} must be >= 0, got {getattr(self, name)}")
+        if self.seed is not None and self.seed < 0:
+            raise ValueError(f"seed must be >= 0, got {self.seed}")
+        for name, bound in UPPER_BOUNDS.items():
+            v = getattr(self, name)
+            if v is not None and v > bound:
+                raise ValueError(f"{name} must be <= {bound}, got {v}")
         if self.tileset:
             for name in ("out_width", "out_height"):
                 v = getattr(self, name)
@@ -178,13 +193,19 @@ def _choice(name: str, value: str, allowed: tuple[str, ...]) -> None:
 
 
 def _coerce(name: str, annotation: str, value):
-    """Coerce a value to the field's declared type so equal configs hash equally."""
+    """Coerce a value to the field's declared type so equal configs hash equally.
+
+    Non-finite floats and integers outside the signed 64-bit range are rejected for every
+    field, so no bound check can be bypassed with NaN or Infinity.
+    """
     parts = [p.strip() for p in annotation.split("|")]
     if value is None:
         if "None" in parts:
             return None
         raise ValueError(f"{name} must not be None")
     base = parts[0]
+    if base not in ("bool", "int", "float", "str"):
+        raise ValueError(f"unsupported field type {annotation!r} for {name}")
     try:
         if base == "bool":
             if isinstance(value, bool):
@@ -193,15 +214,20 @@ def _coerce(name: str, annotation: str, value):
         if base == "int":
             if isinstance(value, bool) or int(value) != value:
                 raise TypeError
-            return int(value)
-        if base == "float":
+            result = int(value)
+        elif base == "float":
             if isinstance(value, bool):
                 raise TypeError
-            return float(value)
-        if base == "str":
-            if isinstance(value, str):
-                return value
-            raise TypeError
-    except (TypeError, ValueError):
+            result = float(value)
+        elif base == "str":
+            if not isinstance(value, str):
+                raise TypeError
+            # "#AABBCC" and "#aabbcc" are the same outline and must hash equally.
+            return value.lower() if name == "outline" else value
+    except (TypeError, ValueError, OverflowError):
         raise ValueError(f"{name} must be of type {annotation}, got {value!r}") from None
-    raise ValueError(f"unsupported field type {annotation!r} for {name}")
+    if base == "int" and not -2**63 <= result <= 2**63 - 1:
+        raise ValueError(f"{name} must fit in a signed 64-bit integer, got {value!r}")
+    if base == "float" and not math.isfinite(result):
+        raise ValueError(f"{name} must be a finite number, got {value!r}")
+    return result
