@@ -161,7 +161,7 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
 
     t = clock()
     small = downscale.get(config.method).run(pre.lab, pre.mask, pre.target_width,
-                                             pre.target_height, config)
+                                             pre.target_height, config, weight=pre.weight)
     if pre.pad_out:
         # Seamless mode: drop the wrapped context again.
         crop = (slice(pre.pad_out, -pre.pad_out), slice(pre.pad_out, -pre.pad_out))

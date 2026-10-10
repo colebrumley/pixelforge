@@ -116,3 +116,47 @@ def test_empty_mask_raises_pixelforge_error():
     lab = np.zeros((16, 16, 3))
     with pytest.raises(PixelforgeError, match="no opaque pixels"):
         gerstner.run(lab, np.zeros((16, 16), dtype=bool), 8, 8, Config(method="gerstner"))
+
+
+def test_all_ones_weight_matches_unweighted(preprocessed):
+    for name in ("two_color", "circle_alpha"):
+        pre, config = preprocessed(name, method="gerstner", out_width=16, out_height=16)
+        plain = gerstner.run(pre.lab, pre.mask, 16, 16, config)
+        ones = gerstner.run(pre.lab, pre.mask, 16, 16, config, weight=np.ones(pre.mask.shape))
+        assert np.array_equal(ones.small_lab, plain.small_lab)
+        assert np.array_equal(ones.small_mask, plain.small_mask)
+        assert np.array_equal(ones.indices, plain.indices)
+
+
+def test_palette_prior_follows_coverage_and_sums_to_one():
+    uniform = gerstner.palette_prior(np.ones(7))
+    assert np.array_equal(uniform, np.full(7, 1.0 / 7))
+    prior = gerstner.palette_prior(np.array([1.0, 1.0, 0.5, 128 / 255]))
+    assert np.isclose(prior.sum(), 1.0)
+    assert prior[0] == prior[1] and np.isclose(prior[2] / prior[0], 0.5)
+
+
+def test_semi_transparent_superpixels_get_less_palette_mass(monkeypatch):
+    # Opaque block with a band at weight 0.2 on the right: the annealer's prior sums to one
+    # and the band's superpixels hold a fifth of the mass of the others.
+    lab = np.zeros((32, 32, 3))
+    lab[..., 0] = 50.0
+    lab[:, 24:, 0] = 90.0
+    mask = np.ones((32, 32), dtype=bool)
+    weight = np.ones((32, 32))
+    weight[:, 24:] = 0.2
+    priors = []
+    step = gerstner.PaletteAnnealer.step
+
+    def record(self, points, weights):
+        priors.append(weights.copy())
+        step(self, points, weights)
+
+    monkeypatch.setattr(gerstner.PaletteAnnealer, "step", record)
+    config = Config(method="gerstner", palette_size=2, denoise="none", g_max_iters=3)
+    out = gerstner.run(lab, mask, 8, 8, config, weight=weight)
+    first = priors[0].reshape(8, 8)
+    assert np.isclose(first.sum(), 1.0)
+    assert np.allclose(first[:, 6:] / first[:, :6].max(), 0.2)
+    assert np.allclose(first[:, :6], first[0, 0])
+    assert out.small_mask.all()

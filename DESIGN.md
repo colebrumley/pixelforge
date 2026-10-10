@@ -180,6 +180,11 @@ The R_k half-width stays at the specified 2 output units.
 
 **Pipeline, tiles, preprocessing (Sections 5 and 9).**
 
+- The mask stays binary (alpha ≥ `alpha_threshold`), but every downscaler weights each opaque
+  pixel's color by alpha / 255 (`Preprocessed.weight`): box per cell, kopf in γ before the
+  M-step, gerstner in the superpixel means and centers and in the palette prior, which is
+  each superpixel's mean weight (uniform, as specified, for an opaque input). A cell made
+  only of fringe pixels above the threshold still keeps the fringe's color.
 - When gerstner is combined with `palette_name` or `palette_source="median_cut"`, its
   smoothed superpixel mean colors are quantized against that palette.
 - With gerstner's own palette and `dither` other than `"none"`, the smoothed superpixel means

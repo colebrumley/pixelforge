@@ -479,3 +479,34 @@ def test_meta_environment_and_rounded_palette_lab(fixture_path, tmp_path):
     assert meta["config_hash"] == config.hash()     # environment is not hashed
     for entry in json.loads((tmp_path / "a_palette.json").read_text()):
         assert all(v == round(v, 6) for v in entry["lab"])
+
+
+def test_downscaler_receives_alpha_weight(monkeypatch):
+    # Red square with a 4-px white fringe at alpha 128 (opaque) and one at 127 (transparent):
+    # the downscaler sees the fringe at weight 128/255, not as a full-weight opaque pixel.
+    from pixelforge import downscale
+    from pixelforge.downscale import box
+
+    rgba = np.zeros((64, 64, 4), dtype=np.uint8)
+    rgba[8:56, 8:56] = (220, 0, 20, 255)
+    rgba[8:56, 56:60] = (255, 255, 255, 128)
+    rgba[8:56, 4:8] = (255, 255, 255, 127)
+    seen = []
+
+    def fake_get(method):
+        assert method == "box"
+
+        class Recorder:
+            @staticmethod
+            def run(lab, mask, out_width, out_height, config, weight=None):
+                seen.append((mask, weight))
+                return box.run(lab, mask, out_width, out_height, config, weight=weight)
+
+        return Recorder
+
+    monkeypatch.setattr(downscale, "get", fake_get)
+    run(rgba, Config(method="box", out_width=16, out_height=16, palette_size=4,
+                     alpha_threshold=128))
+    (mask, weight), = seen
+    assert weight.shape == mask.shape and np.array_equal(weight > 0, mask)
+    assert np.allclose(np.unique(weight), [0.0, 128 / 255, 1.0])

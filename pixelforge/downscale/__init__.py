@@ -1,4 +1,8 @@
-"""Downscalers. Each module exposes run(lab, mask, out_width, out_height, config)."""
+"""Downscalers. Each module exposes run(lab, mask, out_width, out_height, config, weight=None).
+
+`mask` decides which input pixels are opaque; `weight` (H, W) in [0, 1], the input alpha,
+scales how much each opaque pixel counts in the color averages (None = 1 everywhere).
+"""
 
 from __future__ import annotations
 
