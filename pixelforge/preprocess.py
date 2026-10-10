@@ -154,7 +154,7 @@ def _fit_tiles(width: int, height: int, size: tuple[int, int], fixed: int | None
     # DEVIATION: Section 5 step 2f rounds both dims up, which stretches the image and can exceed
     # the target edge; that is fit="stretch" now, and the default "pad" keeps the aspect.
     if t > max(size):
-        raise ValueError(
+        raise ConfigError(
             f"tile_size ({t}) exceeds the longest output edge ({max(size)}) derived for a "
             f"{width}x{height} input; lower tile_size or raise the output size")
     inner = list(size)
