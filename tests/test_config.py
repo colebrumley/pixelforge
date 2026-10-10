@@ -197,3 +197,59 @@ def test_hash_covers_palette_file_contents(tmp_path):
     assert provenance["config"] == after.to_dict() and len(provenance["palette_sha256"]) == 64
     assert Config().provenance()["palette"] is None
     assert Config().provenance()["palette_sha256"] is None
+
+
+# Every raise in Config._validate, with the start of the message it must produce.
+_VALIDATE_MESSAGES = [
+    (dict(palette_name="no_such_palette"), "unknown palette 'no_such_palette'"),
+    (dict(out_width=7), "out_width must be >= 8, got 7"),
+    (dict(out_height=7), "out_height must be >= 8, got 7"),
+    (dict(scale=0), "scale must be > 0, got 0.0"),
+    (dict(canvas="7x64"), 'canvas must be "WxH" with W, H in [8, 4096]'),
+    (dict(scale=2, out_width=32), "scale and canvas cannot be combined with out_width"),
+    (dict(canvas="32x32", out_height=32), "scale and canvas cannot be combined with out_width"),
+    (dict(palette_size=257), "palette_size must be in [2, 256], got 257"),
+    (dict(method="nearest"), "method must be one of ['box', 'kopf', 'gerstner']"),
+    (dict(denoise="gauss"), "denoise must be one of ['none', 'bilateral', 'median']"),
+    (dict(dither="floyd"), "dither must be one of ['none', 'bayer4', 'bayer8', 'auto']"),
+    (dict(palette_source="kmeans"), "palette_source must be one of"),
+    (dict(transparent_index="middle"), "transparent_index must be one of ['last', 'first']"),
+    (dict(fit="zoom"), "fit must be one of ['pad', 'stretch', 'crop']"),
+    (dict(outline="red"), 'outline must be "none", "auto" or "#rrggbb", got \'red\''),
+    (dict(g_alpha=1.0), "g_alpha must be in (0, 1), got 1.0"),
+    (dict(alpha_threshold=256), "alpha_threshold must be in [0, 255], got 256"),
+    (dict(dither_strength=1.5), "dither_strength must be in [0, 1], got 1.5"),
+    (dict(key_bg_tolerance=1.5), "key_bg_tolerance must be in [0, 1], got 1.5"),
+    (dict(orphan_max_delta=-1.0), "orphan_max_delta must be finite and >= 0, got -1.0"),
+    (dict(key_bg_fringe=9), "key_bg_fringe must be in [0, 8], got 9"),
+    (dict(prereduce_max_ratio=-1), "prereduce_max_ratio must be >= 0, got -1"),
+    (dict(outline_darken=1.5), "outline_darken must be in [0, 1], got 1.5"),
+    *[(dict(**{name: 0}), f"{name} must be >= 1, got 0")
+      for name in ("kopf_max_iters", "g_max_iters", "tile_size", "scale_preview",
+                   "orphan_min_region")],
+    *[(dict(**{name: 0.0}), f"{name} must be > 0, got 0.0")
+      for name in ("g_T_final", "g_m", "kopf_tol", "saturation_beta", "denoise_sigma_color",
+                   "denoise_sigma_spatial", "g_bilateral_sigma_color",
+                   "g_bilateral_sigma_spatial")],
+    (dict(dither_variance_threshold=-0.5), "dither_variance_threshold must be >= 0, got -0.5"),
+    (dict(tile_dedupe_tolerance=-0.5), "tile_dedupe_tolerance must be >= 0, got -0.5"),
+    (dict(tileset_columns=257), "tileset_columns must be 0 (automatic) or in [1, 256], got 257"),
+    (dict(seed=-1), "seed must be >= 0, got -1"),
+    (dict(scale_preview=65), "scale_preview must be <= 64, got 65"),
+    (dict(preset="background", out_width=40, out_height=32),
+     "tile_size (16) must divide out_width (40) when tileset=True"),
+    (dict(preset="background", out_width=32, out_height=40),
+     "tile_size (16) must divide out_height (40) when tileset=True"),
+    (dict(preset="background", canvas="40x32"),
+     "tile_size (16) must divide canvas (40x32) when tileset=True"),
+]
+
+
+@pytest.mark.parametrize("kwargs, message", _VALIDATE_MESSAGES,
+                         ids=[",".join(sorted(k)) for k, _ in _VALIDATE_MESSAGES])
+def test_every_validation_message(kwargs, message):
+    from pixelforge import ConfigError
+
+    with pytest.raises(ConfigError) as info:
+        Config(**kwargs)
+    assert str(info.value).startswith(message), str(info.value)
