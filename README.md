@@ -119,7 +119,18 @@ res.save("out/hero")   # out/hero.png, hero_preview.png, hero_palette.json, ...
 res.image              # numpy RGBA (H, W, 4) uint8
 res.palette            # numpy (K, 3) uint8
 res.indices            # (H, W) palette index, -1 = transparent
+
+run(Image.open("hero.png"), cfg)   # a PIL image
+run(rgba, cfg)                     # (H, W, 3|4) numpy array: uint8, or float in [0, 1]
 ```
+
+`run(image, config, max_pixels=None)` applies the same pixel budget to every input kind.
+`input_sha256` hashes the file bytes for a path, and the shape plus RGBA bytes for in-memory
+images. `pixelforge.PRESETS` is read-only.
+
+Errors: `ConfigError` (also a `ValueError`) for invalid configs, raised by `Config(...)`, or for
+an unreadable `palette_name` file at the start of `run`; `PixelforgeError` (its base class) for
+everything else pixelforge reports, such as undecodable, oversized or fully transparent input.
 
 ## Determinism
 
