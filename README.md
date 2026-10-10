@@ -78,6 +78,13 @@ file.json` loads a config. Precedence: defaults ← preset ← JSON ← flags.
 refuses inputs that share a name (`a.png`, `a.bmp`); `--force` overrides both. `batch` skips
 `*_preview`, `*_tileset` and `*_compare` images.
 
+`--scale N` fixes the downscale ratio (output = cropped input / N per axis); `--canvas WxH` fits
+the subject inside a fixed canvas, centered, outline included. Neither combines with
+`--out-width/--out-height`. Unless one of them (or both `--out-*`) is given, `batch` derives one
+scale from the largest frame's subject and gives every frame the same canvas, so animation
+frames cropped to their alpha keep a constant size; the first JSON line reports `scale` and
+`canvas`.
+
 `convert` writes to `OUTDIR` (default `out/`):
 
 | file | content |

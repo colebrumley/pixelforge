@@ -32,15 +32,28 @@ class Preprocessed:
     pad_out: int             # output pixels of wrap padding per side (0 unless seamless)
     background_keyed: bool = False   # a flat opaque background was made transparent
     outline_margin: int = 0  # output pixels per side reserved for the outline ring (0 or 1)
+    layout: tuple[int, int, int, int] | None = None   # canvas: (inner w, inner h, left, top)
 
     @property
     def inner_width(self) -> int:
         """Width the image itself is downscaled to (the outline margin is added after)."""
+        if self.layout is not None:
+            return self.layout[0]
         return self.out_width - 2 * self.outline_margin
 
     @property
     def inner_height(self) -> int:
+        if self.layout is not None:
+            return self.layout[1]
         return self.out_height - 2 * self.outline_margin
+
+    def canvas_pad(self) -> tuple[tuple[int, int], tuple[int, int]]:
+        """Transparent ((top, bottom), (left, right)) padding from the inner size to the canvas,
+        outline margin included."""
+        left, top = (self.layout[2], self.layout[3]) if self.layout is not None else (0, 0)
+        left, top = left + self.outline_margin, top + self.outline_margin
+        return ((top, self.out_height - self.inner_height - top),
+                (left, self.out_width - self.inner_width - left))
 
     @property
     def target_width(self) -> int:
@@ -66,11 +79,35 @@ def resolve_dims(width: int, height: int, config: Config) -> tuple[int, int]:
 
     The result includes the outline margin (see outline_margin). A derived dimension keeps the
     input aspect ratio of the inner (image) area, i.e. it is computed from the given size minus
-    the margin and the margin is added back; it is never below 8.
+    the margin and the margin is added back; it is never below 8. With `scale` the size is
+    round(input / scale) per axis (margin inside); with `canvas` it is the canvas size.
     """
+    return resolve_layout(width, height, config)[:2]
+
+
+def resolve_layout(width: int, height: int,
+                   config: Config) -> tuple[int, int, tuple[int, int, int, int] | None]:
+    """(out_width, out_height, layout); layout is None unless `canvas` is set, else
+    (inner width, inner height, left, top): the image's size and offset inside the area
+    left by the outline margin."""
     m2 = 2 * outline_margin(config)
+    if config.canvas is not None:
+        cw, ch = config.canvas_size
+        aw, ah = cw - m2, ch - m2
+        if config.scale is not None:
+            iw, ih = max(1, round(width / config.scale)), max(1, round(height / config.scale))
+        if config.scale is None or iw > aw or ih > ah:
+            # Fit inside, preserving aspect; the longer relative side fills the canvas exactly.
+            if width * ah >= height * aw:
+                iw, ih = aw, min(ah, max(1, round(aw * height / width)))
+            else:
+                iw, ih = min(aw, max(1, round(ah * width / height))), ah
+        return cw, ch, (iw, ih, (aw - iw) // 2, (ah - ih) // 2)
     ow, oh = config.out_width, config.out_height
-    if ow is None and oh is None:
+    if config.scale is not None:
+        ow = max(8, round(width / config.scale))
+        oh = max(8, round(height / config.scale))
+    elif ow is None and oh is None:
         longest = PRESET_LONGEST_EDGE[config.preset]
         if width >= height:
             ow, oh = longest, max(8, round((longest - m2) * height / width) + m2)
@@ -83,7 +120,7 @@ def resolve_dims(width: int, height: int, config: Config) -> tuple[int, int]:
     if config.tileset:
         t = config.tile_size
         ow, oh = math.ceil(ow / t) * t, math.ceil(oh / t) * t
-    return int(ow), int(oh)
+    return int(ow), int(oh), None
 
 
 def remove_background(rgb: np.ndarray, alpha: np.ndarray) -> np.ndarray:
@@ -202,7 +239,8 @@ def denoise(rgb: np.ndarray, config: Config) -> np.ndarray:
     return np.clip(np.asarray(out, dtype=np.float64), 0.0, 1.0)
 
 
-def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
+def _subject(rgb: np.ndarray, alpha: np.ndarray, config: Config):
+    """(rgb, mask, background_keyed, crop box (y0, y1, x0, x1)) before any denoising."""
     rgb = np.asarray(rgb, dtype=np.float64)
     alpha = np.asarray(alpha, dtype=np.uint8)
 
@@ -222,15 +260,29 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
             mask = ~background
             background_keyed = True
 
+    box = (0, mask.shape[0], 0, mask.shape[1])
     if config.crop_to_alpha and not mask.all():
         ys, xs = np.nonzero(mask)
         y0, y1 = max(int(ys.min()) - 1, 0), min(int(ys.max()) + 2, mask.shape[0])
         x0, x1 = max(int(xs.min()) - 1, 0), min(int(xs.max()) + 2, mask.shape[1])
-        rgb, mask = rgb[y0:y1, x0:x1], mask[y0:y1, x0:x1]
+        box = (y0, y1, x0, x1)
+    return rgb, mask, background_keyed, box
+
+
+def subject_bbox(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> tuple[int, int, int, int]:
+    """The crop box (y0, y1, x0, x1) run() would use: after keying, before denoising."""
+    return _subject(rgb, alpha, config)[3]
+
+
+def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
+    rgb, mask, background_keyed, (y0, y1, x0, x1) = _subject(rgb, alpha, config)
+    rgb, mask = rgb[y0:y1, x0:x1], mask[y0:y1, x0:x1]
 
     h, w = mask.shape
-    out_w, out_h = resolve_dims(w, h, config)
+    out_w, out_h, layout = resolve_layout(w, h, config)
     margin = outline_margin(config)
+    inner_w, inner_h = (layout[0], layout[1]) if layout else (out_w - 2 * margin,
+                                                               out_h - 2 * margin)
 
     # DEVIATION: Section 5 — inputs smaller than the output are repeated by an integer factor
     # first, so that every output pixel is backed by at least one input pixel in all three
@@ -250,8 +302,8 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
     pad_out = 0
     if config.seamless:
         pad_out = SEAMLESS_PAD_OUT
-        pad_x = math.ceil(pad_out * w / (out_w - 2 * margin))
-        pad_y = math.ceil(pad_out * h / (out_h - 2 * margin))
+        pad_x = math.ceil(pad_out * w / inner_w)
+        pad_y = math.ceil(pad_out * h / inner_h)
         rgb = np.pad(rgb, ((pad_y, pad_y), (pad_x, pad_x), (0, 0)), mode="wrap")
         mask = np.pad(mask, ((pad_y, pad_y), (pad_x, pad_x)), mode="wrap")
 
@@ -259,4 +311,5 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
     lab = color.rgb_to_lab(rgb)
     return Preprocessed(lab=np.ascontiguousarray(lab), mask=np.ascontiguousarray(mask),
                         out_width=out_w, out_height=out_h, pad_out=pad_out,
-                        background_keyed=background_keyed, outline_margin=margin)
+                        background_keyed=background_keyed, outline_margin=margin,
+                        layout=layout)

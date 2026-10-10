@@ -29,9 +29,10 @@ PRESETS = {
 PRESET_LONGEST_EDGE = {"sprite": 64, "background": 256}
 
 _HEX_COLOR = re.compile(r"#[0-9a-f]{6}")
+_CANVAS = re.compile(r"([0-9]+)x([0-9]+)")
 
 # Upper bounds that keep a single run's memory and CPU finite (inclusive).
-UPPER_BOUNDS = {"out_width": 4096, "out_height": 4096, "scale_preview": 64,
+UPPER_BOUNDS = {"out_width": 4096, "out_height": 4096, "scale": 4096, "scale_preview": 64,
                 "denoise_sigma_spatial": 16, "kopf_max_iters": 1000, "g_max_iters": 10000,
                 "saturation_beta": 5, "seed": 2**63 - 1, "tile_size": 512}
 
@@ -46,6 +47,8 @@ class Config:
     preset: str = "sprite"            # "sprite" | "background"
     out_width: int | None = None      # if None, derived from out_height and aspect
     out_height: int | None = None     # if both None: sprite→64 on longest edge, background→256
+    scale: float | None = None        # fixed downscale: output = round(cropped input / scale)
+    canvas: str | None = None         # "WxH": fit the subject inside, centered (outline inside)
     # --- preprocess ---
     remove_bg: bool = False           # sprite preset default True if rembg installed, else False
     key_bg: bool = False              # key out a flat opaque background (sprite default True)
@@ -134,6 +137,14 @@ class Config:
         payload = self.canonical_json() + "\n" + __version__
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
+    @property
+    def canvas_size(self) -> tuple[int, int] | None:
+        """(width, height) of `canvas`, or None."""
+        if self.canvas is None:
+            return None
+        w, h = _CANVAS.fullmatch(self.canvas).groups()
+        return int(w), int(h)
+
     def replace(self, **changes) -> "Config":
         """A copy with `changes` applied; a changed preset re-applies to non-explicit fields."""
         values = {name: getattr(self, name) for name in self._explicit}
@@ -145,6 +156,14 @@ class Config:
             v = getattr(self, name)
             if v is not None and v < 8:
                 raise ValueError(f"{name} must be >= 8, got {v}")
+        if self.scale is not None and not self.scale > 0:
+            raise ValueError(f"scale must be > 0, got {self.scale}")
+        if self.canvas is not None and not (_CANVAS.fullmatch(self.canvas) and all(
+                8 <= v <= 4096 for v in map(int, _CANVAS.fullmatch(self.canvas).groups()))):
+            raise ValueError(f'canvas must be "WxH" with W, H in [8, 4096], got {self.canvas!r}')
+        if (self.scale is not None or self.canvas is not None) and (
+                self.out_width is not None or self.out_height is not None):
+            raise ValueError("scale and canvas cannot be combined with out_width/out_height")
         if not 2 <= self.palette_size <= 256:
             raise ValueError(f"palette_size must be in [2, 256], got {self.palette_size}")
         _choice("method", self.method, METHODS)
@@ -193,6 +212,9 @@ class Config:
                 if v is not None and v % self.tile_size != 0:
                     raise ValueError(
                         f"tile_size ({self.tile_size}) must divide {name} ({v}) when tileset=True")
+            if self.canvas is not None and any(v % self.tile_size for v in self.canvas_size):
+                raise ValueError(f"tile_size ({self.tile_size}) must divide canvas "
+                                 f"({self.canvas}) when tileset=True")
 
 
 def _choice(name: str, value: str, allowed: tuple[str, ...]) -> None:

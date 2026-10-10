@@ -161,3 +161,29 @@ def test_palette_is_not_spent_on_the_halo():
 
     assert pinkish(0) >= 3          # without unmixing three of four entries are pinks
     assert pinkish(3) <= 1
+
+
+def test_resolve_dims_with_scale():
+    sprite = Config(preset="sprite")
+    assert preprocess.resolve_dims(64, 64, sprite.replace(scale=2)) == (32, 32)  # margin inside
+    assert preprocess.resolve_dims(100, 50, sprite.replace(scale=0.5)) == (200, 100)
+    assert preprocess.resolve_dims(30, 10, sprite.replace(scale=4)) == (8, 8)     # never below 8
+    tiles = Config(preset="background", scale=3)
+    assert preprocess.resolve_dims(100, 50, tiles) == (48, 32)           # ceil(33, 17) to 16
+
+
+def test_resolve_dims_with_canvas():
+    sprite = Config(preset="sprite", canvas="48x32")
+    # The subject fits inside the 46x30 area left by the outline margin, centered.
+    assert preprocess.resolve_layout(100, 50, sprite) == (48, 32, (46, 23, 0, 3))
+    assert preprocess.resolve_layout(50, 100, sprite) == (48, 32, (15, 30, 15, 0))
+    assert preprocess.resolve_dims(100, 50, sprite) == (48, 32)
+    plain = sprite.replace(outline="none")
+    assert preprocess.resolve_layout(100, 50, plain) == (48, 32, (48, 24, 0, 4))
+    # With a scale the subject keeps it, and is only shrunk when it would not fit.
+    assert preprocess.resolve_layout(20, 10, sprite.replace(scale=1)) == (48, 32, (20, 10, 13, 10))
+    assert preprocess.resolve_layout(200, 10, sprite.replace(scale=1)) == (48, 32, (46, 2, 0, 14))
+    pre = preprocess.run(np.full((64, 64, 3), 0.5), np.full((64, 64), 255, dtype=np.uint8),
+                         sprite.replace(key_bg=False))
+    assert (pre.inner_width, pre.inner_height, pre.target_width) == (30, 30, 30)
+    assert pre.canvas_pad() == ((1, 1), (9, 9))
