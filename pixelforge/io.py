@@ -17,6 +17,8 @@ from .errors import PixelforgeError
 
 META_CONFIG_KEY = "pixelforge:config"
 META_INPUT_KEY = "pixelforge:input_sha256"
+META_PALETTE_SHA_KEY = "pixelforge:palette_sha256"   # only when palette_name is set
+META_PALETTE_KEY = "pixelforge:palette"              # resolved 'rrggbb' lines, newline-joined
 
 # Default input pixel budget (width × height), checked before any pixel data is decoded.
 MAX_INPUT_PIXELS = 24_000_000

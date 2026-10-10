@@ -146,3 +146,20 @@ def test_scale_and_canvas_accepted():
     assert hash(cfg) == hash(Config(scale=2.0, canvas="48x32"))
     assert Config(**json.loads(cfg.canonical_json())) == cfg
     assert Config().canvas_size is None
+
+
+def test_hash_covers_palette_file_contents(tmp_path):
+    path = tmp_path / "p.hex"
+    path.write_text("ff0000\n00ff00\n")
+    before = Config(palette_name=str(path))
+    before_hash = before.hash()                 # reads and caches the palette lines
+    path.write_text("ff0000\n0000ff\n")
+    after = Config(palette_name=str(path))
+    assert before.canonical_json() == after.canonical_json()
+    assert before_hash == before.hash() != after.hash()
+    assert len(Config(palette_name="pico8").palette_hex_lines()) == 16   # bundled: same way
+    provenance = after.provenance()
+    assert provenance["palette"] == ["ff0000", "0000ff"]
+    assert provenance["config"] == after.to_dict() and len(provenance["palette_sha256"]) == 64
+    assert Config().provenance()["palette"] is None
+    assert Config().provenance()["palette_sha256"] is None

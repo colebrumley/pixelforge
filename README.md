@@ -87,6 +87,10 @@ scale from the largest frame's subject and gives every frame the same canvas, so
 frames cropped to their alpha keep a constant size; the first JSON line reports `scale` and
 `canvas`.
 
+`--palette-name` takes a bundled name, a `.hex`/`.gpl` path, or inline colors
+(`hex:ff0000,00ff00,…`). `batch` writes its shared palette to `shared_palette.hex` and hands it
+to every frame inline, so the frames' metadata carries the colors, not the output path.
+
 `convert` writes to `OUTDIR` (default `out/`):
 
 | file | content |

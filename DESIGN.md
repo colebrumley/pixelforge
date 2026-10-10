@@ -56,9 +56,13 @@ needs.
    routine. Final color conversion rounds with `np.round(...).astype(np.uint8)` after
    clipping to [0, 255], never truncation.
 4. `Config.hash()` is the SHA-256 of the canonical JSON of the config (sorted keys, no
-   whitespace) and the pixelforge version string. Every output PNG carries the `tEXt` chunks
-   `pixelforge:config` (the canonical JSON) and `pixelforge:input_sha256` (SHA-256 of the
-   input file bytes).
+   whitespace), the pixelforge version string and, when `palette_name` is set, the SHA-256
+   of the resolved palette's `rrggbb` lines, so rewriting a palette file changes the hash.
+   Every output PNG carries the `tEXt` chunks `pixelforge:config` (the canonical JSON) and
+   `pixelforge:input_sha256` (SHA-256 of the input file bytes), plus, with a palette,
+   `pixelforge:palette_sha256` and `pixelforge:palette` (the lines, newline-joined).
+   `batch` passes its shared palette as an inline `palette_name="hex:rrggbb,…"`, not as the
+   path of `shared_palette.hex`, so frame metadata never depends on `--outdir`.
 5. Running the CLI twice on the same input and config produces byte-identical PNGs;
    `pytest tests/test_determinism.py` enforces this for every method and preset.
 

@@ -13,6 +13,7 @@ from .errors import PixelforgeError
 PALETTE_DIR = Path(__file__).parent / "palettes"
 PALETTE_SUFFIXES = (".hex", ".gpl")
 MAX_PALETTE_FILE_BYTES = 64 * 1024
+INLINE_PREFIX = "hex:"
 _HEX_LINE = re.compile(r"#?[0-9a-fA-F]{6}")
 
 # Boxes spanning less than this (LAB units; ΔE ≈ 2.3 is one just-noticeable difference) are not split.
@@ -156,8 +157,24 @@ def _read_palette_text(path: Path) -> str:
         raise ValueError(f"palette file {path} is not a UTF-8 text file") from None
 
 
+def inline_name(palette_rgb8: np.ndarray) -> str:
+    """A palette_name that carries the colors themselves: 'hex:rrggbb,rrggbb,...'."""
+    lines = [color.rgb8_to_hex(c)[1:] for c in np.asarray(palette_rgb8).reshape(-1, 3)]
+    return INLINE_PREFIX + ",".join(lines)
+
+
 def load_palette(name: str) -> np.ndarray:
-    """Load a bundled palette by name, or a .hex / .gpl file by path. Returns (K, 3) uint8."""
+    """Load a bundled palette by name, a .hex / .gpl file by path, or an inline
+    'hex:rrggbb,rrggbb,...' palette. Returns (K, 3) uint8."""
+    if name.startswith(INLINE_PREFIX):
+        try:
+            rgb8 = parse_hex("\n".join(name[len(INLINE_PREFIX):].split(",")))
+        except ValueError as exc:
+            raise ValueError(f"inline palette: {exc}") from None
+        if not 1 <= len(rgb8) <= 256:
+            raise ValueError(f"inline palette must have between 1 and 256 colors, "
+                             f"got {len(rgb8)}")
+        return rgb8
     if name in bundled_palettes():
         path = PALETTE_DIR / f"{name}.hex"
     else:
@@ -232,7 +249,9 @@ def resolve_source(config) -> str:
 def build(lab_pixels: np.ndarray, config) -> np.ndarray:
     """Palette (K, 3) in LAB for the given pixels according to the config."""
     if config.palette_name is not None:
-        return color.rgb8_to_lab(load_palette(config.palette_name))
+        # The cached lines, so the palette used is exactly the one Config.hash() covers.
+        lines = config.palette_hex_lines()
+        return color.rgb8_to_lab(np.array([color.hex_to_rgb8(h) for h in lines], np.uint8))
     if resolve_source(config) == "mcda":
         return mcda(lab_pixels, config.palette_size, config)
     return median_cut(lab_pixels, config.palette_size)

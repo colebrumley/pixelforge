@@ -133,9 +133,36 @@ class Config:
     def canonical_json(self) -> str:
         return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
 
+    def palette_hex_lines(self) -> list[str] | None:
+        """The resolved palette_name colors as 'rrggbb' lines (cached), or None."""
+        if self.palette_name is None:
+            return None
+        cached = self.__dict__.get("_palette_lines")
+        if cached is None:
+            from .palette import parse_hex_lines   # palette imports io, which must not cycle
+            cached = tuple(parse_hex_lines(self.palette_name))
+            object.__setattr__(self, "_palette_lines", cached)
+        return list(cached)
+
+    def palette_sha256(self) -> str | None:
+        """SHA-256 of the resolved palette's newline-joined hex lines, or None."""
+        lines = self.palette_hex_lines()
+        if lines is None:
+            return None
+        return hashlib.sha256("\n".join(lines).encode("ascii")).hexdigest()
+
     def hash(self) -> str:
+        """SHA-256 of the canonical JSON, the version and, with palette_name, the palette's
+        contents, so rewriting a palette file (or a bundled palette) changes the hash."""
         payload = self.canonical_json() + "\n" + __version__
+        if self.palette_name is not None:
+            payload += "\npalette:" + self.palette_sha256()
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def provenance(self) -> dict:
+        """Everything needed to reproduce a run besides the input image."""
+        return {"config": self.to_dict(), "palette_sha256": self.palette_sha256(),
+                "palette": self.palette_hex_lines(), "version": __version__}
 
     @property
     def canvas_size(self) -> tuple[int, int] | None:

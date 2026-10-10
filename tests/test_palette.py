@@ -153,3 +153,13 @@ def test_palette_files_are_size_suffix_and_type_checked(tmp_path):
 
 def test_mcda_single_color():
     assert len(palette.mcda(np.tile([60.0, 10.0, -20.0], (500, 1)), 8, Config())) == 1
+
+
+def test_inline_palette_round_trips():
+    rgb8 = np.array([[255, 0, 0], [0, 128, 255]], dtype=np.uint8)
+    name = palette.inline_name(rgb8)
+    assert name == "hex:ff0000,0080ff"
+    assert palette.load_palette(name).tolist() == rgb8.tolist()
+    for bad in ("hex:", "hex:ff00", "hex:ff0000,zz0000"):
+        with pytest.raises(ValueError):
+            palette.load_palette(bad)

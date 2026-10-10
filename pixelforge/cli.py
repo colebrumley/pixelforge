@@ -245,8 +245,10 @@ def batch(input_dir, outdir, force, config_path, max_input_pixels, **flags):
         header.update(scale=config.scale, canvas=config.canvas)
     if config.palette_name is None:
         palette_path = outdir / SHARED_PALETTE_NAME
-        palette.write_hex(palette_path, shared_palette(paths, config, max_input_pixels))
-        config = config.replace(palette_name=str(palette_path))
+        shared = shared_palette(paths, config, max_input_pixels)
+        palette.write_hex(palette_path, shared)
+        # The colors themselves, not the path: frame metadata must not depend on --outdir.
+        config = config.replace(palette_name=palette.inline_name(shared))
         header["shared_palette"] = str(palette_path)
     if header:
         _emit(header)

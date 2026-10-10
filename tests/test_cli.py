@@ -7,6 +7,7 @@ import pytest
 from click.testing import CliRunner
 from PIL import Image
 
+from pixelforge import io
 from pixelforge.cli import cli
 
 FAST = ["--method", "box", "--out-width", "16", "--out-height", "16"]
@@ -151,3 +152,21 @@ def test_canvas_pads_and_centers(tmp_path):
     h, w, y0, x0 = _opaque_box(out)
     assert w >= 46 and h < 30
     assert abs(y0 - (48 - (y0 + h))) <= 1 and abs(x0 - (48 - (x0 + w))) <= 1
+
+
+def test_batch_metadata_does_not_depend_on_outdir(tmp_path):
+    (tmp_path / "in").mkdir()
+    _frame(tmp_path / "in" / "a.png", radius=12)
+    runs = []
+    for name in ("one", "two"):
+        out = tmp_path / name / "deeper"
+        result = _invoke("batch", tmp_path / "in", "-o", out, *FAST, "--palette-size", "4")
+        assert result.exit_code == 0, result.output
+        text = io.read_png_text(out / "a.png")
+        assert str(out) not in json.dumps(text)
+        meta = json.loads((out / "a_meta.json").read_text())
+        assert meta["palette"] == (out / "shared_palette.hex").read_text().split()
+        assert text["pixelforge:palette"].split("\n") == meta["palette"]
+        assert text["pixelforge:palette_sha256"] == meta["palette_sha256"]
+        runs.append((text, (out / "a.png").read_bytes(), meta["config_hash"]))
+    assert runs[0] == runs[1]

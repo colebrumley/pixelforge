@@ -28,8 +28,13 @@ class Result:
     tileset_indices: np.ndarray | None = None
 
     def png_text(self) -> dict:
-        return {io.META_CONFIG_KEY: self.config.canonical_json(),
+        text = {io.META_CONFIG_KEY: self.config.canonical_json(),
                 io.META_INPUT_KEY: self.input_sha256}
+        provenance = self.config.provenance()
+        if provenance["palette"] is not None:
+            text[io.META_PALETTE_SHA_KEY] = provenance["palette_sha256"]
+            text[io.META_PALETTE_KEY] = "\n".join(provenance["palette"])
+        return text
 
     def save(self, prefix) -> dict:
         """Write <prefix>.png, _preview.png, _palette.json, _palette.hex, _meta.json and, for
@@ -44,8 +49,11 @@ class Result:
                    for rgb, lab in zip(self.palette, self.palette_lab)]
         paths["palette"].write_text(json.dumps(entries, indent=2) + "\n")
         palette.write_hex(paths["palette_hex"], self.palette)
-        meta = {"version": __version__, "config": self.config.to_dict(),
+        provenance = self.config.provenance()
+        meta = {"version": __version__, "config": provenance["config"],
                 "config_hash": self.config.hash(), "input_sha256": self.input_sha256,
+                "palette_sha256": provenance["palette_sha256"],
+                "palette": provenance["palette"],
                 "width": int(self.indices.shape[1]), "height": int(self.indices.shape[0]),
                 "stats": self.stats}
         paths["meta"].write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
