@@ -151,3 +151,27 @@ def test_canvas_pads_and_centers(tmp_path):
     h, w, y0, x0 = _opaque_box(out)
     assert w >= 46 and h < 30
     assert abs(y0 - (48 - (y0 + h))) <= 1 and abs(x0 - (48 - (x0 + w))) <= 1
+
+
+def test_remove_bg_without_rembg_is_config_error(fixture_path, tmp_path, monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_rembg(name, *args, **kwargs):
+        if name == "rembg":
+            raise ImportError("no rembg")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_rembg)
+    result = _invoke("convert", fixture_path("two_color"), "-o", tmp_path, "--remove-bg", *FAST)
+    assert result.exit_code == 2, result.output
+    assert "config error" in result.output and "rembg" in result.output
+
+
+def test_runtime_error_exit_code_1(tmp_path):
+    bad = tmp_path / "bad.png"
+    bad.write_bytes(b"not an image")
+    result = _invoke("convert", bad, "-o", tmp_path / "out", *FAST)
+    assert result.exit_code == 1, result.output
+    assert "not a supported image" in result.output

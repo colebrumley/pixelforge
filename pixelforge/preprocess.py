@@ -10,7 +10,7 @@ from scipy import ndimage
 
 from . import color
 from .config import PRESET_LONGEST_EDGE, Config
-from .errors import PixelforgeError  # noqa: F401 - re-exported for compatibility
+from .errors import ConfigError, PixelforgeError  # noqa: F401 - re-exported for compatibility
 from .io import MAX_INPUT_PIXELS
 
 # Output pixels of wrapped context added on every side in seamless mode (Section 9:
@@ -128,7 +128,7 @@ def remove_background(rgb: np.ndarray, alpha: np.ndarray) -> np.ndarray:
     try:
         from rembg import remove
     except ImportError:
-        raise PixelforgeError(
+        raise ConfigError(
             "--remove-bg requires the optional 'rembg' dependency; "
             "install it with: pip install 'pixelforge[bg]'") from None
     from PIL import Image

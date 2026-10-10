@@ -14,6 +14,7 @@ import numpy as np
 
 from . import color, io, palette, pipeline, postprocess, preprocess
 from .config import METHODS, PRESET_LONGEST_EDGE, PRESETS, Config
+from .errors import ConfigError
 
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff")
 BATCH_PIXELS_PER_IMAGE = 50_000
@@ -22,10 +23,6 @@ OUTPUT_STEM_SUFFIXES = ("_preview", "_tileset", "_compare")   # our own image ou
 MAX_CONFIG_FILE_BYTES = 1024 * 1024
 
 _CLICK_TYPES = {"int": int, "float": float, "str": str}
-
-
-class ConfigError(Exception):
-    """Config validation failure → exit code 2."""
 
 
 def config_options(command):
@@ -107,7 +104,7 @@ def handle_errors(func):
         except click.exceptions.Exit:
             raise
         except Exception as exc:  # noqa: BLE001 - the CLI reports every failure the same way
-            click.echo(f"error: {exc or type(exc).__name__}", err=True)
+            click.echo(f"error: {str(exc) or type(exc).__name__}", err=True)
             sys.exit(1)
     return wrapper
 

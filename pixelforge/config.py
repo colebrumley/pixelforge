@@ -9,6 +9,7 @@ import math
 import re
 from dataclasses import asdict, dataclass, fields
 
+from .errors import ConfigError
 from .version import __version__
 
 METHODS = ("box", "kopf", "gerstner")
@@ -105,10 +106,10 @@ class Config:
         specs = {f.name: f for f in fields(self)}
         unknown = sorted(set(kwargs) - set(specs))
         if unknown:
-            raise ValueError(f"unknown config field(s): {', '.join(unknown)}")
+            raise ConfigError(f"unknown config field(s): {', '.join(unknown)}")
         preset = kwargs.get("preset", specs["preset"].default)
         if preset not in PRESETS:
-            raise ValueError(f"preset must be one of {sorted(PRESETS)}, got {preset!r}")
+            raise ConfigError(f"preset must be one of {sorted(PRESETS)}, got {preset!r}")
         values = {name: f.default for name, f in specs.items()}
         values.update(PRESETS[preset])
         values.update(kwargs)
@@ -155,71 +156,71 @@ class Config:
         for name in ("out_width", "out_height"):
             v = getattr(self, name)
             if v is not None and v < 8:
-                raise ValueError(f"{name} must be >= 8, got {v}")
+                raise ConfigError(f"{name} must be >= 8, got {v}")
         if self.scale is not None and not self.scale > 0:
-            raise ValueError(f"scale must be > 0, got {self.scale}")
+            raise ConfigError(f"scale must be > 0, got {self.scale}")
         if self.canvas is not None and not (_CANVAS.fullmatch(self.canvas) and all(
                 8 <= v <= 4096 for v in map(int, _CANVAS.fullmatch(self.canvas).groups()))):
-            raise ValueError(f'canvas must be "WxH" with W, H in [8, 4096], got {self.canvas!r}')
+            raise ConfigError(f'canvas must be "WxH" with W, H in [8, 4096], got {self.canvas!r}')
         if (self.scale is not None or self.canvas is not None) and (
                 self.out_width is not None or self.out_height is not None):
-            raise ValueError("scale and canvas cannot be combined with out_width/out_height")
+            raise ConfigError("scale and canvas cannot be combined with out_width/out_height")
         if not 2 <= self.palette_size <= 256:
-            raise ValueError(f"palette_size must be in [2, 256], got {self.palette_size}")
+            raise ConfigError(f"palette_size must be in [2, 256], got {self.palette_size}")
         _choice("method", self.method, METHODS)
         _choice("denoise", self.denoise, DENOISERS)
         _choice("dither", self.dither, DITHERS)
         _choice("palette_source", self.palette_source, PALETTE_SOURCES)
         if self.outline not in ("none", "auto") and not _HEX_COLOR.fullmatch(self.outline):
-            raise ValueError(f'outline must be "none", "auto" or "#rrggbb", got {self.outline!r}')
+            raise ConfigError(f'outline must be "none", "auto" or "#rrggbb", got {self.outline!r}')
         if not 0.0 < self.g_alpha < 1.0:
-            raise ValueError(f"g_alpha must be in (0, 1), got {self.g_alpha}")
+            raise ConfigError(f"g_alpha must be in (0, 1), got {self.g_alpha}")
         if not 0 <= self.alpha_threshold <= 255:
-            raise ValueError(f"alpha_threshold must be in [0, 255], got {self.alpha_threshold}")
+            raise ConfigError(f"alpha_threshold must be in [0, 255], got {self.alpha_threshold}")
         if not 0.0 <= self.dither_strength <= 1.0:
-            raise ValueError(f"dither_strength must be in [0, 1], got {self.dither_strength}")
+            raise ConfigError(f"dither_strength must be in [0, 1], got {self.dither_strength}")
         if not 0.0 <= self.key_bg_tolerance <= 1.0:
-            raise ValueError(
+            raise ConfigError(
                 f"key_bg_tolerance must be in [0, 1], got {self.key_bg_tolerance}")
         if not (math.isfinite(self.orphan_max_delta) and self.orphan_max_delta >= 0):
-            raise ValueError(
+            raise ConfigError(
                 f"orphan_max_delta must be finite and >= 0, got {self.orphan_max_delta}")
         if not 0 <= self.key_bg_fringe <= 8:
-            raise ValueError(f"key_bg_fringe must be in [0, 8], got {self.key_bg_fringe}")
+            raise ConfigError(f"key_bg_fringe must be in [0, 8], got {self.key_bg_fringe}")
         if not 0.0 <= self.outline_darken <= 1.0:
-            raise ValueError(f"outline_darken must be in [0, 1], got {self.outline_darken}")
+            raise ConfigError(f"outline_darken must be in [0, 1], got {self.outline_darken}")
         for name in ("kopf_max_iters", "g_max_iters", "tile_size", "scale_preview",
                      "orphan_min_region"):
             if getattr(self, name) < 1:
-                raise ValueError(f"{name} must be >= 1, got {getattr(self, name)}")
+                raise ConfigError(f"{name} must be >= 1, got {getattr(self, name)}")
         for name in ("g_T_final", "g_m", "kopf_tol", "saturation_beta", "denoise_sigma_color",
                      "denoise_sigma_spatial", "g_bilateral_sigma_color",
                      "g_bilateral_sigma_spatial"):
             if not getattr(self, name) > 0:
-                raise ValueError(f"{name} must be > 0, got {getattr(self, name)}")
+                raise ConfigError(f"{name} must be > 0, got {getattr(self, name)}")
         for name in ("dither_variance_threshold", "tile_dedupe_tolerance"):
             if not getattr(self, name) >= 0:
-                raise ValueError(f"{name} must be >= 0, got {getattr(self, name)}")
+                raise ConfigError(f"{name} must be >= 0, got {getattr(self, name)}")
         if self.seed is not None and self.seed < 0:
-            raise ValueError(f"seed must be >= 0, got {self.seed}")
+            raise ConfigError(f"seed must be >= 0, got {self.seed}")
         for name, bound in UPPER_BOUNDS.items():
             v = getattr(self, name)
             if v is not None and v > bound:
-                raise ValueError(f"{name} must be <= {bound}, got {v}")
+                raise ConfigError(f"{name} must be <= {bound}, got {v}")
         if self.tileset:
             for name in ("out_width", "out_height"):
                 v = getattr(self, name)
                 if v is not None and v % self.tile_size != 0:
-                    raise ValueError(
+                    raise ConfigError(
                         f"tile_size ({self.tile_size}) must divide {name} ({v}) when tileset=True")
             if self.canvas is not None and any(v % self.tile_size for v in self.canvas_size):
-                raise ValueError(f"tile_size ({self.tile_size}) must divide canvas "
+                raise ConfigError(f"tile_size ({self.tile_size}) must divide canvas "
                                  f"({self.canvas}) when tileset=True")
 
 
 def _choice(name: str, value: str, allowed: tuple[str, ...]) -> None:
     if value not in allowed:
-        raise ValueError(f"{name} must be one of {list(allowed)}, got {value!r}")
+        raise ConfigError(f"{name} must be one of {list(allowed)}, got {value!r}")
 
 
 def _coerce(name: str, annotation: str, value):
@@ -232,10 +233,10 @@ def _coerce(name: str, annotation: str, value):
     if value is None:
         if "None" in parts:
             return None
-        raise ValueError(f"{name} must not be None")
+        raise ConfigError(f"{name} must not be None")
     base = parts[0]
     if base not in ("bool", "int", "float", "str"):
-        raise ValueError(f"unsupported field type {annotation!r} for {name}")
+        raise ConfigError(f"unsupported field type {annotation!r} for {name}")
     try:
         if base == "bool":
             if isinstance(value, bool):
@@ -255,9 +256,9 @@ def _coerce(name: str, annotation: str, value):
             # "#AABBCC" and "#aabbcc" are the same outline and must hash equally.
             return value.lower() if name == "outline" else value
     except (TypeError, ValueError, OverflowError):
-        raise ValueError(f"{name} must be of type {annotation}, got {value!r}") from None
+        raise ConfigError(f"{name} must be of type {annotation}, got {value!r}") from None
     if base == "int" and not -2**63 <= result <= 2**63 - 1:
-        raise ValueError(f"{name} must fit in a signed 64-bit integer, got {value!r}")
+        raise ConfigError(f"{name} must fit in a signed 64-bit integer, got {value!r}")
     if base == "float" and not math.isfinite(result):
-        raise ValueError(f"{name} must be a finite number, got {value!r}")
+        raise ConfigError(f"{name} must be a finite number, got {value!r}")
     return result
