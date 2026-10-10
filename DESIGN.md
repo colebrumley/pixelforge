@@ -274,8 +274,9 @@ The R_k half-width stays at the specified 2 output units.
 - The box baseline does not produce a *broken* line on `line_diag.png`; it produces an
   unbroken but gray one (L ≈ 66, nothing below L = 50). The test asserts exactly that, and
   that the Kopf line is dark (L < 50) and 8-connected along the whole diagonal.
-- `test_determinism.py` runs the background preset at 64×64 instead of 256×256 to keep the
-  suite at about two minutes.
+- `test_determinism.py` runs the background preset at 64×64 instead of 256×256. Its kopf cases
+  at preset size, and kopf on the 256-px golden fixtures, are marked `slow`; 32-px variants
+  with `kopf_max_iters=10` run in their place under `-m "not slow"`. CI runs everything.
 - `test_converges` uses an 8×8 output.
 
 ## Troubleshooting

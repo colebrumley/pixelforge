@@ -16,24 +16,41 @@ PRESETS = {"sprite": [], "background": ["--out-width", "64", "--out-height", "64
 FIXTURE_NAMES = ("line_diag", "circle_alpha", "noisy_gradient")   # fixtures 1, 4, 6
 
 
-def _convert(path, outdir, preset, method):
+def _convert(path, outdir, preset, method, extra=()):
     args = ["convert", str(path), "-o", str(outdir), "--preset", preset, "--method", method]
-    result = CliRunner().invoke(cli, args + PRESETS[preset])
+    result = CliRunner().invoke(cli, args + PRESETS[preset] + list(extra))
     assert result.exit_code == 0, result.output
     return {p.name: p.read_bytes() for p in sorted(outdir.glob("*.png"))}
 
 
-@pytest.mark.parametrize("method", METHODS)
-@pytest.mark.parametrize("preset", sorted(PRESETS))
-@pytest.mark.parametrize("name", FIXTURE_NAMES)
-def test_cli_output_is_byte_identical(fixture_path, tmp_path, name, preset, method):
-    first = _convert(fixture_path(name), tmp_path / "a", preset, method)
-    second = _convert(fixture_path(name), tmp_path / "b", preset, method)
+def _assert_byte_identical(fixture_path, tmp_path, name, preset, method, extra=()):
+    first = _convert(fixture_path(name), tmp_path / "a", preset, method, extra)
+    second = _convert(fixture_path(name), tmp_path / "b", preset, method, extra)
     expected = {f"{name}.png", f"{name}_preview.png"}
     if preset == "background":
         expected.add(f"{name}_tileset.png")
     assert set(first) == expected
     assert first == second
+
+
+# kopf at the preset sizes takes ~2/3 of the suite: marked slow (deselect with -m "not slow");
+# test_kopf_output_is_byte_identical_small covers the same paths at 32 px in a fraction.
+_CASES = [pytest.param(name, preset, method, marks=pytest.mark.slow) if method == "kopf"
+          else (name, preset, method)
+          for name in FIXTURE_NAMES for preset in sorted(PRESETS) for method in METHODS]
+
+
+@pytest.mark.parametrize("name, preset, method", _CASES)
+def test_cli_output_is_byte_identical(fixture_path, tmp_path, name, preset, method):
+    _assert_byte_identical(fixture_path, tmp_path, name, preset, method)
+
+
+@pytest.mark.parametrize("preset", sorted(PRESETS))
+@pytest.mark.parametrize("name", FIXTURE_NAMES)
+def test_kopf_output_is_byte_identical_small(fixture_path, tmp_path, name, preset):
+    # No keying: at 32 px the keyed 2-px line of line_diag covers no cell by half.
+    small = ["--out-width", "32", "--out-height", "32", "--kopf-max-iters", "10", "--no-key-bg"]
+    _assert_byte_identical(fixture_path, tmp_path, name, preset, "kopf", small)
 
 
 def test_config_hash_is_stable_across_runs():
@@ -53,7 +70,7 @@ def _decoded(png_path):
 
 def _convert_with_seed(path, outdir, method, seed):
     args = ["convert", str(path), "-o", str(outdir), "--method", method, "--out-height", "16",
-            "--palette-size", "4", "--denoise", "none"]
+            "--palette-size", "4", "--denoise", "none", "--kopf-max-iters", "10"]
     if seed is not None:
         args += ["--seed", str(seed)]
     result = CliRunner().invoke(cli, args)
