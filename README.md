@@ -80,6 +80,10 @@ file.json` loads a config. Precedence: defaults ← preset ← JSON ← flags.
 refuses inputs that share a name (`a.png`, `a.bmp`); `--force` overrides both. `batch` skips
 `*_preview`, `*_tileset` and `*_compare` images.
 
+Errors print one line and exit 2 for configuration problems (bad flags, unknown palette,
+`--remove-bg` without rembg) or 1 for anything else; `pixelforge --debug ...` or
+`PIXELFORGE_DEBUG=1` prints the full traceback instead.
+
 `--scale N` fixes the downscale ratio (output = cropped input / N per axis); `--canvas WxH` fits
 the subject inside a fixed canvas, centered, outline included. Neither combines with
 `--out-width/--out-height`. Unless one of them (or both `--out-*`) is given, `batch` derives one

@@ -5,7 +5,9 @@ from __future__ import annotations
 import functools
 import json
 import math
+import os
 import sys
+import traceback
 from dataclasses import fields
 from pathlib import Path
 
@@ -91,20 +93,28 @@ def _read_config_text(config_path) -> str:
         raise ValueError(f"{config_path} is not a UTF-8 text file") from None
 
 
+def _debug() -> bool:
+    ctx = click.get_current_context(silent=True)
+    flag = ctx is not None and ctx.find_root().params.get("debug", False)
+    return bool(flag) or os.environ.get("PIXELFORGE_DEBUG", "") not in ("", "0")
+
+
 def handle_errors(func):
-    """Exit 2 on config validation errors, 1 on anything else; message on stderr."""
+    """Exit 2 on config validation errors, 1 on anything else; message on stderr.
+
+    With --debug or PIXELFORGE_DEBUG=1 the full traceback is printed instead (same exit code).
+    """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except ConfigError as exc:
-            click.echo(f"config error: {exc}", err=True)
-            sys.exit(2)
         except click.exceptions.Exit:
             raise
         except Exception as exc:  # noqa: BLE001 - the CLI reports every failure the same way
-            click.echo(f"error: {str(exc) or type(exc).__name__}", err=True)
-            sys.exit(1)
+            prefix = "config error" if isinstance(exc, ConfigError) else "error"
+            message = traceback.format_exc().rstrip() if _debug() else str(exc)
+            click.echo(f"{prefix}: {message or type(exc).__name__}", err=True)
+            sys.exit(2 if isinstance(exc, ConfigError) else 1)
     return wrapper
 
 
@@ -129,7 +139,9 @@ def _emit(payload: dict) -> None:
 
 @click.group()
 @click.version_option(package_name="pixelforge")
-def cli():
+@click.option("--debug", is_flag=True, default=False,
+              help="Print full tracebacks on errors (also: PIXELFORGE_DEBUG=1).")
+def cli(debug):
     """Deterministic conversion of images into 16-bit-style pixel art."""
 
 

@@ -175,3 +175,19 @@ def test_runtime_error_exit_code_1(tmp_path):
     result = _invoke("convert", bad, "-o", tmp_path / "out", *FAST)
     assert result.exit_code == 1, result.output
     assert "not a supported image" in result.output
+
+
+def test_debug_prints_traceback(tmp_path, monkeypatch):
+    bad = tmp_path / "bad.png"
+    bad.write_bytes(b"not an image")
+    monkeypatch.delenv("PIXELFORGE_DEBUG", raising=False)
+    plain = _invoke("convert", bad, "-o", tmp_path / "out", *FAST)
+    assert plain.exit_code == 1 and "Traceback" not in plain.output
+    debug = _invoke("--debug", "convert", bad, "-o", tmp_path / "out", *FAST)
+    assert debug.exit_code == 1, debug.output
+    assert "Traceback" in debug.output and "not a supported image" in debug.output
+    config = _invoke("--debug", "convert", bad, "-o", tmp_path / "out", "--palette-size", "1")
+    assert config.exit_code == 2 and "Traceback" in config.output
+    monkeypatch.setenv("PIXELFORGE_DEBUG", "1")
+    env = _invoke("convert", bad, "-o", tmp_path / "out", *FAST)
+    assert env.exit_code == 1 and "Traceback" in env.output
