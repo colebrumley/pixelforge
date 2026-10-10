@@ -13,7 +13,7 @@ import click
 import numpy as np
 
 from . import color, io, palette, pipeline, postprocess, preprocess
-from .config import METHODS, PRESETS, Config
+from .config import METHODS, PRESET_LONGEST_EDGE, PRESETS, Config
 
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff")
 BATCH_PIXELS_PER_IMAGE = 50_000
@@ -173,6 +173,36 @@ def shared_palette(paths: list[Path], config: Config,
     return color.lab_to_rgb8(palette_lab)
 
 
+def shared_scale(paths: list[Path], config: Config,
+                 max_pixels: int | None = None) -> Config:
+    """`config` with one `scale` and `canvas` for every frame, unless they are pinned.
+
+    The union (largest width, largest height) of the frames' subject boxes is mapped to the
+    preset's longest edge (or to the one given out_width/out_height), outline margin inside,
+    so every frame keeps the same input-to-output ratio and all share one canvas.
+    """
+    pinned = config.out_width is not None and config.out_height is not None
+    if config.scale is not None or config.canvas is not None or pinned:
+        return config
+    width = height = 0
+    for path in paths:
+        loaded = io.load(path, io.MAX_INPUT_PIXELS if max_pixels is None else max_pixels)
+        y0, y1, x0, x1 = preprocess.subject_bbox(loaded.rgb, loaded.alpha, config)
+        width, height = max(width, x1 - x0), max(height, y1 - y0)
+    m2 = 2 * preprocess.outline_margin(config)
+    if config.out_width is not None:
+        scale = width / (config.out_width - m2)
+    elif config.out_height is not None:
+        scale = height / (config.out_height - m2)
+    else:
+        scale = max(width, height) / (PRESET_LONGEST_EDGE[config.preset] - m2)
+    canvas = [max(8, round(v / scale) + m2) for v in (width, height)]
+    if config.tileset:
+        canvas = [math.ceil(v / config.tile_size) * config.tile_size for v in canvas]
+    return config.replace(out_width=None, out_height=None, scale=scale,
+                          canvas=f"{canvas[0]}x{canvas[1]}")
+
+
 @cli.command()
 @click.argument("input_dir", type=click.Path(file_okay=False))
 @click.option("-o", "--outdir", type=click.Path(file_okay=False), default="out",
@@ -181,7 +211,7 @@ def shared_palette(paths: list[Path], config: Config,
 @config_options
 @handle_errors
 def batch(input_dir, outdir, force, config_path, max_input_pixels, **flags):
-    """Convert every image in a directory with ONE shared palette."""
+    """Convert every image in a directory with ONE shared palette and ONE scale."""
     config = build_config(config_path, flags)
     paths = []
     for p in sorted(Path(input_dir).iterdir()):
@@ -206,11 +236,20 @@ def batch(input_dir, outdir, force, config_path, max_input_pixels, **flags):
         outputs += pipeline.output_paths(outdir / stem, config.tileset).values()
     check_collisions(paths, outputs, force)
     outdir.mkdir(parents=True, exist_ok=True)
+    header = {}
+    # DEVIATION: Section 10 — one scale and canvas for the whole set (not per frame), so that
+    # animation frames cropped to their own alpha keep a constant size.
+    scaled = shared_scale(paths, config, max_input_pixels)
+    if scaled is not config:
+        config = scaled
+        header.update(scale=config.scale, canvas=config.canvas)
     if config.palette_name is None:
         palette_path = outdir / SHARED_PALETTE_NAME
         palette.write_hex(palette_path, shared_palette(paths, config, max_input_pixels))
         config = config.replace(palette_name=str(palette_path))
-        _emit({"shared_palette": str(palette_path)})
+        header["shared_palette"] = str(palette_path)
+    if header:
+        _emit(header)
     for path in paths:
         result = pipeline.run(path, config, max_input_pixels)
         _emit({"input": str(path), "outputs": result.save(outdir / path.stem),

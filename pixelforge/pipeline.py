@@ -125,10 +125,12 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
 
     t = clock()
     post_stats: dict = {}
-    if pre.outline_margin:
+    pad = pre.canvas_pad()
+    if any(pad[0] + pad[1]):
         # The outline ring is drawn inside the requested canvas: the image was downscaled to
         # the inner size and gets a transparent margin here, so the size never changes later.
-        indices = np.pad(indices, pre.outline_margin, mode="constant", constant_values=-1)
+        # With `canvas` the same padding also centers the fitted image on the canvas.
+        indices = np.pad(indices, pad, mode="constant", constant_values=-1)
     indices, palette_lab = postprocess.run(indices, palette_lab, config, saturated=own_palette,
                                            fixed_palette=config.palette_name is not None,
                                            outline_margin=pre.outline_margin, stats=post_stats)

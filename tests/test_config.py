@@ -124,3 +124,25 @@ def test_outline_is_normalised_to_lowercase():
     for bad in ("#aabbcc\n", "#aabbccdd", "aabbcc"):
         with pytest.raises(ValueError, match="outline"):
             Config(outline=bad)
+
+
+@pytest.mark.parametrize("kwargs", [
+    dict(scale=0), dict(scale=-1.5), dict(scale=4097), dict(scale=float("nan")),
+    dict(canvas="64"), dict(canvas="64x"), dict(canvas="64X64"), dict(canvas=" 64x64"),
+    dict(canvas="7x64"), dict(canvas="64x4097"), dict(canvas="６４x64"), dict(canvas=64),
+    dict(scale=2, out_width=32), dict(canvas="64x64", out_height=64),
+    dict(preset="background", canvas="40x32"),          # tileset: tile_size must divide it
+])
+def test_scale_and_canvas_validation(kwargs):
+    with pytest.raises(ValueError):
+        Config(**kwargs)
+
+
+def test_scale_and_canvas_accepted():
+    cfg = Config(scale=2, canvas="48x32")
+    assert cfg.scale == 2.0 and cfg.canvas_size == (48, 32)
+    assert Config(scale=4096).scale == 4096 and Config(canvas="4096x8").canvas_size == (4096, 8)
+    assert Config(preset="background", canvas="64x32").canvas_size == (64, 32)
+    assert hash(cfg) == hash(Config(scale=2.0, canvas="48x32"))
+    assert Config(**json.loads(cfg.canonical_json())) == cfg
+    assert Config().canvas_size is None
