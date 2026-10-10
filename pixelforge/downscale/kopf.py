@@ -156,8 +156,10 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
     sigma = np.full((ho, wo), SIGMA_INIT)
 
     gamma = np.empty((len(slots), hi, wi))
-    dxs = np.empty_like(gamma)
-    dys = np.empty_like(gamma)
+    # Per-slot work buffers, reused across slots and iterations. The offsets p_i − μ_k are
+    # recomputed where they are needed instead of being stored for every slot.
+    dx, dy, quad, work, work2 = (np.empty((hi, wi)) for _ in range(5))
+    positive = np.empty((hi, wi), dtype=bool)
     weight_sum = np.zeros((ho, wo))
     iterations = 0
     converged = False
@@ -168,24 +170,44 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         layout.reduce(layout.slot_valid(jy, jx, pixel_mask).astype(np.float64), jy, jx, has_pixels)
     has_pixels = has_pixels > 0
 
+    def offsets(cx: np.ndarray, cy: np.ndarray, jy: int, jx: int) -> None:
+        """dx, dy ← p_i − c_k for each pixel's slot kernel."""
+        np.subtract(pos_x, layout.expand(cx, jy, jx), out=dx)
+        np.subtract(pos_y, layout.expand(cy, jy, jx), out=dy)
+
+    def spatial_quad(ia, ib, ic, jy: int, jx: int) -> None:
+        """quad ← (p_i − μ_k)ᵀ Σ_k⁻¹ (p_i − μ_k), from dx, dy."""
+        np.multiply(layout.expand(ia, jy, jx), dx, out=quad)
+        np.multiply(quad, dx, out=quad)
+        np.multiply(layout.expand(ib, jy, jx), 2.0, out=work)
+        np.multiply(work, dx, out=work)
+        np.multiply(work, dy, out=work)
+        np.add(quad, work, out=quad)
+        np.multiply(layout.expand(ic, jy, jx), dy, out=work)
+        np.multiply(work, dy, out=work)
+        np.add(quad, work, out=quad)
+
     for _ in range(config.kopf_max_iters):
         iterations += 1
         # ------------------------------------------------------------------ E-STEP
         inv_a, inv_b, inv_c = _inverse_cov(cov)
         inv_color = 1.0 / (2.0 * sigma * sigma)
         for s, (jy, jx) in enumerate(slots):
-            dx = pos_x - layout.expand(mu_x, jy, jx)
-            dy = pos_y - layout.expand(mu_y, jy, jx)
-            quad = layout.expand(inv_a, jy, jx) * dx * dx
-            quad += 2.0 * layout.expand(inv_b, jy, jx) * dx * dy
-            quad += layout.expand(inv_c, jy, jx) * dy * dy
-            dist = np.zeros((hi, wi))
+            offsets(mu_x, mu_y, jy, jx)
+            spatial_quad(inv_a, inv_b, inv_c, jy, jx)
+            dist = work2
             for c in range(3):
-                diff = channels[c] - layout.expand(nu[..., c], jy, jx)
-                dist += diff * diff
-            logw = -0.5 * quad - dist * layout.expand(inv_color, jy, jx)
+                np.subtract(channels[c], layout.expand(nu[..., c], jy, jx), out=work)
+                work *= work
+                if c == 0:
+                    dist[...] = work
+                else:
+                    dist += work
+            logw = gamma[s]
+            np.multiply(quad, -0.5, out=logw)
+            dist *= layout.expand(inv_color, jy, jx)
+            logw -= dist
             logw[~layout.slot_valid(jy, jx, pixel_mask)] = -np.inf
-            gamma[s], dxs[s], dys[s] = logw, dx, dy
 
         # DEVIATION: Section 6 — the per-kernel normalization w_k(i) /= Σ_{i∈R_k} w_k(i) is
         # skipped. It rescales every kernel relative to its own best-fitting pixels, so a
@@ -209,16 +231,17 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         sums = {name: np.zeros((ho, wo)) for name in
                 ("w", "x", "y", "xx", "xy", "yy", "c0", "c1", "c2")}
         for s, (jy, jx) in enumerate(slots):
-            g, dx, dy = gamma[s], dxs[s], dys[s]
-            gx, gy = g * dx, g * dy
+            g = gamma[s]
+            offsets(mu_x, mu_y, jy, jx)
+            gx, gy = np.multiply(g, dx, out=quad), np.multiply(g, dy, out=work)
             layout.reduce(g, jy, jx, sums["w"])
             layout.reduce(gx, jy, jx, sums["x"])
             layout.reduce(gy, jy, jx, sums["y"])
-            layout.reduce(gx * dx, jy, jx, sums["xx"])
-            layout.reduce(gx * dy, jy, jx, sums["xy"])
-            layout.reduce(gy * dy, jy, jx, sums["yy"])
+            layout.reduce(np.multiply(gx, dx, out=work2), jy, jx, sums["xx"])
+            layout.reduce(np.multiply(gx, dy, out=work2), jy, jx, sums["xy"])
+            layout.reduce(np.multiply(gy, dy, out=work2), jy, jx, sums["yy"])
             for c in range(3):
-                layout.reduce(g * channels[c], jy, jx, sums[f"c{c}"])
+                layout.reduce(np.multiply(g, channels[c], out=work2), jy, jx, sums[f"c{c}"])
         weight_sum = sums["w"]
         fed = weight_sum > 1e-12        # starved kernels keep their previous parameters
         wsafe = np.where(fed, weight_sum, 1.0)
@@ -250,19 +273,28 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         move_x, move_y = mu_x - old_mu_x, mu_y - old_mu_y
         r = math.sqrt(0.5)
         axes = {(0, 1): (1.0, 0.0), (1, 0): (0.0, 1.0), (1, 1): (r, r), (-1, 1): (r, -r)}
+        plus = {axis: np.zeros((ho, wo)) for axis in axes}
+        both = {axis: np.zeros((ho, wo)) for axis in axes}
+        for s, (jy, jx) in enumerate(slots):
+            # (p_i − old μ_k) − (μ_k − old μ_k), in this order so that the result does not
+            # depend on whether the offsets were stored or are recomputed.
+            offsets(old_mu_x, old_mu_y, jy, jx)
+            dx -= layout.expand(move_x, jy, jx)
+            dy -= layout.expand(move_y, jy, jx)
+            for axis, (ex, ey) in axes.items():
+                u, t = np.multiply(dx, ex, out=quad), work
+                u += np.multiply(dy, ey, out=work2)
+                np.multiply(gamma[s], u, out=t)
+                t *= u
+                layout.reduce(t, jy, jx, both[axis])
+                np.greater(u, 0, out=positive)
+                np.logical_not(positive, out=positive)
+                t[positive] = 0.0
+                layout.reduce(t, jy, jx, plus[axis])
         toward = {}
-        for (ndy, ndx), (ex, ey) in axes.items():
-            plus, both = np.zeros((ho, wo)), np.zeros((ho, wo))
-            for s, (jy, jx) in enumerate(slots):
-                if (ndy, ndx) == (0, 1):       # first axis: move the stored offsets once
-                    dxs[s] -= layout.expand(move_x, jy, jx)
-                    dys[s] -= layout.expand(move_y, jy, jx)
-                u = ex * dxs[s] + ey * dys[s]
-                t = gamma[s] * u * u
-                layout.reduce(t, jy, jx, both)
-                layout.reduce(np.where(u > 0, t, 0.0), jy, jx, plus)
-            toward[(ndy, ndx)] = plus
-            toward[(-ndy, -ndx)] = both - plus
+        for (ndy, ndx) in axes:
+            toward[(ndy, ndx)] = plus[(ndy, ndx)]
+            toward[(-ndy, -ndx)] = both[(ndy, ndx)] - plus[(ndy, ndx)]
 
         overlap = {}
         for ndy, ndx in ((0, 1), (1, 0), (1, 1), (1, -1)):
@@ -336,14 +368,11 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
     if pixel_mask is not None or starved.any():
         inv_a, inv_b, inv_c = _inverse_cov(cov)
         for s, (jy, jx) in enumerate(slots):
-            dx = pos_x - layout.expand(mu_x, jy, jx)
-            dy = pos_y - layout.expand(mu_y, jy, jx)
-            quad = layout.expand(inv_a, jy, jx) * dx * dx
-            quad += 2.0 * layout.expand(inv_b, jy, jx) * dx * dy
-            quad += layout.expand(inv_c, jy, jx) * dy * dy
-            logw = -0.5 * quad
+            offsets(mu_x, mu_y, jy, jx)
+            spatial_quad(inv_a, inv_b, inv_c, jy, jx)
+            logw = gamma[s]
+            np.multiply(quad, -0.5, out=logw)
             logw[~layout.slot_valid(jy, jx, None)] = -np.inf
-            gamma[s] = logw
         pixel_peak = gamma.max(axis=0)
         pixel_peak[~np.isfinite(pixel_peak)] = 0.0
         gamma -= pixel_peak
