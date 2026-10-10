@@ -166,3 +166,17 @@ def test_negative_seed_rejected():
 
     with pytest.raises(ConfigError, match="seed must be >= 0"):
         Config(seed=-1)
+
+
+def test_presets_are_read_only():
+    from pixelforge.config import PRESET_LONGEST_EDGE
+
+    before = Config(preset="sprite").to_dict()
+    with pytest.raises(TypeError):
+        PRESETS["sprite"]["palette_size"] = 99
+    with pytest.raises(TypeError):
+        PRESETS["evil"] = {}
+    with pytest.raises(TypeError):
+        PRESET_LONGEST_EDGE["sprite"] = 1
+    assert Config(preset="sprite").to_dict() == before
+    assert Config(preset="sprite").palette_size == 16

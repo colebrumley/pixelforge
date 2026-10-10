@@ -8,6 +8,7 @@ import json
 import math
 import re
 from dataclasses import asdict, dataclass, fields
+from types import MappingProxyType
 
 from .errors import ConfigError, PixelforgeError
 from .version import __version__
@@ -17,17 +18,18 @@ DENOISERS = ("none", "bilateral", "median")
 DITHERS = ("none", "bayer4", "bayer8", "auto")
 PALETTE_SOURCES = ("auto", "median_cut", "mcda")
 
-PRESETS = {
+# Read-only: a caller mutating a preset must not change every later Config.
+PRESETS = MappingProxyType({name: MappingProxyType(values) for name, values in {
     "sprite": dict(remove_bg=None, key_bg=True, crop_to_alpha=True, method="gerstner",
                    palette_size=16, dither="none", outline="auto", tileset=False,
                    denoise="bilateral"),
     "background": dict(remove_bg=False, key_bg=False, crop_to_alpha=False, method="kopf",
                        palette_size=32, dither="auto", outline="none", tileset=True,
                        denoise="bilateral"),
-}
+}.items()})
 
 # Longest output edge when neither out_width nor out_height is given.
-PRESET_LONGEST_EDGE = {"sprite": 64, "background": 256}
+PRESET_LONGEST_EDGE = MappingProxyType({"sprite": 64, "background": 256})
 
 _HEX_COLOR = re.compile(r"#[0-9a-f]{6}")
 _CANVAS = re.compile(r"([0-9]+)x([0-9]+)")
@@ -111,7 +113,7 @@ class Config:
         if preset not in PRESETS:
             raise ConfigError(f"preset must be one of {sorted(PRESETS)}, got {preset!r}")
         values = {name: f.default for name, f in specs.items()}
-        values.update(PRESETS[preset])
+        values.update(dict(PRESETS[preset]))
         values.update(kwargs)
         if values["remove_bg"] is None:
             values["remove_bg"] = rembg_available()
