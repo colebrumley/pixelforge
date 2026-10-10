@@ -210,3 +210,63 @@ def test_batch_metadata_does_not_depend_on_outdir(tmp_path):
         assert text["pixelforge:palette_sha256"] == meta["palette_sha256"]
         runs.append((text, (out / "a.png").read_bytes(), meta["config_hash"]))
     assert runs[0] == runs[1]
+
+
+def test_verbose_progress_on_stderr_json_on_stdout(fixture_path, tmp_path):
+    result = _invoke("-vv", "convert", fixture_path("circle_alpha"), "-o", tmp_path,
+                     "--method", "kopf", "--out-width", "16", "--out-height", "16",
+                     "--kopf-max-iters", "3")
+    assert result.exit_code == 0, result.output
+    assert "pixelforge: kopf iter 1/3" in result.stderr
+    assert "pixelforge: downscale kopf" in result.stderr
+    assert "outputs" in json.loads(result.stdout)
+
+
+def test_quiet_clean_run_prints_nothing_on_stderr(fixture_path, tmp_path):
+    result = _invoke("-q", "convert", fixture_path("noisy_gradient"), "-o", tmp_path, *FAST)
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    json.loads(result.stdout)
+
+
+def test_hint_when_no_background_to_key(fixture_path, tmp_path):
+    # An opaque image without a flat border: key_bg (sprite default) finds nothing to remove.
+    result = _invoke("convert", fixture_path("noisy_gradient"), "-o", tmp_path, *FAST)
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["stats"]["background_keyed"] is False
+    assert result.stderr.count("--remove-bg") == 1
+    result = _invoke("convert", fixture_path("circle_alpha"), "-o", tmp_path, *FAST)
+    assert result.stderr == ""
+
+
+def test_every_config_field_has_help():
+    from pixelforge.config import FIELD_HELP, Config
+
+    assert set(FIELD_HELP) == set(Config.field_names())
+    assert all(text.strip() and "\n" not in text for text in FIELD_HELP.values())
+
+
+def test_convert_help_has_text_and_choices():
+    result = _invoke("convert", "--help")
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.output.split())
+    assert "Number of palette colors K; ignored with --palette-name." in text
+    assert "--dither [none|bayer4|bayer8|auto]" in text
+    assert "only applies with --tileset" in text
+    assert "[default: 16 (sprite), 32 (background)]" in text
+    assert "--g-t-final" in text and "--g-T-final" not in text
+
+
+@pytest.mark.parametrize("flag", ["--g-t-final", "--g-T-final"])
+def test_g_t_final_flag_and_legacy_alias(fixture_path, tmp_path, flag):
+    result = _invoke("convert", fixture_path("two_color"), "-o", tmp_path, *FAST, flag, "2.5")
+    assert result.exit_code == 0, result.output
+    meta = json.loads((tmp_path / "two_color_meta.json").read_text())
+    assert meta["config"]["g_T_final"] == 2.5
+
+
+def test_group_help_lists_one_line_summaries():
+    result = _invoke("--help")
+    assert result.exit_code == 0
+    for line in result.output.split("Commands:")[1].strip().splitlines():
+        assert not line.rstrip().endswith("..."), line

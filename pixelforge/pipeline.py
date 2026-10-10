@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import logging
 import os
 import platform
 import sys
@@ -18,6 +19,8 @@ from .config import Config
 from .version import __version__
 
 LAB_DECIMALS = 6   # precision of the LAB values in _palette.json
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -132,6 +135,17 @@ def uses_gerstner_palette(config: Config) -> bool:
             and palette.resolve_source(config) == "mcda")
 
 
+def _describe_method(stats: dict) -> str:
+    """", 31 iterations, converged" for the downscale log line ("" for box)."""
+    if "converged" in stats:
+        state = "converged" if stats["converged"] else "hit the iteration cap"
+    elif "hit_iteration_cap" in stats:
+        state = "hit the iteration cap" if stats["hit_iteration_cap"] else "converged"
+    else:
+        return ""
+    return f", {stats['iterations']} iterations, {state}"
+
+
 def run(image, config: Config, max_pixels: int | None = None) -> Result:
     """Load and convert one image.
 
@@ -158,6 +172,13 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
     t = clock()
     pre = preprocess.run(loaded.rgb, loaded.alpha, config)
     timings["preprocess"] = clock() - t
+    if config.key_bg and not config.remove_bg and not pre.background_keyed and (
+            loaded.alpha >= config.alpha_threshold).all():
+        log.warning("no flat background to key out; the whole image is the subject "
+                    "(try --remove-bg, or an input with an alpha channel)")
+    log.info("preprocess %.2f s (%dx%d -> %dx%d, prereduce %d)", timings["preprocess"],
+             loaded.rgb.shape[1], loaded.rgb.shape[0], pre.lab.shape[1], pre.lab.shape[0],
+             pre.prereduce_factor)
 
     t = clock()
     small = downscale.get(config.method).run(pre.lab, pre.mask, pre.target_width,
@@ -169,6 +190,8 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
         if small.indices is not None:
             small.indices, small.mean_lab = small.indices[crop], small.mean_lab[crop]
     timings["downscale"] = clock() - t
+    log.info("downscale %s %.2f s%s", config.method, timings["downscale"],
+             _describe_method(small.stats))
     if not small.small_mask.any():
         raise preprocess.PixelforgeError("no opaque pixels left after downscaling")
 
@@ -189,6 +212,9 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
         palette_lab = palette.build(source[small.small_mask], config)
         indices = quantize.run(source, small.small_mask, palette_lab, config)
     timings["palette_quantize"] = clock() - t
+    log.info("palette/quantize %.2f s, %d colors (%s)", timings["palette_quantize"],
+             len(palette_lab), "named" if config.palette_name is not None
+             else palette.resolve_source(config))
 
     t = clock()
     post_stats: dict = {}
@@ -202,6 +228,8 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
                                            fixed_palette=config.palette_name is not None,
                                            outline_margin=pre.outline_margin, stats=post_stats)
     timings["postprocess"] = clock() - t
+    log.info("postprocess %.2f s (%dx%d)", timings["postprocess"], indices.shape[1],
+             indices.shape[0])
 
     tile_result = None
     if config.tileset:
@@ -213,6 +241,7 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
         tile_px_changed = int(np.count_nonzero(rendered != indices))
         indices = rendered
         timings["tiles"] = clock() - t
+        log.info("tiles %.2f s, %d tiles", timings["tiles"], len(tile_result.tiles))
 
     palette_rgb8 = color.lab_to_rgb8(palette_lab)
     stats = {"iterations": int(small.stats.get("iterations", 0)),

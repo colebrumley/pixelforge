@@ -10,6 +10,7 @@ that see a given kernel in a given slot form a contiguous block.
 
 from __future__ import annotations
 
+import logging
 import math
 
 import numpy as np
@@ -34,6 +35,9 @@ STARVED_FRACTION = 0.02
 # real image converged within 50 iterations. At 2 % the result differs from the
 # 50-iteration one by a mean ΔE below 0.1 on the noisy fixtures.
 CHANGED_SIGMA_FRACTION = 0.02
+
+log = logging.getLogger(__name__)
+PROGRESS_EVERY = 10   # iterations between INFO progress lines (DEBUG logs every one)
 
 _NEIGHBORS8 = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
@@ -141,6 +145,14 @@ def _shift(grid: np.ndarray, dy: int, dx: int, fill=0.0) -> np.ndarray:
     xd = slice(max(0, dx), min(w, w + dx))
     out[ys, xs] = grid[yd, xd]
     return out
+
+
+def _log_iteration(it: int, max_iters: int, d_mu: float, d_nu: float, changed: float) -> None:
+    """DEBUG every iteration, INFO every PROGRESS_EVERY; read-only, never affects results."""
+    level = logging.INFO if it % PROGRESS_EVERY == 0 else logging.DEBUG
+    if log.isEnabledFor(level):
+        log.log(level, "kopf iter %d/%d rms dmu=%.2e dnu=%.2e sigma_changed=%.1f%%",
+                it, max_iters, d_mu, d_nu, 100.0 * changed)
 
 
 def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, config,
@@ -380,10 +392,14 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         else:
             d_mu = d_nu = 0.0
         sigma_changed = int(np.count_nonzero((sigma != old_sigma) & (old_sigma < SIGMA_CAP)))
+        _log_iteration(iterations, config.kopf_max_iters, d_mu, d_nu, sigma_changed / (ho * wo))
         if (d_mu < 10.0 * config.kopf_tol and d_nu < config.kopf_tol
                 and sigma_changed < CHANGED_SIGMA_FRACTION * ho * wo):
             converged = True
             break
+
+    log.debug("kopf %s after %d iterations", "converged" if converged else "stopped at the cap",
+              iterations)
 
     # OUTPUT: small_mask[k] = Σ γ_k(i)·mask_i / Σ γ_k(i) >= 0.5.
     # DEVIATION: Section 6 — transparent pixels are excluded from R_k, so with the EM's own γ

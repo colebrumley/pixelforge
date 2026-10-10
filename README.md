@@ -80,8 +80,10 @@ pixelforge compare hero.png -o out                          # box, kopf, gerstne
 pixelforge palettes                                         # list bundled palettes
 ```
 
-Every `Config` field is a `--kebab-case` flag (`--flag/--no-flag` for booleans); `--config
-file.json` loads a config. Precedence: defaults ← preset ← JSON ← flags.
+Every `Config` field is a `--kebab-case` flag (`--flag/--no-flag` for booleans; `--g-t-final`
+for `g_T_final`, the old `--g-T-final` still works); `pixelforge convert --help` lists each with
+its description, per-preset default and allowed values. `--config file.json` loads a config.
+Precedence: defaults ← preset ← JSON ← flags.
 `Config.replace(preset=...)` re-applies the new preset to every field not set explicitly.
 
 `convert`, `batch` and `compare` refuse (exit 2) to write an output over an input file, and `batch`
@@ -91,6 +93,11 @@ refuses inputs that share a name (`a.png`, `a.bmp`); `--force` overrides both. `
 Errors print one line and exit 2 for configuration problems (bad flags, unknown palette,
 `--remove-bg` without rembg) or 1 for anything else; `pixelforge --debug ...` or
 `PIXELFORGE_DEBUG=1` prints the full traceback instead.
+
+Runs take from under a second (box) to a minute or more (kopf and gerstner at large sizes) and
+are silent until the JSON result unless asked: `pixelforge -v convert ...` logs each stage with
+its duration to stderr, `-vv` every downscaler iteration, `-q` only errors. stdout carries only
+the JSON results. Library callers get the same messages from the `pixelforge` logger.
 
 `--scale N` fixes the downscale ratio (output = cropped input / N per axis); `--canvas WxH` fits
 the subject inside a fixed canvas, centered, outline included. Neither combines with

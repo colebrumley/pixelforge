@@ -45,6 +45,68 @@ UPPER_BOUNDS = {"out_width": 4096, "out_height": 4096, "scale": 4096, "scale_pre
                 "saturation_beta": 5, "seed": 2**63 - 1, "tile_size": 512}
 
 
+# One-line --help text per Config field (the CLI generates a flag for each).
+FIELD_HELP = MappingProxyType({
+    "preset": "Starting values for the other fields: sprite or background.",
+    "out_width": "Output width in pixels; height follows the aspect if not given.",
+    "out_height": "Output height in pixels; width follows the aspect if not given.",
+    "scale": "Fixed downscale factor: output = round(cropped input / scale).",
+    "canvas": "Fit the subject centered inside a WxH canvas (outline drawn inside).",
+    "remove_bg": "Remove the background with rembg AI matting (opt-in, needs the extra).",
+    "key_bg": "Key out a flat opaque background color.",
+    "key_bg_tolerance": "Max per-channel sRGB distance from the background color, 0..1.",
+    "key_bg_fringe": "Passes keying out the anti-aliased background edge (0 = off).",
+    "crop_to_alpha": "Crop to the alpha bounding box before downscaling.",
+    "alpha_threshold": "Input alpha below this is transparent (0..255).",
+    "denoise": "Denoise filter applied before downscaling.",
+    "denoise_sigma_color": "Bilateral color sigma in [0, 1] sRGB units.",
+    "denoise_sigma_spatial": "Denoise spatial sigma in input pixels (after pre-reduction).",
+    "prereduce_max_ratio": "Box-reduce inputs larger than this many times the output first "
+                           "(0 = never).",
+    "method": "Downscaling algorithm.",
+    "kopf_max_iters": "Iteration cap for the kopf downscaler.",
+    "kopf_tol": "kopf convergence tolerance (RMS color change in the unit cube).",
+    "palette_size": "Number of palette colors K; ignored with --palette-name.",
+    "palette_name": "Bundled palette name, a .hex/.gpl path or hex:rrggbb,...",
+    "palette_source": "Palette builder (auto = mcda for gerstner, median_cut otherwise).",
+    "palette_ramps": "Regularize the palette into hue ramps after clustering.",
+    "saturation_beta": "Multiply palette a*, b* (saturation) by this after convergence.",
+    "g_m": "gerstner SLIC compactness.",
+    "g_alpha": "gerstner annealing temperature decay per step, in (0, 1).",
+    "g_T_final": "gerstner final annealing temperature.",
+    "g_eps_palette": "gerstner total palette change (LAB) below which a step has converged.",
+    "g_eps_cluster": "gerstner sub-cluster separation (LAB) needed to split a color.",
+    "g_laplacian": "gerstner superpixel center smoothing fraction.",
+    "g_bilateral_sigma_color": "gerstner bilateral color sigma on the mean-color image (LAB).",
+    "g_bilateral_sigma_spatial": "gerstner bilateral spatial sigma, in output pixels.",
+    "g_max_iters": "Safety cap on gerstner's total iterations.",
+    "dither": "Ordered dithering; auto dithers only smooth regions.",
+    "dither_strength": "Dither threshold amplitude, 0..1.",
+    "dither_variance_threshold": "auto dither: only where local LAB std is below this.",
+    "remove_orphans": "Merge tiny isolated color regions into their neighbors.",
+    "orphan_min_region": "Regions (8-connected) with fewer pixels than this get merged.",
+    "orphan_max_delta": "Only merge orphans whose replacement is within this LAB distance.",
+    "fix_jaggies": "Clean up staircase artifacts on diagonal edges.",
+    "outline": 'Silhouette outline: "none", "auto" (darkened palette color) or "#rrggbb".',
+    "outline_darken": "auto outline: blend of the darkest palette color toward black, 0..1.",
+    "tile_size": "Tile edge in pixels; only applies with --tileset.",
+    "tileset": "Also write a de-duplicated tileset and tilemap.",
+    "fit": "How a derived size meets tile_size: pad, stretch or crop.",
+    "tile_dedupe_tolerance": "Mean LAB distance below which two tiles count as identical.",
+    "seamless": "Wrap-around filtering so the output tiles seamlessly.",
+    "tileset_columns": "Tiles per tileset row (0 = ceil(sqrt(tile count))).",
+    "transparent_index": "PNG palette slot used for transparency.",
+    "seed": "Seed for the optional MCDA jitter (unset = fully analytic).",
+    "scale_preview": "Nearest-neighbor upscale factor for *_preview.png.",
+})
+
+# The allowed values of each enum-like string field (outline also takes "#rrggbb").
+FIELD_CHOICES = MappingProxyType({
+    "preset": tuple(PRESETS), "method": METHODS, "denoise": DENOISERS,
+    "dither": DITHERS, "palette_source": PALETTE_SOURCES, "fit": FITS,
+    "transparent_index": TRANSPARENT_INDICES})
+
+
 def rembg_available() -> bool:
     """Whether rembg is importable (used for the error message; never changes a default)."""
     return importlib.util.find_spec("rembg") is not None

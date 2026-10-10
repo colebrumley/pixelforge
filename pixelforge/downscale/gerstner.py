@@ -7,6 +7,7 @@ palette half on its own; `palette.mcda` reuses it directly on pixel colors.
 
 from __future__ import annotations
 
+import logging
 import math
 
 import numpy as np
@@ -20,6 +21,10 @@ SPLIT_SPREAD = 1.0       # ... or once it is this many standard deviations of it
 STALL_EVENTS = 3         # below g_T_final, stop once no pair grew over this many events
 EXHAUSTED_T_FRACTION = 1e-3   # backstop: stop annealing below this fraction of g_T_final
 _MAX_SEARCH_RADIUS = 6   # grid cells searched around a pixel's home cell (safety bound)
+
+
+log = logging.getLogger(__name__)
+PROGRESS_EVERY = 10      # iterations between INFO progress lines (DEBUG logs every one)
 
 
 def principal_axis(points: np.ndarray) -> tuple[np.ndarray, float]:
@@ -470,9 +475,15 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         k[active] = annealer.assign
         sp_color = annealer.colors[k]
         iterations += 1
+        level = logging.INFO if iterations % PROGRESS_EVERY == 0 else logging.DEBUG
+        if log.isEnabledFor(level):   # read-only: logging never affects the result
+            log.log(level, "gerstner iter %d/%d T=%.3g colors=%d", iterations,
+                    config.g_max_iters, annealer.T, len(annealer.colors))
         if annealer.done:
             hit_cap = False
             break
+    log.debug("gerstner %s after %d iterations",
+              "stopped at the cap" if hit_cap else "converged", iterations)
 
     # POST: saturation, then indices / palette / mask.
     unsaturated = annealer.colors.copy()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
 import math
 import os
 import sys
@@ -15,7 +16,8 @@ import click
 import numpy as np
 
 from . import color, io, palette, pipeline, postprocess, preprocess
-from .config import METHODS, PRESET_LONGEST_EDGE, PRESETS, Config
+from .config import (FIELD_CHOICES, FIELD_HELP, METHODS, PRESET_LONGEST_EDGE, PRESETS,
+                     Config)
 from .errors import ConfigError
 
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff")
@@ -26,20 +28,101 @@ MAX_CONFIG_FILE_BYTES = 1024 * 1024
 
 _CLICK_TYPES = {"int": int, "float": float, "str": str}
 
+log = logging.getLogger("pixelforge")
+
+
+class _ClickHandler(logging.Handler):
+    """Writes records to the current stderr (as CliRunner swaps it), never to stdout."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            click.echo(self.format(record), err=True)
+        except Exception:  # noqa: BLE001 - logging must never break a run
+            self.handleError(record)
+
+
+def configure_logging(verbose: int, quiet: bool) -> None:
+    """stderr handler on the "pixelforge" logger: WARNING by default, -v INFO, -vv DEBUG.
+
+    Undone when the command finishes, so repeated in-process invocations do not stack.
+    """
+    handler = _ClickHandler()
+    handler.setFormatter(logging.Formatter("pixelforge: %(message)s"))
+    previous_level = log.level
+    log.addHandler(handler)
+    if quiet:
+        log.setLevel(logging.ERROR)
+    else:
+        log.setLevel({0: logging.WARNING, 1: logging.INFO}.get(verbose, logging.DEBUG))
+
+    def restore() -> None:
+        log.removeHandler(handler)
+        log.setLevel(previous_level)
+
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None:
+        ctx.call_on_close(restore)
+
+
+def _warn(message: str) -> None:
+    """A CLI warning on stderr, unless -q (also printed when called outside the CLI)."""
+    if log.isEnabledFor(logging.WARNING):
+        click.echo(f"pixelforge: {message}", err=True)
+
+
+# Old spellings kept working as hidden flags: {old flag: field name}.
+FLAG_ALIASES = {"--g-T-final": "g_T_final"}
+
+
+def _help(name: str, default) -> str:
+    """FIELD_HELP plus the default, per preset where the presets differ.
+
+    The flags themselves default to None (= not given, so the preset applies), hence the
+    default is spelled out here instead of via show_default.
+    """
+    values = {preset: PRESETS[preset].get(name, default) for preset in PRESETS}
+    if len(set(map(repr, values.values()))) > 1:
+        shown = ", ".join(f"{_fmt(v)} ({preset})" for preset, v in values.items())
+    elif default is None:
+        return FIELD_HELP[name]
+    else:
+        shown = _fmt(default)
+    return f"{FIELD_HELP[name]}  [default: {shown}]"
+
+
+def _fmt(value) -> str:
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    return "none" if value is None else str(value)
+
 
 def config_options(command):
     """Expose every Config field as a --kebab-case flag (None = not given)."""
+    target = command
+
+    @functools.wraps(target)
+    def merge_aliases(*args, **kwargs):
+        for name in FLAG_ALIASES.values():
+            alias = kwargs.pop(f"_alias_{name}", None)
+            if kwargs.get(name) is None:
+                kwargs[name] = alias
+        return target(*args, **kwargs)
+
+    command = merge_aliases
+    for old, name in FLAG_ALIASES.items():
+        command = click.option(old, f"_alias_{name}", type=float, default=None,
+                               hidden=True)(command)
     for f in reversed(fields(Config)):
-        flag = "--" + f.name.replace("_", "-")
+        flag = "--" + f.name.replace("_", "-").lower()
         base = f.type.split("|")[0].strip()
-        if f.name == "preset":
-            option = click.option(flag, f.name, type=click.Choice(sorted(PRESETS)), default=None)
-        elif f.name == "method":
-            option = click.option(flag, f.name, type=click.Choice(METHODS), default=None)
+        common = dict(default=None, help=_help(f.name, f.default))
+        if f.name in FIELD_CHOICES:
+            option = click.option(flag, f.name, type=click.Choice(FIELD_CHOICES[f.name]),
+                                  **common)
         elif base == "bool":
-            option = click.option(f"{flag}/--no-{flag[2:]}", f.name, default=None)
+            option = click.option(f"{flag}/--no-{flag[2:]}", f.name, **common)
         else:
-            option = click.option(flag, f.name, type=_CLICK_TYPES[base], default=None)
+            option = click.option(flag, f.name, type=_CLICK_TYPES[base], **common)
         command = option(command)
     command = click.option(
         "--max-input-pixels", "max_input_pixels", type=click.IntRange(min=1), default=None,
@@ -63,9 +146,8 @@ def build_config(config_path, flags: dict) -> Config:
         if "preset" in given and config_path is not None:
             shadowed = sorted(set(values) & set(PRESETS[given["preset"]]) - set(given))
             if shadowed:
-                click.echo(f"warning: --preset {given['preset']} does not override "
-                           f"{', '.join(shadowed)} from {config_path}; the JSON values win",
-                           err=True)
+                _warn(f"warning: --preset {given['preset']} does not override "
+                      f"{', '.join(shadowed)} from {config_path}; the JSON values win")
         values.update(given)
         config = Config(**values)
         config.validate_palette()
@@ -141,14 +223,22 @@ def _emit(payload: dict) -> None:
 @click.version_option(package_name="pixelforge")
 @click.option("--debug", is_flag=True, default=False,
               help="Print full tracebacks on errors (also: PIXELFORGE_DEBUG=1).")
-def cli(debug):
-    """Deterministic conversion of images into 16-bit-style pixel art."""
+@click.option("-v", "--verbose", count=True,
+              help="Progress on stderr: -v per stage, -vv every iteration.")
+@click.option("-q", "--quiet", is_flag=True, default=False,
+              help="Only errors on stderr (no warnings or hints).")
+def cli(debug, verbose, quiet):
+    """Deterministic conversion of images into 16-bit-style pixel art.
+
+    Results go to stdout (JSON lines); progress (-v), warnings and errors go to stderr.
+    """
+    configure_logging(verbose, quiet)
 
 
 @cli.command()
 @click.argument("input_path", metavar="INPUT", type=click.Path(dir_okay=False))
 @click.option("-o", "--outdir", type=click.Path(file_okay=False), default="out",
-              show_default=True)
+              show_default=True, help="Output directory.")
 @force_option
 @config_options
 @handle_errors
@@ -214,19 +304,23 @@ def shared_scale(paths: list[Path], config: Config,
 @cli.command()
 @click.argument("input_dir", type=click.Path(file_okay=False))
 @click.option("-o", "--outdir", type=click.Path(file_okay=False), default="out",
-              show_default=True)
+              show_default=True, help="Output directory.")
 @force_option
 @config_options
 @handle_errors
 def batch(input_dir, outdir, force, config_path, max_input_pixels, **flags):
-    """Convert every image in a directory with ONE shared palette and ONE scale."""
+    """Convert a directory's images with a shared palette.
+
+    Every image in INPUT_DIR is converted with ONE shared palette and ONE scale, so animation
+    frames stay consistent.
+    """
     config = build_config(config_path, flags)
     paths = []
     for p in sorted(Path(input_dir).iterdir()):
         if not (p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES):
             continue
         if p.stem.endswith(OUTPUT_STEM_SUFFIXES):
-            click.echo(f"skipping {p}: looks like a pixelforge output", err=True)
+            _warn(f"skipping {p}: looks like a pixelforge output")
             continue
         paths.append(p)
     if not paths:
@@ -281,12 +375,15 @@ def side_by_side(images: list[np.ndarray], gap: int) -> np.ndarray:
 @cli.command()
 @click.argument("input_path", metavar="INPUT", type=click.Path(dir_okay=False))
 @click.option("-o", "--outdir", type=click.Path(file_okay=False), default="out",
-              show_default=True)
+              show_default=True, help="Output directory.")
 @force_option
 @config_options
 @handle_errors
 def compare(input_path, outdir, force, config_path, max_input_pixels, **flags):
-    """Run box, kopf and gerstner with the same config; write a side-by-side PNG."""
+    """Compare box, kopf and gerstner side by side.
+
+    Runs all three methods with the same config and writes INPUT_compare.png.
+    """
     from PIL import Image
 
     flags.pop("method", None)
