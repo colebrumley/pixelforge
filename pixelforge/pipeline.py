@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -77,14 +78,26 @@ def uses_gerstner_palette(config: Config) -> bool:
             and palette.resolve_source(config) == "mcda")
 
 
-def run(input_path, config: Config, max_pixels: int | None = None) -> Result:
-    """Load and convert one image. ``max_pixels`` defaults to ``io.MAX_INPUT_PIXELS``."""
+def run(image, config: Config, max_pixels: int | None = None) -> Result:
+    """Load and convert one image.
+
+    ``image`` is a path (str or os.PathLike), a ``PIL.Image.Image``, or an (H, W, 3) /
+    (H, W, 4) numpy array of uint8 or of float in [0, 1] (see ``io.from_image``). For paths
+    ``input_sha256`` hashes the file bytes; for in-memory images it hashes shape and RGBA
+    bytes. ``max_pixels`` defaults to ``io.MAX_INPUT_PIXELS`` and applies to every kind.
+    """
     start = time.perf_counter()
-    loaded = io.load(input_path, io.MAX_INPUT_PIXELS if max_pixels is None else max_pixels)
+    budget = io.MAX_INPUT_PIXELS if max_pixels is None else max_pixels
+    if isinstance(image, (str, os.PathLike)):
+        loaded = io.load(image, budget)
+    else:
+        loaded = io.from_image(image, budget)
     return run_loaded(loaded, config, {"load": time.perf_counter() - start})
 
 
 def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -> Result:
+    """Convert an already loaded image (``io.load`` / ``io.from_image`` / ``io.from_rgba``)."""
+    config.validate_palette()   # before any expensive stage
     timings = dict(timings or {})
     clock = time.perf_counter
 

@@ -29,7 +29,7 @@ _HIGH_BIT_MODES = ("I;16", "I;16B", "I;16L", "I")
 class Loaded:
     rgb: np.ndarray        # (H, W, 3) float64 sRGB in [0, 1]
     alpha: np.ndarray      # (H, W) uint8
-    sha256: str            # SHA-256 of the input file bytes
+    sha256: str            # SHA-256 of the input file bytes (see from_image for arrays)
 
     @property
     def alpha_mask(self) -> np.ndarray:
@@ -88,10 +88,7 @@ def load(path, max_pixels: int = MAX_INPUT_PIXELS) -> Loaded:
                 warnings.simplefilter("error", Image.DecompressionBombWarning)
                 with Image.open(f, formats=list(INPUT_FORMATS)) as im:
                     width, height = im.size
-                    if width * height > max_pixels:
-                        raise PixelforgeError(
-                            f"{path}: {width}x{height} = {width * height} pixels exceeds the "
-                            f"input budget of {max_pixels} pixels (--max-input-pixels)")
+                    _check_budget(path, width, height, max_pixels)
                     if getattr(im, "n_frames", 1) > 1:
                         warnings.warn(f"{path} has {im.n_frames} frames; using the first",
                                       stacklevel=2)
@@ -106,6 +103,47 @@ def load(path, max_pixels: int = MAX_INPUT_PIXELS) -> Loaded:
         except (OSError, SyntaxError, ValueError) as exc:
             raise PixelforgeError(f"{path}: could not decode image ({exc})") from None
     return from_rgba(rgba, digest)
+
+
+def from_image(image, max_pixels: int = MAX_INPUT_PIXELS) -> Loaded:
+    """An in-memory image as Loaded: a ``PIL.Image.Image`` or an (H, W, 3) / (H, W, 4) array.
+
+    Arrays are uint8, or float in [0, 1] (rounded to 8 bits, like every decoded file). PIL
+    images get the same conversion as files (EXIF orientation, 16-bit gray rescaled). The
+    sha256 covers the shape and the RGBA bytes, so equal pixels give equal provenance.
+    Raises PixelforgeError for other shapes or dtypes and above ``max_pixels``.
+    """
+    if isinstance(image, Image.Image):
+        width, height = image.size
+        _check_budget("image", width, height, max_pixels)
+        rgba = np.asarray(_to_8bit(ImageOps.exif_transpose(image)).convert("RGBA"),
+                          dtype=np.uint8)
+    else:
+        arr = np.asarray(image)
+        if arr.ndim != 3 or arr.shape[2] not in (3, 4):
+            raise PixelforgeError(f"image array must have shape (H, W, 3) or (H, W, 4), "
+                                  f"got {arr.shape}")
+        _check_budget("image", arr.shape[1], arr.shape[0], max_pixels)
+        if np.issubdtype(arr.dtype, np.floating):
+            if not (np.isfinite(arr).all() and arr.min(initial=0.0) >= 0.0
+                    and arr.max(initial=0.0) <= 1.0):
+                raise PixelforgeError("float image arrays must be finite and in [0, 1]")
+            arr = np.round(arr.astype(np.float64) * 255.0).astype(np.uint8)
+        elif arr.dtype != np.uint8:
+            raise PixelforgeError(f"image array must be uint8 or float, got {arr.dtype}")
+        if arr.shape[2] == 3:
+            arr = np.dstack([arr, np.full(arr.shape[:2], 255, dtype=np.uint8)])
+        rgba = np.ascontiguousarray(arr)
+    digest = hashlib.sha256(f"rgba8 {rgba.shape[0]}x{rgba.shape[1]}\n".encode("ascii"))
+    digest.update(rgba.tobytes())
+    return from_rgba(rgba, digest.hexdigest())
+
+
+def _check_budget(name, width: int, height: int, max_pixels: int) -> None:
+    if width * height > max_pixels:
+        raise PixelforgeError(
+            f"{name}: {width}x{height} = {width * height} pixels exceeds the "
+            f"input budget of {max_pixels} pixels (--max-input-pixels)")
 
 
 def from_rgba(rgba: np.ndarray, sha256: str = "") -> Loaded:

@@ -66,8 +66,7 @@ def build_config(config_path, flags: dict) -> Config:
                            err=True)
         values.update(given)
         config = Config(**values)
-        if config.palette_name is not None:
-            palette.load_palette(config.palette_name)
+        config.validate_palette()
     except (ValueError, OSError) as exc:
         raise ConfigError(str(exc)) from exc
     return config

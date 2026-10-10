@@ -9,7 +9,7 @@ import math
 import re
 from dataclasses import asdict, dataclass, fields
 
-from .errors import ConfigError
+from .errors import ConfigError, PixelforgeError
 from .version import __version__
 
 METHODS = ("box", "kopf", "gerstner")
@@ -152,7 +152,32 @@ class Config:
         values.update(changes)
         return Config(**values)
 
+    def validate_palette(self) -> None:
+        """Load ``palette_name`` once (file read and parse); ConfigError if it is unusable.
+
+        ``Config(...)`` itself only checks the name's form, so constructing one stays free of
+        file reads; ``pipeline.run_loaded`` calls this before preprocessing.
+        """
+        if self.palette_name is None:
+            return
+        from . import palette   # local: palette pulls in io and Pillow
+
+        try:
+            palette.load_palette(self.palette_name)
+        except ConfigError:
+            raise
+        except (ValueError, OSError, PixelforgeError) as exc:
+            raise ConfigError(str(exc)) from exc
+
     def _validate(self) -> None:
+        if self.palette_name is not None:
+            from .palette import PALETTE_SUFFIXES, bundled_palettes
+
+            if (self.palette_name not in bundled_palettes()
+                    and not self.palette_name.lower().endswith(PALETTE_SUFFIXES)):
+                raise ConfigError(
+                    f"unknown palette {self.palette_name!r}: not one of {bundled_palettes()} "
+                    "and not a path to a .hex or .gpl file")
         for name in ("out_width", "out_height"):
             v = getattr(self, name)
             if v is not None and v < 8:
