@@ -122,6 +122,7 @@ class Config:
     canvas: str | None = None         # "WxH": fit the subject inside, centered (outline inside)
     # --- preprocess ---
     remove_bg: bool = False           # rembg AI matting; opt-in only (never environment-derived)
+    # DEVIATION: Section 4 — key_bg, key_bg_tolerance and key_bg_fringe are not in the spec.
     key_bg: bool = False              # key out a flat opaque background (sprite default True)
     key_bg_tolerance: float = 0.08    # max per-channel sRGB distance from the background color
     key_bg_fringe: int = 3            # max passes keying out the anti-aliased edge (0 = off)

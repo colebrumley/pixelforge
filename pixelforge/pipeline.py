@@ -119,6 +119,7 @@ def output_paths(prefix, tileset: bool) -> dict:
         return prefix.parent / (prefix.name + suffix)
 
     paths = {"image": sibling(".png"), "preview": sibling("_preview.png"),
+             # DEVIATION: Section 5 — _palette.hex is a fifth output, not in the spec.
              "palette": sibling("_palette.json"), "palette_hex": sibling("_palette.hex"),
              "meta": sibling("_meta.json")}
     if tileset:
@@ -208,6 +209,8 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
                                    small.palette_lab_unsaturated, config)
     else:
         # box / kopf, or gerstner with an external palette: quantize the (mean) colors.
+        # DEVIATION: Section 7 — with palette_name or palette_source="median_cut", gerstner's
+        # smoothed superpixel means are quantized against that palette, not its own.
         source = small.mean_lab if small.mean_lab is not None else small.small_lab
         palette_lab = palette.build(source[small.small_mask], config)
         indices = quantize.run(source, small.small_mask, palette_lab, config)

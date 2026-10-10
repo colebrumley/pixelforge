@@ -480,6 +480,8 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
     palette = unsaturated.copy()
     palette[:, 1:] *= config.saturation_beta
 
+    # DEVIATION: Section 7 — the spec does not say how transparent pixels count toward a
+    # superpixel (and its prior is uniform over the superpixels holding opaque pixels).
     # small_mask[s] = opaque fraction of superpixel s >= 0.5. Transparent pixels are never
     # assigned during the optimization, so attribute each to its spatially nearest center.
     transparent = np.zeros(n_sp, dtype=np.int64)
