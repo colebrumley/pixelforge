@@ -511,7 +511,8 @@ def compare(input_path, outdir, prepass, sweep, force, config_path, max_input_pi
 
     With --prepass or --sweep it writes only a labelled proof sheet instead: one row per
     method (only the given one with --method), one column per setting. The JSON result lists,
-    per cell, the flags to add to `convert` to reproduce it and its full config (for --config).
+    per cell, the flags to add to a `convert` call with the same base options, and the cell's
+    full config (usable on its own with --config).
     """
     from PIL import Image
 
