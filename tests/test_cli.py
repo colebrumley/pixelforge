@@ -1,4 +1,5 @@
 import json
+import shlex
 import shutil
 from pathlib import Path
 
@@ -300,10 +301,52 @@ def test_compare_cell_flags_reproduce_the_cell(fixture_path, tmp_path):
         ("box", "palette_size=4", "--method box --palette-size 4"),
         ("box", "palette_size=8", "--method box --palette-size 8")]
     again = _invoke("convert", fixture_path("noisy_gradient"), "-o", tmp_path / "one", *base,
-                    *cells[1]["flags"].split())
+                    *shlex.split(cells[1]["flags"]))
     assert again.exit_code == 0, again.output
     stats = json.loads(again.output.strip().splitlines()[-1])["stats"]
     assert stats["config_hash"] == cells[1]["stats"]["config_hash"]
+
+
+def test_compare_cell_config_reproduces_an_unset_value(fixture_path, tmp_path):
+    """`none` unsets a value from --config, which no flag can do: the cell's config replays it."""
+    base = tmp_path / "base.json"
+    base.write_text(json.dumps({"preset": "background", "tileset": False, "out_width": 16,
+                                "method": "box"}))
+    result = _invoke("compare", fixture_path("noisy_gradient"), "-o", tmp_path / "sheet",
+                     "--config", base, "--method", "box", "--sweep", "out-width=none,8")
+    assert result.exit_code == 0, result.output
+    cell = json.loads(result.output.strip().splitlines()[-1])["cells"][0]
+    assert cell["column"] == "out_width=none" and cell["config"]["out_width"] is None
+    replay = tmp_path / "cell.json"
+    replay.write_text(json.dumps(cell["config"]))
+    again = _invoke("convert", fixture_path("noisy_gradient"), "-o", tmp_path / "one",
+                    "--config", replay)
+    assert again.exit_code == 0, again.output
+    stats = json.loads(again.output.strip().splitlines()[-1])["stats"]
+    assert stats["config_hash"] == cell["stats"]["config_hash"]
+
+
+def test_override_flags_round_trip_floats_and_quote_strings():
+    from pixelforge.cli import _show, override_flags
+
+    for value in (0.123456789, 1e-05, 1.0, 0.6, 123456789.125, 1 / 3):
+        assert float(_show(value)) == value
+    assert _show(1.0) == "1" and _show(0.6) == "0.6"
+    flags = override_flags({"palette_name": "my palettes/warm one.hex", "enhance": 0.123456789})
+    assert shlex.split(flags) == ["--palette-name", "my palettes/warm one.hex",
+                                  "--enhance", "0.123456789"]
+
+
+def test_proof_sheet_previews_stay_within_the_pixel_budget(monkeypatch, capsys):
+    from pixelforge import cli as cli_module
+
+    images = [np.zeros((16, 16, 4), dtype=np.uint8)] * 4      # 1024 native pixels
+    assert cli_module.preview_scale(images, [8, 8, 8, 2]) == [8, 8, 8, 2]
+    monkeypatch.setattr(cli_module, "PROOF_SHEET_MAX_PIXELS", 1024 * 9)
+    assert cli_module.preview_scale(images, [8, 8, 8, 2]) == [3, 3, 3, 2]
+    assert "scaled 3x instead of 8x" in capsys.readouterr().err
+    monkeypatch.setattr(cli_module, "PROOF_SHEET_MAX_PIXELS", 10)
+    assert cli_module.preview_scale(images, [8]) == [1]
 
 
 def test_parse_sweep_types():

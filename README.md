@@ -154,7 +154,10 @@ background.
 (`INPUT_compare.png`) instead of each method's outputs: a row per method, a column per
 setting. `--prepass` uses four columns from no pre-pass to `--enhance 1 --ink 0.6`; `--sweep`
 takes any one option (`on`/`off` for booleans, `none` to unset). `--method` limits the sheet
-to that row. The JSON result lists, per cell, the flags to add to `convert` to reproduce it.
+to that row. The JSON result lists, per cell, the flags to add to `convert` to reproduce it
+and its full `config`; save that as JSON and pass it with `--config` when a cell unsets a
+value with `none`, which no flag can do. Previews are scaled down from `--scale-preview` when
+a sheet would exceed 32 million pixels.
 Every cell is a full run, so a 3 × 4 sheet with kopf and gerstner takes minutes at large
 sizes; pick settings at a small `--out-height`, then convert at full size.
 

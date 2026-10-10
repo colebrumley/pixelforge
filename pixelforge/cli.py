@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import os
+import shlex
 import sys
 import traceback
 from dataclasses import fields
@@ -378,6 +379,9 @@ PREPASS_COLUMNS = ({"enhance": 0.0, "ink": 0.0}, {"enhance": 0.5, "ink": 0.0},
 MAX_SWEEP_VALUES = 12
 _TRUE, _FALSE = ("on", "true", "yes", "1"), ("off", "false", "no", "0")
 LABEL_BG, LABEL_FG, LABEL_PAD = (40, 40, 40, 255), (255, 255, 255, 255), 6
+# Pixels of cell previews on one proof sheet (RGBA, so 4 bytes each, held twice while the
+# sheet is assembled); the preview scale is lowered to stay within it.
+PROOF_SHEET_MAX_PIXELS = 32_000_000
 
 
 def parse_sweep(text: str) -> list[dict]:
@@ -418,19 +422,38 @@ def parse_sweep(text: str) -> list[dict]:
 def _show(value) -> str:
     if isinstance(value, bool):
         return "on" if value else "off"
-    return "none" if value is None else f"{value:g}" if isinstance(value, float) else str(value)
+    if isinstance(value, float):
+        # The short form when it is exact ("1", "0.6"), else every digit: the text must parse
+        # back to the same float for a cell to be reproducible.
+        short = f"{value:g}"
+        return short if float(short) == value else repr(value)
+    return "none" if value is None else str(value)
 
 
 def override_flags(overrides: dict) -> str:
-    """The `convert` flags that apply `overrides` (None, i.e. "not set", has no flag)."""
+    """The `convert` flags that apply `overrides`, shell-quoted.
+
+    None ("not set") has no flag, so a value it unsets in the base config stays set; the
+    cell's full config (`--config`) reproduces such a cell.
+    """
     flags = []
     for name, value in overrides.items():
         flag = "--" + name.replace("_", "-").lower()
         if isinstance(value, bool):
             flags.append(flag if value else "--no-" + flag[2:])
         elif value is not None:
-            flags.append(f"{flag} {_show(value)}")
+            flags.append(f"{flag} {shlex.quote(_show(value))}")
     return " ".join(flags)
+
+
+def preview_scale(images: list[np.ndarray], scales: list[int]) -> list[int]:
+    """`scales` lowered by one common cap so the upscaled images fit PROOF_SHEET_MAX_PIXELS."""
+    native = sum(im.shape[0] * im.shape[1] for im in images)
+    cap = max(1, math.isqrt(PROOF_SHEET_MAX_PIXELS // max(native, 1)))
+    if cap < max(scales):
+        _warn(f"proof sheet previews scaled {cap}x instead of {max(scales)}x to stay within "
+              f"{PROOF_SHEET_MAX_PIXELS} pixels")
+    return [min(scale, cap) for scale in scales]
 
 
 def proof_sheet(cells: list[list[np.ndarray]], row_labels: list[str],
@@ -487,8 +510,8 @@ def compare(input_path, outdir, prepass, sweep, force, config_path, max_input_pi
     method's own outputs.
 
     With --prepass or --sweep it writes only a labelled proof sheet instead: one row per
-    method (only the given one with --method), one column per setting. The JSON result lists
-    the flags that reproduce each cell with `convert`.
+    method (only the given one with --method), one column per setting. The JSON result lists,
+    per cell, the flags to add to `convert` to reproduce it and its full config (for --config).
     """
     from PIL import Image
 
@@ -508,15 +531,18 @@ def compare(input_path, outdir, prepass, sweep, force, config_path, max_input_pi
                          else max_input_pixels)
         labels = [" ".join(f"{name}={_show(value)}" for name, value in column.items())
                   for column in columns]
-        previews, report = [], []
+        images, report = [], []
         for method, row in zip(methods, configs):
-            previews.append([])
             for column, label, config in zip(columns, labels, row):
                 log.info("cell %s / %s", method, label)
                 result = pipeline.run_loaded(loaded, config)
-                previews[-1].append(io.upscale_nearest(result.image, config.scale_preview))
+                images.append(result.image)   # native size: upscaled once the total is known
                 report.append({"method": method, "column": label, "stats": result.stats,
-                               "flags": override_flags({"method": method, **column})})
+                               "flags": override_flags({"method": method, **column}),
+                               "config": config.to_dict()})
+        scales = preview_scale(images, [config.scale_preview for row in configs for config in row])
+        cells = [io.upscale_nearest(im, scale) for im, scale in zip(images, scales)]
+        previews = [cells[r * len(columns):(r + 1) * len(columns)] for r in range(len(methods))]
         Path(outdir).mkdir(parents=True, exist_ok=True)
         Image.fromarray(proof_sheet(previews, list(methods), labels), mode="RGBA").save(sheet_path)
         _emit({"compare": str(sheet_path), "cells": report})
