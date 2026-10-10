@@ -344,57 +344,141 @@ def denoise(rgb: np.ndarray, config: Config) -> np.ndarray:
 
 # Rec. 709 luma weights; `enhance` changes luminance only and scales RGB to match.
 _LUMA = np.array([0.2126, 0.7152, 0.0722])
-# Subject luminance percentiles that `enhance` maps to black and white.
+# Percentiles of the subject's brightness (largest channel) that `enhance` maps to black and
+# white. Brightness, not luminance: a saturated color reaches its ceiling at a luminance far
+# below 1, and stretching its luminance to "white" would clip it flat.
 ENHANCE_LEVELS = (1.0, 99.0)
+# The levels stretch never amplifies by more than 1 / this: a subject whose luminance range is
+# narrower (a flat color with sensor noise) is stretched to part of the range only.
+ENHANCE_MIN_RANGE = 0.2
 # `ink` finds thin dark features as a difference of Gaussians at these sigmas (output pixels):
 # a response of INK_ONSET (luminance, 0..1) starts the darkening and INK_ONSET + INK_RANGE
 # gives all of it.
 INK_SIGMAS = (0.5, 1.6)
 INK_ONSET, INK_RANGE = 0.02, 0.04
+# Blurs at least this wide (input pixels) use running means instead of a Gaussian kernel.
+BLUR_BOX_SIGMA = 4.0
 
 
-def enhance(rgb: np.ndarray, mask: np.ndarray, cell: tuple[float, float],
-            config: Config) -> np.ndarray:
+def _level_pixels(value: np.ndarray, mask: np.ndarray, weight: np.ndarray) -> np.ndarray:
+    """The brightnesses the levels are measured on: the subject's mostly opaque pixels."""
+    solid = mask & (weight >= 0.5)
+    return value[solid if solid.any() else mask]
+
+
+def subject_brightness(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> np.ndarray:
+    """Brightness (largest channel) of the subject's pixels after keying, for levels shared
+    between images."""
+    rgb, mask, weight, _, _ = _subject(rgb, alpha, config)
+    return _level_pixels(rgb.max(axis=-1), mask, weight)
+
+
+def enhance_levels(value: np.ndarray, config: Config) -> tuple[float, float]:
+    """(black, white) brightness for the levels stretch: `enhance_black` / `enhance_white`
+    where given, else the ENHANCE_LEVELS percentiles of ``value``."""
+    lo, hi = (float(v) for v in np.percentile(value, ENHANCE_LEVELS))
+    if config.enhance_black is not None:
+        lo = config.enhance_black
+    if config.enhance_white is not None:
+        hi = config.enhance_white
+    return lo, hi
+
+
+def _stretch(value: np.ndarray, lo: float, hi: float) -> np.ndarray:
+    """Map [lo, hi] to [0, 1], with the gain capped at 1 / ENHANCE_MIN_RANGE.
+
+    A narrower range is mapped to an interval of matching width placed between where it was
+    and the full range, so a flat subject is left as it is instead of turning into noise.
+    """
+    spread = hi - lo
+    if spread <= 1e-6 or spread >= 1.0:
+        return value if spread <= 1e-6 else np.clip((value - lo) / spread, 0.0, 1.0)
+    gain = 1.0 / max(spread, ENHANCE_MIN_RANGE)
+    new_lo = lo * (1.0 - spread * gain) / (1.0 - spread)
+    return np.clip(new_lo + gain * (value - lo), 0.0, 1.0)
+
+
+def _gaussian(image: np.ndarray, sigma: tuple[float, float], mode: str) -> np.ndarray:
+    """Gaussian blur whose cost does not grow with sigma.
+
+    From BLUR_BOX_SIGMA pixels up, each axis is filtered with three running means whose widths
+    give the same variance (the usual box approximation, within a few percent of a Gaussian);
+    below it the exact kernel is used.
+    """
+    out = image
+    for axis, sg in enumerate(sigma):
+        if sg < BLUR_BOX_SIGMA:
+            out = ndimage.gaussian_filter1d(out, sg, axis=axis, mode=mode)
+            continue
+        ideal = math.sqrt(12.0 * sg * sg / 3 + 1.0)
+        low = int(ideal) - (1 - int(ideal) % 2)          # largest odd width <= ideal
+        narrow = round((12.0 * sg * sg - 3 * low * low - 12 * low - 9) / (-4.0 * low - 4.0))
+        limit = out.shape[axis] - (1 - out.shape[axis] % 2)   # odd, within the image
+        for i in range(3):
+            width = min(low if i < narrow else low + 2, limit)
+            out = ndimage.uniform_filter1d(out, width, axis=axis, mode=mode)
+    return out
+
+
+def _blur(values: np.ndarray, cover: np.ndarray, sigma: tuple[float, float],
+          wrap: bool) -> np.ndarray:
+    """Gaussian mean of ``values`` weighted by ``cover`` (a normalized convolution); ``wrap``
+    treats the image as periodic."""
+    mode = "wrap" if wrap else "nearest"
+    return _gaussian(values * cover, sigma, mode) / np.maximum(
+        _gaussian(cover, sigma, mode), 1e-6)
+
+
+def enhance(rgb: np.ndarray, mask: np.ndarray, cell: tuple[float, float], config: Config,
+            weight: np.ndarray | None = None, wrap: bool = False) -> np.ndarray:
     """Exaggerate features about one output pixel in size, so the downscalers keep them.
 
     Photos have soft gradients and no lines: a feature smaller than an output pixel (an eye, a
     mouth, a chain) is averaged into its surroundings. ``cell`` is the (y, x) number of input
-    pixels per output pixel, so every radius here is in output pixels. Three steps on
-    luminance, the first two scaled by ``config.enhance`` and the last by ``config.ink``:
+    pixels per output pixel, so every radius here is in output pixels. Three steps, the first
+    two scaled by ``config.enhance`` and the last by ``config.ink``:
 
-    1. levels: the subject's ENHANCE_LEVELS percentiles are stretched to black and white;
+    1. levels: the subject's brightness range (largest channel, see enhance_levels) is
+       stretched to black and white, with a capped gain (see _stretch);
     2. local contrast: an unsharp mask of radius ``enhance_radius``, which amplifies features
        up to that size and leaves larger gradients alone;
-    3. ink: pixels darker than their surroundings at about one output pixel are darkened.
+    3. ink: pixels darker than their surroundings at about one output pixel are darkened. The
+       darkness is measured on the fully stretched image, whatever ``enhance`` is.
 
-    RGB is scaled by the luminance ratio (hue is kept) and clipped. Transparent pixels neither
-    contribute to nor receive anything. Sources that already have outlines and a full tonal
-    range (illustrations, pixel art) lose their mid-tone shading; it is off by default.
+    Steps 2 and 3 work on luminance. Each pixel's RGB is scaled by one factor, so hue is kept:
+    a pixel is brightened only as far as its brightest channel allows, approaching that
+    ceiling smoothly instead of clipping.
+    Pixels count in the blurs by ``weight`` (default: the mask), so transparent ones neither
+    contribute nor change. ``wrap`` treats the image as periodic (seamless mode). Sources that
+    already have outlines and a full tonal range (illustrations, pixel art) lose their
+    mid-tone shading; it is off by default.
     """
     if config.enhance <= 0 and config.ink <= 0:
         return rgb
-    cover = mask.astype(np.float64)
+    cover = mask.astype(np.float64) if weight is None else np.where(mask, weight, 0.0)
 
     def blur(values: np.ndarray, sigma_out: float) -> np.ndarray:
-        # Normalized convolution: the mean of the opaque pixels under the kernel.
-        sigma = (sigma_out * cell[0], sigma_out * cell[1])
-        norm = ndimage.gaussian_filter(cover, sigma, mode="nearest")
-        return ndimage.gaussian_filter(values * cover, sigma, mode="nearest") / np.maximum(
-            norm, 1e-6)
+        return _blur(values, cover, (sigma_out * cell[0], sigma_out * cell[1]), wrap)
 
-    luma = rgb @ _LUMA
-    base = luma
+    luma, peak = rgb @ _LUMA, rgb.max(axis=-1)
+    levels = enhance_levels(_level_pixels(peak, mask, cover), config)
+    # Luminance of the image with its brightness stretched: never above a pixel's ceiling.
+    stretched = luma * _stretch(peak, *levels) / np.maximum(peak, 1e-6)
+    out = luma
     if config.enhance > 0:
-        lo, hi = np.percentile(luma[mask], ENHANCE_LEVELS)
-        if hi - lo > 1e-6:
-            stretched = np.clip((luma - lo) / (hi - lo), 0.0, 1.0)
-            base = luma + min(config.enhance, 1.0) * (stretched - luma)
-    out = np.clip(base + config.enhance * (base - blur(base, config.enhance_radius)), 0.0, 1.0)
+        base = luma + min(config.enhance, 1.0) * (stretched - luma)
+        out = np.clip(base + config.enhance * (base - blur(base, config.enhance_radius)),
+                      0.0, 1.0)
     if config.ink > 0:
-        # Measured before the local contrast, so `ink` means the same at every `enhance`.
-        dog = blur(base, INK_SIGMAS[1]) - blur(base, INK_SIGMAS[0])   # > 0 where locally dark
+        dog = blur(stretched, INK_SIGMAS[1]) - blur(stretched, INK_SIGMAS[0])  # > 0: locally dark
         out = out * (1.0 - config.ink * np.clip((dog - INK_ONSET) / INK_RANGE, 0.0, 1.0))
-    gain = out / np.maximum(luma, 1e-3)
+    # The luminance at which the pixel's brightest channel reaches 1; brightening saturates
+    # toward it (slope 1 at no change), so no channel clips and the hue does not shift.
+    headroom = np.maximum(np.where(peak > 1e-6, luma / np.maximum(peak, 1e-6), 1.0) - luma, 0.0)
+    rise = np.maximum(out - luma, 0.0)
+    eased = headroom * -np.expm1(-rise / np.maximum(headroom, 1e-9))
+    out = np.where(out > luma, luma + eased, out)
+    gain = out / np.maximum(luma, 1e-6)
     return np.where(mask[..., None], np.clip(rgb * gain[..., None], 0.0, 1.0), rgb)
 
 
@@ -491,8 +575,10 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
         else:
             reduce_by = 1
 
-    # Input pixels per output pixel (y, x), before any seamless padding.
-    cell = (h / inner_h, w / inner_w)
+    # Before denoising: the bilateral filter then sees the exaggerated edges and keeps them.
+    # Before the seamless padding: the image is filtered as the periodic tile it is.
+    rgb = enhance(rgb, mask, (h / inner_h, w / inner_w), config, weight, wrap=config.seamless)
+
     pad_out = 0
     if config.seamless:
         pad_out = SEAMLESS_PAD_OUT
@@ -502,8 +588,6 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
         mask = np.pad(mask, ((pad_y, pad_y), (pad_x, pad_x)), mode="wrap")
         weight = np.pad(weight, ((pad_y, pad_y), (pad_x, pad_x)), mode="wrap")
 
-    # Before denoising: the bilateral filter then sees the exaggerated edges and keeps them.
-    rgb = enhance(rgb, mask, cell, config)
     rgb = denoise(_fill_transparent(rgb, mask), config)
     lab = color.rgb_to_lab(rgb)
     return Preprocessed(lab=np.ascontiguousarray(lab), mask=np.ascontiguousarray(mask),

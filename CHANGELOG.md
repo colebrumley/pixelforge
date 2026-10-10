@@ -8,14 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- `--enhance` (with `--enhance-radius`) and `--ink`: an opt-in pre-pass before downscaling
-  for photos. `enhance` stretches the subject's luminance and adds local contrast at about
-  two output pixels, so eyes, mouths and other sub-pixel features survive; `ink` darkens thin
-  dark features. Off by default and in every preset, so output pixels are unchanged; every
-  `config_hash` changes because `Config` has three new fields.
+- `--enhance` (with `--enhance-radius`, `--enhance-black`, `--enhance-white`) and `--ink`: an
+  opt-in pre-pass before downscaling for photos. `enhance` stretches the subject's brightness
+  and adds local contrast at about two output pixels, so eyes, mouths and other sub-pixel
+  features survive; `ink` darkens thin dark features. Hue is kept, the stretch gain is capped,
+  seamless tiles stay seamless and `batch` shares one pair of levels between frames. Off by
+  default and in every preset, so output pixels are unchanged; every `config_hash` changes
+  because `Config` has five new fields.
 - `compare --prepass` and `compare --sweep FIELD=V1,V2,...` write a labelled proof sheet
   (methods × settings) and report the `convert` flags for each cell; `--method` limits the
-  sheet to one row. Plain `compare` is unchanged.
+  sheet to one row. Each cell also reports its full config. Plain `compare` is unchanged.
 - README: a photo sample (`docs/sample_photo.png`, from an AI-generated portrait) and guidance
   on source photos.
 

@@ -257,7 +257,9 @@ def test_every_validation_message(kwargs, message):
 
 @pytest.mark.parametrize("overrides", [dict(enhance=-0.1), dict(enhance=4.5), dict(ink=-0.1),
                                        dict(ink=1.1), dict(enhance_radius=0),
-                                       dict(enhance_radius=17)])
+                                       dict(enhance_radius=17), dict(enhance_black=-0.1),
+                                       dict(enhance_white=1.1),
+                                       dict(enhance_black=0.5, enhance_white=0.5)])
 def test_enhance_fields_are_bounded(overrides):
     with pytest.raises(ValueError):
         Config(**overrides)

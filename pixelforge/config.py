@@ -64,8 +64,12 @@ FIELD_HELP = MappingProxyType({
     "denoise_sigma_spatial": "Denoise spatial sigma in input pixels (after pre-reduction).",
     "prereduce_max_ratio": "Box-reduce inputs larger than this many times the output first "
                            "(0 = never).",
-    "enhance": "Exaggerate features before downscaling: levels stretch plus local contrast "
-               "(0 = off; for photos, try 0.5 to 1).",
+    "enhance": "Exaggerate features before downscaling: levels stretch plus local contrast, "
+               "0..4 (0 = off; for photos, try 0.5 to 1).",
+    "enhance_black": "Brightness (largest channel, 0..1) the levels stretch maps to black; "
+                     "unset = the subject's 1st percentile.",
+    "enhance_white": "Brightness (largest channel, 0..1) the levels stretch maps to white; "
+                     "unset = the subject's 99th percentile.",
     "enhance_radius": "Feature size the local contrast acts on, in output pixels.",
     "ink": "Darken thin dark features (lines, lashes, creases) before downscaling, 0..1.",
     "method": "Downscaling algorithm.",
@@ -137,8 +141,11 @@ class Config:
     denoise_sigma_color: float = 0.08  # bilateral, in [0,1] sRGB units
     denoise_sigma_spatial: float = 2.0  # in input pixels, after any pre-reduction
     prereduce_max_ratio: int = 8      # box-reduce inputs > this × output first; 0 = never
-    # DEVIATION: Section 4 — enhance, enhance_radius and ink are not in the spec.
+    # DEVIATION: Section 4 — enhance, enhance_black, enhance_white, enhance_radius and ink are
+    # not in the spec.
     enhance: float = 0.0              # levels stretch + local contrast before downscaling; 0 = off
+    enhance_black: float | None = None  # brightness mapped to black; None = subject's 1st pct.
+    enhance_white: float | None = None  # brightness mapped to white; None = subject's 99th pct.
     enhance_radius: float = 2.0       # local-contrast Gaussian sigma, in output pixels
     ink: float = 0.0                  # 0..1, darkening of thin dark features; 0 = off
     # --- downscale ---
@@ -327,6 +334,14 @@ class Config:
                 f"orphan_max_delta must be finite and >= 0, got {self.orphan_max_delta}")
         if not 0 <= self.key_bg_fringe <= 8:
             raise ConfigError(f"key_bg_fringe must be in [0, 8], got {self.key_bg_fringe}")
+        for name in ("enhance_black", "enhance_white"):
+            v = getattr(self, name)
+            if v is not None and not 0.0 <= v <= 1.0:
+                raise ConfigError(f"{name} must be in [0, 1], got {v}")
+        if None not in (self.enhance_black, self.enhance_white) and not (
+                self.enhance_black < self.enhance_white):
+            raise ConfigError(f"enhance_black ({self.enhance_black}) must be below "
+                              f"enhance_white ({self.enhance_white})")
         if self.prereduce_max_ratio < 0:
             raise ConfigError(f"prereduce_max_ratio must be >= 0, got {self.prereduce_max_ratio}")
         if not 0.0 <= self.outline_darken <= 1.0:

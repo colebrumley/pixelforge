@@ -37,7 +37,7 @@ to the nearest palette color instead.)
 ![Town background before and after](docs/sample_background.png)
 
 `pixelforge convert portrait.png --preset sprite --outline none --no-key-bg`, without (middle)
-and with `--enhance 0.5` (right): 1024×1024 → 64×64, 16 colors. The pre-pass keeps the eyes,
+and with `--enhance 1` (right): 1024×1024 → 64×64, 16 colors. The pre-pass keeps the eyes,
 brows and mouth that plain downscaling averages away (see [Photos](#photos---enhance-and---ink)).
 The source photo is AI-generated.
 
@@ -129,13 +129,20 @@ to every frame inline, so the frames' metadata carries the colors, not the outpu
 
 Photos have soft gradients and no lines, so features smaller than an output pixel (eyes, a
 mouth, a chain) get averaged away. `--enhance` exaggerates them before downscaling: it
-stretches the subject's luminance to the full range and adds local contrast at
-`--enhance-radius` (2) output pixels. Start at `--enhance 0.5`; `1` is stronger and keeps
-more in dim or low-contrast photos, but blows light skin out to near white in bright ones.
-`--ink 0.6` also darkens thin dark features into lines; it adds blots on some images. The
-right values depend on the photo, so pick them from a [proof sheet](#proof-sheets). Both are off by default and in
-every preset: sources that already have outlines and full contrast (illustrations, pixel art)
-lose their mid-tone shading to them.
+stretches the subject's brightness to the full range and adds local contrast at
+`--enhance-radius` (2) output pixels. Try `0.5` to `1`; higher values (up to 4) turn dark
+areas such as hair solid black. `--ink 0.6` also darkens thin dark features into lines; it
+adds blots on some images. The right values depend on the photo, so pick them from a
+[proof sheet](#proof-sheets). Both are off by default and in every preset: sources that
+already have outlines and full contrast (illustrations, pixel art) lose their mid-tone
+shading to them.
+
+Colors keep their hue: a pixel is brightened only as far as its brightest channel allows.
+The stretch maps the subject's 1st and 99th brightness percentiles to black and white, and
+never amplifies by more than 5×, so a nearly flat subject stays nearly flat;
+`--enhance-black` / `--enhance-white` set the two levels by hand. `batch` measures one pair
+of levels over all frames (reported in its first JSON line), so a flash in one frame does not
+change the rest of it. `--seamless` tiles stay seamless.
 
 Source photos convert best when the subject fills the frame (a feature needs 3–4 output pixels
 to survive), the light is flat and frontal, the backdrop is one flat color that differs from
@@ -153,7 +160,8 @@ background.
 `compare --prepass` and `compare --sweep FIELD=V1,V2,...` write one labelled sheet
 (`INPUT_compare.png`) instead of each method's outputs: a row per method, a column per
 setting. `--prepass` uses four columns from no pre-pass to `--enhance 1 --ink 0.6`; `--sweep`
-takes any one option (`on`/`off` for booleans, `none` to unset). `--method` limits the sheet
+takes one option other than `--method`, given once (`on`/`off` for booleans, `none` to
+unset; values are split on commas, so inline `hex:` palettes cannot be swept). `--method` limits the sheet
 to that row. The JSON result lists, per cell, its `flags` and its full `config`. The flags
 cover only the method and the swept setting: add them to a `convert` call with the same base
 flags and `--config` file that `compare` was given. The `config` is the whole cell: save it as

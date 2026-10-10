@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from PIL import Image
+from scipy import ndimage
 
 from pixelforge import Config, preprocess
 from pixelforge.pipeline import run_loaded
@@ -360,14 +361,127 @@ def test_enhance_keeps_hue_and_ignores_transparent_pixels():
     out = preprocess.enhance(rgb, mask, (8.0, 8.0), Config(enhance=1.0, ink=0.5))
     assert np.array_equal(out[:, :16], rgb[:, :16])
     inside = out[mask]
-    unclipped = (inside.max(axis=1) < 1.0) & (inside.min(axis=1) > 0.0)
-    assert unclipped.any()
-    assert np.allclose(inside[unclipped, 1] / inside[unclipped, 0], 0.6)
+    lit = inside[:, 0] > 0.0
+    assert lit.any()
+    assert np.allclose(inside[lit, 1] / inside[lit, 0], 0.6)
+    assert np.allclose(inside[lit, 2] / inside[lit, 0], 0.4)
     # The green under the mask did not leak into the opaque edge.
     other = rgb.copy()
     other[:, :16] = (1.0, 0.0, 1.0)
     assert np.array_equal(out[mask], preprocess.enhance(
         other, mask, (8.0, 8.0), Config(enhance=1.0, ink=0.5))[mask])
+
+
+@pytest.mark.parametrize("color_", [(0.05, 0.1, 1.0), (1.0, 0.08, 0.05), (1.0, 0.75, 0.6)])
+@pytest.mark.parametrize("strength", [0.5, 1.0, 4.0])
+def test_enhance_does_not_clip_saturated_colors(color_, strength):
+    """Brightening stops at the pixel's brightest channel: shading and hue both survive."""
+    shade = np.linspace(0.2, 0.95, 64)[None, :, None] * np.ones((64, 1, 1))
+    rgb = shade * np.array(color_)
+    out = preprocess.enhance(rgb, np.ones((64, 64), dtype=bool), (8.0, 8.0),
+                             Config(enhance=strength))
+    top = int(np.argmax(color_))
+    row = out[32, :, top]
+    assert (np.diff(row) >= -1e-9).all() and len(np.unique(np.round(row, 3))) > 20
+    lit = out[..., top] > 0.0
+    assert np.allclose(out[lit] / out[lit][:, top:top + 1], np.array(color_) / max(color_))
+
+
+def test_enhance_leaves_a_nearly_flat_subject_nearly_flat():
+    """One 8-bit step of difference is not stretched to black and white."""
+    rgb = np.full((32, 32, 3), 128 / 255)
+    rgb[:, 16:] = 129 / 255
+    mask = np.ones((32, 32), dtype=bool)
+    out = preprocess.enhance(rgb, mask, (2.0, 2.0), Config(enhance=1.0))
+    assert out.max() - out.min() < 0.05 and abs(out.mean() - rgb.mean()) < 0.02
+    flat = np.full((32, 32, 3), 0.3)
+    assert np.allclose(preprocess.enhance(flat, mask, (2.0, 2.0), Config(enhance=1.0)), flat)
+
+
+def test_ink_does_not_depend_on_enhance():
+    """A faint dark dot is inked the same with or without the levels stretch."""
+    y, x = np.mgrid[:64, :64]
+    luma = 0.5 + 0.05 * (x / 63.0) - 0.05 * np.exp(-((y - 32) ** 2 + (x - 32) ** 2) / 18.0)
+    rgb, mask = np.repeat(luma[..., None], 3, axis=-1), np.ones((64, 64), dtype=bool)
+    touched = []
+    for strength in (0.0, 0.25, 1.0):
+        plain = preprocess.enhance(rgb, mask, (8.0, 8.0), Config(enhance=strength))
+        inked = preprocess.enhance(rgb, mask, (8.0, 8.0), Config(enhance=strength, ink=1.0))
+        assert inked[32, 32, 0] < 0.5 * plain[32, 32, 0]
+        touched.append(np.abs(inked - plain).max(axis=-1) > 1e-6)
+    assert np.array_equal(touched[0], touched[1]) and np.array_equal(touched[0], touched[2])
+
+
+def test_enhance_weighs_pixels_by_alpha():
+    """alpha_threshold=0 admits alpha-0 pixels; their RGB must barely count."""
+    rng = np.random.default_rng(0)
+    rgb = ndimage.gaussian_filter(rng.random((40, 40, 3)), (2, 2, 0))
+    mask, weight = np.ones((40, 40), dtype=bool), np.ones((40, 40))
+    weight[:, :10] = 1 / 255
+    outs = []
+    for hidden in ((0.0, 1.0, 0.0), (1.0, 0.0, 1.0)):
+        image = rgb.copy()
+        image[:, :10] = hidden
+        outs.append(preprocess.enhance(image, mask, (4.0, 4.0), Config(enhance=1.0, ink=0.5),
+                                       weight)[:, 10:])
+    assert np.abs(outs[0] - outs[1]).max() < 0.03
+    unweighted = [preprocess.enhance(np.where(np.arange(40)[None, :, None] < 10, hidden, rgb),
+                                     mask, (4.0, 4.0), Config(enhance=1.0, ink=0.5))[:, 10:]
+                  for hidden in ((0.0, 1.0, 0.0), (1.0, 0.0, 1.0))]
+    assert np.abs(unweighted[0] - unweighted[1]).max() > 0.1
+
+
+@pytest.mark.parametrize("overrides", [dict(enhance=1.0), dict(ink=1.0),
+                                       dict(enhance=1.0, enhance_radius=16.0, ink=1.0)])
+def test_enhance_keeps_a_seamless_tile_periodic(overrides):
+    rng = np.random.default_rng(1)
+    rgb = ndimage.gaussian_filter(rng.random((48, 60, 3)), (3, 3, 0), mode="wrap")
+    mask = np.ones((48, 60), dtype=bool)
+    config = Config(**overrides)
+    out = preprocess.enhance(rgb, mask, (6.0, 6.0), config, wrap=True)
+    assert np.abs(out - rgb).max() > 0.1
+    rolled = preprocess.enhance(np.roll(rgb, (7, 31), axis=(0, 1)), mask, (6.0, 6.0), config,
+                                wrap=True)
+    assert np.allclose(np.roll(out, (7, 31), axis=(0, 1)), rolled, atol=1e-9)
+    # Without wrap the same tile is filtered as if it ended at its border.
+    assert not np.allclose(out, preprocess.enhance(rgb, mask, (6.0, 6.0), config), atol=1e-3)
+
+
+@pytest.mark.parametrize("overrides", [dict(enhance=1.0), dict(ink=1.0)])
+def test_seamless_padding_is_the_wrapped_enhanced_image(fixture_path, overrides):
+    loaded = io.load(fixture_path("seamless_src"))
+    config = Config(preset="background", tileset=False, seamless=True, out_width=16,
+                    out_height=16, method="box", denoise="none", dither="none", **overrides)
+    pre = preprocess.run(loaded.rgb, loaded.alpha, config)
+    assert pre.prereduce_factor == 1
+    py = (pre.lab.shape[0] - loaded.rgb.shape[0]) // 2
+    px = (pre.lab.shape[1] - loaded.rgb.shape[1]) // 2
+    core = pre.lab[py:-py, px:-px]
+    assert np.array_equal(np.pad(core, ((py, py), (px, px), (0, 0)), mode="wrap"), pre.lab)
+    plain = preprocess.run(loaded.rgb, loaded.alpha, config.replace(enhance=0.0, ink=0.0))
+    assert not np.allclose(plain.lab, pre.lab)
+
+
+@pytest.mark.parametrize("sigma", [4.0, 7.3, 25.0])
+def test_wide_blur_has_the_requested_width_at_constant_cost(sigma):
+    impulse = np.zeros((1, 2001))
+    impulse[0, 1000] = 1.0
+    kernel = preprocess._gaussian(impulse, (0.1, sigma), "nearest")[0]
+    x = np.arange(2001) - 1000
+    assert kernel.sum() == pytest.approx(1.0)
+    assert np.sqrt((kernel * x * x).sum()) == pytest.approx(sigma, rel=0.05)
+
+
+def test_explicit_levels_replace_the_percentiles():
+    rgb, mask = _soft_feature()
+    auto = preprocess.enhance(rgb, mask, (8.0, 8.0), Config(enhance=1.0))
+    fixed = preprocess.enhance(rgb, mask, (8.0, 8.0),
+                               Config(enhance=1.0, enhance_black=0.0, enhance_white=1.0))
+    assert not np.allclose(auto, fixed)
+    # With black 0 and white 1 the stretch is the identity: only the local contrast remains.
+    brighter = preprocess.enhance(rgb + 0.05, mask, (8.0, 8.0),
+                                  Config(enhance=1.0, enhance_black=0.0, enhance_white=1.0))
+    assert np.allclose(brighter[8:-8, 8:-8] - fixed[8:-8, 8:-8], 0.05, atol=5e-3)
 
 
 def test_enhance_radius_is_in_output_pixels(fixture_path):

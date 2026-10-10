@@ -302,6 +302,27 @@ def shared_scale(paths: list[Path], config: Config,
                           canvas=f"{canvas[0]}x{canvas[1]}")
 
 
+def shared_levels(paths: list[Path], config: Config,
+                  max_pixels: int | None = None) -> Config:
+    """`config` with one `enhance_black` / `enhance_white` for every frame, unless both are set.
+
+    The pre-pass otherwise measures each frame's own brightness range, so a flash in one frame
+    would change the brightness of everything else in it.
+    """
+    if (config.enhance <= 0 and config.ink <= 0) or None not in (config.enhance_black,
+                                                                 config.enhance_white):
+        return config
+    samples = []
+    for path in paths:
+        loaded = io.load(path, io.MAX_INPUT_PIXELS if max_pixels is None else max_pixels)
+        value = preprocess.subject_brightness(loaded.rgb, loaded.alpha, config)
+        samples.append(value[::max(1, math.ceil(len(value) / BATCH_PIXELS_PER_IMAGE))])
+    black, white = preprocess.enhance_levels(np.concatenate(samples), config)
+    if not black < white:    # one flat color: nothing to stretch in any frame
+        return config
+    return config.replace(enhance_black=black, enhance_white=white)
+
+
 @cli.command()
 @click.argument("input_dir", type=click.Path(file_okay=False))
 @click.option("-o", "--outdir", type=click.Path(file_okay=False), default="out",
@@ -312,8 +333,8 @@ def shared_scale(paths: list[Path], config: Config,
 def batch(input_dir, outdir, force, config_path, max_input_pixels, **flags):
     """Convert a directory's images with a shared palette.
 
-    Every image in INPUT_DIR is converted with ONE shared palette and ONE scale, so animation
-    frames stay consistent.
+    Every image in INPUT_DIR is converted with ONE shared palette and ONE scale (and, with
+    --enhance or --ink, ONE pair of levels), so animation frames stay consistent.
     """
     config = build_config(config_path, flags)
     paths = []
@@ -346,6 +367,10 @@ def batch(input_dir, outdir, force, config_path, max_input_pixels, **flags):
     if scaled is not config:
         config = scaled
         header.update(scale=config.scale, canvas=config.canvas)
+    leveled = shared_levels(paths, config, max_input_pixels)
+    if leveled is not config:
+        config = leveled
+        header.update(enhance_black=config.enhance_black, enhance_white=config.enhance_white)
     if config.palette_name is None:
         palette_path = outdir / SHARED_PALETTE_NAME
         shared = shared_palette(paths, config, max_input_pixels)
@@ -497,13 +522,13 @@ def proof_sheet(cells: list[list[np.ndarray]], row_labels: list[str],
               show_default=True, help="Output directory.")
 @click.option("--prepass", is_flag=True, default=False,
               help="Proof sheet: every method at four --enhance/--ink settings.")
-@click.option("--sweep", default=None, metavar="FIELD=V1,V2,...",
+@click.option("--sweep", "sweeps", multiple=True, metavar="FIELD=V1,V2,...",
               help="Proof sheet: every method at each value of one option, "
                    "e.g. palette-size=8,12,16.")
 @force_option
 @config_options
 @handle_errors
-def compare(input_path, outdir, prepass, sweep, force, config_path, max_input_pixels, **flags):
+def compare(input_path, outdir, prepass, sweeps, force, config_path, max_input_pixels, **flags):
     """Compare box, kopf and gerstner side by side.
 
     Runs all three methods with the same config and writes INPUT_compare.png, plus each
@@ -516,6 +541,10 @@ def compare(input_path, outdir, prepass, sweep, force, config_path, max_input_pi
     """
     from PIL import Image
 
+    if len(sweeps) > 1:
+        raise ConfigError("--sweep can be given once: a sheet has one row per method and "
+                          "one column per value")
+    sweep = sweeps[0] if sweeps else None
     if prepass and sweep is not None:
         raise ConfigError("--prepass and --sweep cannot be combined")
     stem = Path(input_path).stem
@@ -528,6 +557,8 @@ def compare(input_path, outdir, prepass, sweep, force, config_path, max_input_pi
         # Every cell is validated before the first (slow) one runs.
         configs = [[base.replace(method=method, **column) for column in columns]
                    for method in methods]
+        for config in configs[0]:
+            config.validate_palette()
         loaded = io.load(input_path, io.MAX_INPUT_PIXELS if max_input_pixels is None
                          else max_input_pixels)
         labels = [" ".join(f"{name}={_show(value)}" for name, value in column.items())

@@ -279,19 +279,29 @@ The R_k half-width stays at the specified 2 output units.
   0.5, so the anti-aliased halo does not take palette entries. The gallery runs the fixtures with
   `key_bg=False` because they are test patterns, not sprites; images in `samples/` use the
   preset as-is.
-- `Config` has three more fields that are not in the spec, `enhance`, `enhance_radius` and
-  `ink` (`preprocess.enhance`), all off by default. The downscalers are faithful to the
-  source, and on a photo that loses whatever is smaller than an output pixel: gerstner
-  dropped an eye and the mouth of a 128-px portrait. The pre-pass runs after pre-reduction
-  and before denoising, on luminance only, with every radius in output pixels: a levels
-  stretch between the subject's 1st and 99th percentiles, an unsharp mask of sigma
-  `enhance_radius`, and for `ink` a darkening where a difference of Gaussians (0.5 and 1.6
-  output pixels) finds a thin dark feature. The right strength depends on the photo: `enhance=1`
-  suited a dim, low-contrast portrait, while on a bright one it pushed light skin to near
-  white and 0.5 read better, hence `compare --prepass`. When the backdrop is not keyed it is
-  part of the "subject" and of the percentiles. It is not in any preset because sources that
-  already have outlines and full contrast lose their mid-tone shading (the knight sample's
-  armor goes to black and white, and `ink` turns its blue shield nearly black).
+- `Config` has five more fields that are not in the spec, `enhance`, `enhance_black`,
+  `enhance_white`, `enhance_radius` and `ink` (`preprocess.enhance`), all off by default. The
+  downscalers are faithful to the source, and on a photo that loses whatever is smaller than
+  an output pixel: gerstner dropped an eye and the mouth of a 128-px portrait. The pre-pass
+  runs after pre-reduction and before denoising, with every radius in output pixels:
+  - a levels stretch of the subject's brightness (largest channel) between its 1st and 99th
+    percentiles. Brightness rather than luminance, because a saturated color reaches its
+    ceiling far below luminance 1 and would clip flat. The gain is capped at 5 (a 1/255 step
+    in a flat subject otherwise became black and white);
+  - an unsharp mask on luminance of sigma `enhance_radius`;
+  - for `ink`, a darkening where a difference of Gaussians (0.5 and 1.6 output pixels) on
+    the fully stretched image finds a thin dark feature, so `ink` acts the same at any
+    `enhance`.
+
+  Each pixel's RGB is scaled by one factor, and a brightening eases toward the luminance at
+  which its largest channel reaches 1, so hue never shifts. Blurs are normalized by alpha
+  weight and, from sigma 4 px up, are three running means per axis, so the cost does not grow
+  with the radius (`prereduce_max_ratio=0` on a 2048-px input took 300 s with Gaussian
+  kernels). In seamless mode the pass runs before the wrap padding with periodic filters.
+  `batch` pools the frames' brightness and fixes `enhance_black`/`enhance_white` for all of
+  them. The right strength depends on the photo, hence `compare --prepass`; when the backdrop
+  is not keyed it is part of the "subject" and of the percentiles. It is not in any preset
+  because sources that already have outlines and full contrast lose their mid-tone shading.
 
 **Tests (Section 12).**
 

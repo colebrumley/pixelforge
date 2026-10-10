@@ -369,9 +369,45 @@ def test_parse_sweep_types():
     (["--sweep", "key-bg=maybe"], "on/off"),
     (["--sweep", "palette-size=4,999"], "palette_size must be in"),
     (["--sweep", "palette-size=4", "--prepass"], "cannot be combined"),
+    (["--sweep", "palette-size=4", "--sweep", "dither=none"], "given once"),
+    (["--sweep", "palette-name=pico8,missing_palette.hex"], "missing_palette.hex"),
 ])
 def test_compare_sweep_errors(fixture_path, tmp_path, args, message):
     result = _invoke("compare", fixture_path("two_color"), "-o", tmp_path, *args)
     assert result.exit_code == 2, result.output
     assert message in result.output
     assert not tmp_path.exists() or not list(tmp_path.iterdir())
+
+
+def _disc_frames(directory):
+    """Two frames of one shaded disc; the second also has a small white flash."""
+    directory.mkdir()
+    y, x = np.mgrid[:96, :96]
+    inside = (y - 48) ** 2 + (x - 48) ** 2 < 40 ** 2
+    shade = np.clip(90 + 0.8 * (x - 8), 0, 255)
+    for name, flash in (("f0", False), ("f1", True)):
+        rgba = np.zeros((96, 96, 4), dtype=np.uint8)
+        rgba[..., 0], rgba[..., 1], rgba[..., 2] = shade, shade * 0.7, shade * 0.5
+        rgba[..., 3] = np.where(inside, 255, 0)
+        if flash:
+            rgba[20:32, 42:54, :3] = 255
+        Image.fromarray(rgba, mode="RGBA").save(directory / f"{name}.png")
+
+
+def test_batch_enhance_uses_one_pair_of_levels(tmp_path):
+    """A flash in one frame must not change the brightness of the rest of that frame."""
+    _disc_frames(tmp_path / "frames")
+    out = tmp_path / "out"
+    result = _invoke("batch", tmp_path / "frames", "-o", out, "--method", "box", "--out-height",
+                     "24", "--enhance", "1", "--outline", "none", "--denoise", "none")
+    assert result.exit_code == 0, result.output
+    header = json.loads(result.output.strip().splitlines()[0])
+    assert 0.0 <= header["enhance_black"] < header["enhance_white"] <= 1.0
+    metas = [json.loads((out / f"{name}_meta.json").read_text()) for name in ("f0", "f1")]
+    assert all(m["config"]["enhance_white"] == header["enhance_white"] for m in metas)
+    a, b = (np.asarray(Image.open(out / f"{name}.png").convert("RGBA")).astype(int)
+            for name in ("f0", "f1"))
+    assert a.shape == b.shape
+    away = np.ones(a.shape[:2], dtype=bool)
+    away[:12, :] = False                               # rows the flash can reach
+    assert (np.abs(a - b).max(axis=-1)[away] > 0).mean() < 0.05
