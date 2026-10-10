@@ -13,7 +13,8 @@ Three downscalers, selectable per run:
 - **gerstner** — joint superpixel + palette optimization (Gerstner et al.; Computers &
   Graphics 2013). Segmentation and palette converge together.
 
-Post-processing adds palette ramp regularization, selective ordered dithering, orphan-pixel
+An optional pre-pass (`--enhance`, `--ink`) exaggerates small features so photos stay
+readable. Post-processing adds palette ramp regularization, selective ordered dithering, orphan-pixel
 removal, jaggy cleanup, sprite outlines and optional tileset + tilemap extraction. Bundled
 palettes: NES, Game Boy, Genesis, SNES, PICO-8.
 Orphan removal keeps high-contrast singles such as 1-px eyes and highlights: a stray pixel is
@@ -78,6 +79,8 @@ pixelforge convert hero.png --preset sprite --method gerstner --palette-size 12
 pixelforge convert scene.png --preset background           # writes tileset + tilemap
 pixelforge batch frames/ --preset sprite                    # one shared palette for all
 pixelforge compare hero.png -o out                          # box, kopf, gerstner side by side
+pixelforge compare photo.png --prepass                      # proof sheet: methods × pre-pass
+pixelforge compare hero.png --sweep palette-size=8,12,16    # proof sheet: methods × one option
 pixelforge palettes                                         # list bundled palettes
 ```
 
@@ -114,6 +117,31 @@ if the aspect changes by more than 2 %); `--fit crop` crops the input centered.
 `--palette-name` takes a bundled name, a `.hex`/`.gpl` path, or inline colors
 (`hex:ff0000,00ff00,…`). `batch` writes its shared palette to `shared_palette.hex` and hands it
 to every frame inline, so the frames' metadata carries the colors, not the output path.
+
+### Photos: `--enhance` and `--ink`
+
+Photos have soft gradients and no lines, so features smaller than an output pixel (eyes, a
+mouth, a chain) get averaged away. `--enhance 1` exaggerates them before downscaling: it
+stretches the subject's luminance to the full range and adds local contrast at
+`--enhance-radius` (2) output pixels. `--ink 0.6` also darkens thin dark features into lines;
+it adds blots on some images, so check it on a proof sheet. Both are off by default and in
+every preset: sources that already have outlines and full contrast (illustrations, pixel art)
+lose their mid-tone shading to them.
+
+Source photos convert best when the subject fills the frame (a feature needs 3–4 output pixels
+to survive), the light is flat and frontal, the backdrop is one flat color that differs from
+hair and skin, and adjacent parts differ in tone. A mottled studio backdrop is not flat:
+`key_bg` will not key it, so cut the subject out first (`--remove-bg`, or an input with alpha).
+
+### Proof sheets
+
+`compare --prepass` and `compare --sweep FIELD=V1,V2,...` write one labelled sheet
+(`INPUT_compare.png`) instead of each method's outputs: a row per method, a column per
+setting. `--prepass` uses four columns from no pre-pass to `--enhance 1 --ink 0.6`; `--sweep`
+takes any one option (`on`/`off` for booleans, `none` to unset). `--method` limits the sheet
+to that row. The JSON result lists, per cell, the flags to add to `convert` to reproduce it.
+Every cell is a full run, so a 3 × 4 sheet with kopf and gerstner takes minutes at large
+sizes; pick settings at a small `--out-height`, then convert at full size.
 
 Inputs much larger than the output are box-reduced to 8–16× the output size before denoising
 (`--prereduce-max-ratio`, 0 disables).

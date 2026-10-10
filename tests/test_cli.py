@@ -270,3 +270,65 @@ def test_group_help_lists_one_line_summaries():
     assert result.exit_code == 0
     for line in result.output.split("Commands:")[1].strip().splitlines():
         assert not line.rstrip().endswith("..."), line
+
+
+def test_compare_prepass_writes_only_a_proof_sheet(fixture_path, tmp_path):
+    from pixelforge.cli import PREPASS_COLUMNS
+
+    result = _invoke("compare", fixture_path("noisy_gradient"), "-o", tmp_path, "--prepass",
+                     "--out-height", "8", "--preset", "background", "--no-tileset")
+    assert result.exit_code == 0, result.output
+    assert [p.name for p in tmp_path.iterdir()] == ["noisy_gradient_compare.png"]
+    payload = json.loads(result.output.strip().splitlines()[-1])
+    cells = payload["cells"]
+    assert [c["method"] for c in cells[::len(PREPASS_COLUMNS)]] == ["box", "kopf", "gerstner"]
+    assert len(cells) == 3 * len(PREPASS_COLUMNS)
+    assert cells[-1]["flags"] == "--method gerstner --enhance 1 --ink 0.6"
+    assert cells[-1]["column"] == "enhance=1 ink=0.6"
+    assert len({c["stats"]["config_hash"] for c in cells}) == len(cells)
+    sheet = np.asarray(Image.open(tmp_path / "noisy_gradient_compare.png"))
+    assert sheet.shape[2] == 4 and sheet.shape[1] > 4 * 8 * 8 and sheet.shape[0] > 3 * 8 * 8
+
+
+def test_compare_cell_flags_reproduce_the_cell(fixture_path, tmp_path):
+    base = ["--out-height", "8", "--preset", "background", "--no-tileset", "--enhance", "1"]
+    result = _invoke("compare", fixture_path("noisy_gradient"), "-o", tmp_path / "sheet",
+                     "--sweep", "palette-size=4,8", "--method", "box", *base)
+    assert result.exit_code == 0, result.output
+    cells = json.loads(result.output.strip().splitlines()[-1])["cells"]
+    assert [(c["method"], c["column"], c["flags"]) for c in cells] == [
+        ("box", "palette_size=4", "--method box --palette-size 4"),
+        ("box", "palette_size=8", "--method box --palette-size 8")]
+    again = _invoke("convert", fixture_path("noisy_gradient"), "-o", tmp_path / "one", *base,
+                    *cells[1]["flags"].split())
+    assert again.exit_code == 0, again.output
+    stats = json.loads(again.output.strip().splitlines()[-1])["stats"]
+    assert stats["config_hash"] == cells[1]["stats"]["config_hash"]
+
+
+def test_parse_sweep_types():
+    from pixelforge.cli import override_flags, parse_sweep
+
+    assert parse_sweep("--out-width=16,none") == [{"out_width": 16}, {"out_width": None}]
+    assert parse_sweep("fix_jaggies=on,off") == [{"fix_jaggies": True}, {"fix_jaggies": False}]
+    assert parse_sweep("g-t-final=0.5") == [{"g_T_final": 0.5}]
+    assert parse_sweep("dither=none,bayer4") == [{"dither": "none"}, {"dither": "bayer4"}]
+    assert override_flags({"fix_jaggies": False, "out_width": None, "g_T_final": 0.5}) == (
+        "--no-fix-jaggies --g-t-final 0.5")
+
+
+@pytest.mark.parametrize("args, message", [
+    (["--sweep", "nope=1"], "FIELD=VALUE"),
+    (["--sweep", "palette-size"], "FIELD=VALUE"),
+    (["--sweep", "method=box,kopf"], "rows of the sheet"),
+    (["--sweep", "palette-size=4,,8"], "non-empty"),
+    (["--sweep", "palette-size=four"], "is not int"),
+    (["--sweep", "key-bg=maybe"], "on/off"),
+    (["--sweep", "palette-size=4,999"], "palette_size must be in"),
+    (["--sweep", "palette-size=4", "--prepass"], "cannot be combined"),
+])
+def test_compare_sweep_errors(fixture_path, tmp_path, args, message):
+    result = _invoke("compare", fixture_path("two_color"), "-o", tmp_path, *args)
+    assert result.exit_code == 2, result.output
+    assert message in result.output
+    assert not tmp_path.exists() or not list(tmp_path.iterdir())

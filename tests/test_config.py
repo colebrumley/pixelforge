@@ -253,3 +253,17 @@ def test_every_validation_message(kwargs, message):
     with pytest.raises(ConfigError) as info:
         Config(**kwargs)
     assert str(info.value).startswith(message), str(info.value)
+
+
+@pytest.mark.parametrize("overrides", [dict(enhance=-0.1), dict(enhance=4.5), dict(ink=-0.1),
+                                       dict(ink=1.1), dict(enhance_radius=0),
+                                       dict(enhance_radius=17)])
+def test_enhance_fields_are_bounded(overrides):
+    with pytest.raises(ValueError):
+        Config(**overrides)
+
+
+def test_enhance_is_off_in_every_preset():
+    for preset in ("sprite", "background"):
+        config = Config(preset=preset)
+        assert config.enhance == 0.0 and config.ink == 0.0

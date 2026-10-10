@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from PIL import Image
 
 from pixelforge import Config, preprocess
 from pixelforge.pipeline import run_loaded
@@ -322,3 +323,61 @@ def test_prereduce_weight_is_the_block_mean():
     _, small_mask, small_weight = preprocess.prereduce(np.zeros((2, 4, 3)), mask, 2, weight)
     assert small_mask.all()
     assert np.allclose(small_weight, [[0.75, 0.25]])
+
+
+def _soft_feature():
+    """A mid-gray field with a faint dark dot the size of one output pixel (8 px at 64 -> 8)."""
+    y, x = np.mgrid[:64, :64]
+    luma = 0.6 - 0.15 * np.exp(-((y - 32) ** 2 + (x - 32) ** 2) / (2 * 3.0 ** 2))
+    luma += 0.1 * (x / 63.0)                      # a gradient much larger than the feature
+    return np.repeat(luma[..., None], 3, axis=-1), np.ones((64, 64), dtype=bool)
+
+
+def test_enhance_off_is_identity():
+    rgb, mask = _soft_feature()
+    assert preprocess.enhance(rgb, mask, (8.0, 8.0), Config()) is rgb
+
+
+@pytest.mark.parametrize("overrides", [dict(enhance=1.0), dict(ink=1.0),
+                                       dict(enhance=1.0, ink=0.6)])
+def test_enhance_deepens_a_small_dark_feature(overrides):
+    rgb, mask = _soft_feature()
+    out = preprocess.enhance(rgb, mask, (8.0, 8.0), Config(**overrides))
+    assert out.shape == rgb.shape and out.min() >= 0.0 and out.max() <= 1.0
+
+    def contrast(image):
+        return image[4:12, 28:36].mean() - image[32, 32].mean()   # same column, off the dot
+
+    assert contrast(out) > 1.5 * contrast(rgb)
+
+
+def test_enhance_keeps_hue_and_ignores_transparent_pixels():
+    rgb, mask = _soft_feature()
+    rgb = rgb * np.array([1.0, 0.6, 0.4])
+    mask = mask.copy()
+    mask[:, :16] = False
+    rgb[:, :16] = (0.0, 1.0, 0.0)                 # arbitrary color under alpha 0
+    out = preprocess.enhance(rgb, mask, (8.0, 8.0), Config(enhance=1.0, ink=0.5))
+    assert np.array_equal(out[:, :16], rgb[:, :16])
+    inside = out[mask]
+    unclipped = (inside.max(axis=1) < 1.0) & (inside.min(axis=1) > 0.0)
+    assert unclipped.any()
+    assert np.allclose(inside[unclipped, 1] / inside[unclipped, 0], 0.6)
+    # The green under the mask did not leak into the opaque edge.
+    other = rgb.copy()
+    other[:, :16] = (1.0, 0.0, 1.0)
+    assert np.array_equal(out[mask], preprocess.enhance(
+        other, mask, (8.0, 8.0), Config(enhance=1.0, ink=0.5))[mask])
+
+
+def test_enhance_radius_is_in_output_pixels(fixture_path):
+    """The same picture at twice the resolution gives (nearly) the same output."""
+    from pixelforge import run
+
+    small = np.asarray(Image.open(fixture_path("noisy_gradient")).convert("RGB"))
+    big = np.repeat(np.repeat(small, 2, axis=0), 2, axis=1)
+    config = Config(preset="background", method="box", out_width=32, out_height=32,
+                    denoise="none", prereduce_max_ratio=0, enhance=1.5, ink=0.5, dither="none")
+    a, b = run(small, config).image.astype(int), run(big, config).image.astype(int)
+    assert np.abs(a - b).mean() < 2.0
+    assert not np.array_equal(a, run(small, config.replace(enhance=0.0, ink=0.0)).image)

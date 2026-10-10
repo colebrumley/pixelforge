@@ -1,4 +1,4 @@
-"""Preprocessing: background removal, alpha mask, crop, denoise, LAB, output dims."""
+"""Preprocessing: background removal, alpha mask, crop, enhance, denoise, LAB, output dims."""
 
 from __future__ import annotations
 
@@ -342,6 +342,62 @@ def denoise(rgb: np.ndarray, config: Config) -> np.ndarray:
     return np.clip(np.asarray(out, dtype=np.float64), 0.0, 1.0)
 
 
+# Rec. 709 luma weights; `enhance` changes luminance only and scales RGB to match.
+_LUMA = np.array([0.2126, 0.7152, 0.0722])
+# Subject luminance percentiles that `enhance` maps to black and white.
+ENHANCE_LEVELS = (1.0, 99.0)
+# `ink` finds thin dark features as a difference of Gaussians at these sigmas (output pixels):
+# a response of INK_ONSET (luminance, 0..1) starts the darkening and INK_ONSET + INK_RANGE
+# gives all of it.
+INK_SIGMAS = (0.5, 1.6)
+INK_ONSET, INK_RANGE = 0.02, 0.04
+
+
+def enhance(rgb: np.ndarray, mask: np.ndarray, cell: tuple[float, float],
+            config: Config) -> np.ndarray:
+    """Exaggerate features about one output pixel in size, so the downscalers keep them.
+
+    Photos have soft gradients and no lines: a feature smaller than an output pixel (an eye, a
+    mouth, a chain) is averaged into its surroundings. ``cell`` is the (y, x) number of input
+    pixels per output pixel, so every radius here is in output pixels. Three steps on
+    luminance, the first two scaled by ``config.enhance`` and the last by ``config.ink``:
+
+    1. levels: the subject's ENHANCE_LEVELS percentiles are stretched to black and white;
+    2. local contrast: an unsharp mask of radius ``enhance_radius``, which amplifies features
+       up to that size and leaves larger gradients alone;
+    3. ink: pixels darker than their surroundings at about one output pixel are darkened.
+
+    RGB is scaled by the luminance ratio (hue is kept) and clipped. Transparent pixels neither
+    contribute to nor receive anything. Sources that already have outlines and a full tonal
+    range (illustrations, pixel art) lose their mid-tone shading; it is off by default.
+    """
+    if config.enhance <= 0 and config.ink <= 0:
+        return rgb
+    cover = mask.astype(np.float64)
+
+    def blur(values: np.ndarray, sigma_out: float) -> np.ndarray:
+        # Normalized convolution: the mean of the opaque pixels under the kernel.
+        sigma = (sigma_out * cell[0], sigma_out * cell[1])
+        norm = ndimage.gaussian_filter(cover, sigma, mode="nearest")
+        return ndimage.gaussian_filter(values * cover, sigma, mode="nearest") / np.maximum(
+            norm, 1e-6)
+
+    luma = rgb @ _LUMA
+    base = luma
+    if config.enhance > 0:
+        lo, hi = np.percentile(luma[mask], ENHANCE_LEVELS)
+        if hi - lo > 1e-6:
+            stretched = np.clip((luma - lo) / (hi - lo), 0.0, 1.0)
+            base = luma + min(config.enhance, 1.0) * (stretched - luma)
+    out = np.clip(base + config.enhance * (base - blur(base, config.enhance_radius)), 0.0, 1.0)
+    if config.ink > 0:
+        # Measured before the local contrast, so `ink` means the same at every `enhance`.
+        dog = blur(base, INK_SIGMAS[1]) - blur(base, INK_SIGMAS[0])   # > 0 where locally dark
+        out = out * (1.0 - config.ink * np.clip((dog - INK_ONSET) / INK_RANGE, 0.0, 1.0))
+    gain = out / np.maximum(luma, 1e-3)
+    return np.where(mask[..., None], np.clip(rgb * gain[..., None], 0.0, 1.0), rgb)
+
+
 def _subject(rgb: np.ndarray, alpha: np.ndarray, config: Config):
     """(rgb, mask, weight, background_keyed, crop box (y0, y1, x0, x1)) before any denoising.
 
@@ -435,6 +491,8 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
         else:
             reduce_by = 1
 
+    # Input pixels per output pixel (y, x), before any seamless padding.
+    cell = (h / inner_h, w / inner_w)
     pad_out = 0
     if config.seamless:
         pad_out = SEAMLESS_PAD_OUT
@@ -444,6 +502,8 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
         mask = np.pad(mask, ((pad_y, pad_y), (pad_x, pad_x)), mode="wrap")
         weight = np.pad(weight, ((pad_y, pad_y), (pad_x, pad_x)), mode="wrap")
 
+    # Before denoising: the bilateral filter then sees the exaggerated edges and keeps them.
+    rgb = enhance(rgb, mask, cell, config)
     rgb = denoise(_fill_transparent(rgb, mask), config)
     lab = color.rgb_to_lab(rgb)
     return Preprocessed(lab=np.ascontiguousarray(lab), mask=np.ascontiguousarray(mask),
