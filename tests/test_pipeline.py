@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+import pytest
 from click.testing import CliRunner
 from PIL import Image
 
@@ -281,3 +282,49 @@ def test_tileset_outline_is_clipped_not_padded():
     result = run_loaded(_opaque_square(), config)
     assert result.indices.shape == (32, 32)
     assert result.stats["outline_margin"] == 0 and result.stats["outline_clipped"] is True
+
+
+def _three_bands(width=160, height=96):
+    """Opaque: red left 16 columns, blue right 16 columns, green in between."""
+    rgba = np.zeros((height, width, 4), dtype=np.uint8)
+    rgba[..., :3] = (40, 180, 60)
+    rgba[:, :16, :3] = (220, 30, 30)
+    rgba[:, -16:, :3] = (30, 30, 220)
+    rgba[..., 3] = 255
+    return io.from_rgba(rgba, "bands")
+
+
+def _tile_fit(fit):
+    config = Config(preset="background", method="box", denoise="none", dither="none",
+                    out_width=64, fit=fit, palette_size=4)
+    return run_loaded(_three_bands(), config)
+
+
+def test_tileset_fit_pad_centers_aspect_preserving_content():
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = _tile_fit("pad")
+    assert result.indices.shape == (48, 64)
+    opaque_rows = np.nonzero((result.indices >= 0).any(axis=1))[0]
+    top, bottom = int(opaque_rows[0]), 48 - 1 - int(opaque_rows[-1])
+    assert len(opaque_rows) == 38 and abs(top - bottom) <= 1
+    assert (result.indices[opaque_rows[0]:opaque_rows[-1] + 1] >= 0).all()
+    assert result.stats["fit"] == "pad" and result.stats["content_size"] == [64, 38]
+
+
+def test_tileset_fit_stretch_and_crop_fill_the_canvas():
+    with pytest.warns(UserWarning, match="aspect"):
+        stretch = _tile_fit("stretch")
+    crop = _tile_fit("crop")
+    for result, fit in ((stretch, "stretch"), (crop, "crop")):
+        assert result.indices.shape == (48, 64) and (result.indices >= 0).all()
+        assert result.stats["fit"] == fit and result.stats["content_size"] == [64, 48]
+
+    def has(result, rgb):
+        return bool((np.abs(result.image[..., :3].astype(int) - rgb).max(axis=-1) < 60).any())
+
+    # Crop takes the middle 128 of the 160 columns, so neither edge band survives.
+    assert has(stretch, (220, 30, 30)) and has(stretch, (30, 30, 220))
+    assert not has(crop, (220, 30, 30)) and not has(crop, (30, 30, 220))
+    assert has(crop, (40, 180, 60))

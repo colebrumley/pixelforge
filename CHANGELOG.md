@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format follows
 - Ruff configuration and `ruff` in the `dev` dependency group.
 - GitHub Actions CI: lint job plus tests on Ubuntu (Python 3.11/3.12/3.13) and macOS arm64 (3.12).
 - This changelog.
+- `fit` (`--fit pad|stretch|crop`) for tileset sizes; the default `pad` keeps the aspect ratio
+  instead of stretching to a tile multiple, the longest edge never exceeds the target, and a
+  `tile_size` above it is an error.
 
 ### Removed
 

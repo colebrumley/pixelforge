@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -22,6 +23,9 @@ SEAMLESS_PAD_OUT = 2
 # share one color (within key_bg_tolerance).
 KEY_BG_MIN_BORDER_FRACTION = 0.9
 
+# fit="stretch" warns when it changes the aspect ratio by more than this fraction.
+STRETCH_WARN_ASPECT = 0.02
+
 
 @dataclass
 class Preprocessed:
@@ -33,6 +37,7 @@ class Preprocessed:
     background_keyed: bool = False   # a flat opaque background was made transparent
     outline_margin: int = 0  # output pixels per side reserved for the outline ring (0 or 1)
     layout: tuple[int, int, int, int] | None = None   # canvas: (inner w, inner h, left, top)
+    fit: str | None = None   # fit_mode(config): how the size was reconciled with tile_size
 
     @property
     def inner_width(self) -> int:
@@ -80,16 +85,27 @@ def resolve_dims(width: int, height: int, config: Config) -> tuple[int, int]:
     The result includes the outline margin (see outline_margin). A derived dimension keeps the
     input aspect ratio of the inner (image) area, i.e. it is computed from the given size minus
     the margin and the margin is added back; it is never below 8. With `scale` the size is
-    round(input / scale) per axis (margin inside); with `canvas` it is the canvas size.
+    round(input / scale) per axis (margin inside); with `canvas` it is the canvas size. With
+    `tileset` a derived size is reconciled with tile_size as `fit` says (see fit_mode).
     """
     return resolve_layout(width, height, config)[:2]
 
 
+def fit_mode(config: Config) -> str | None:
+    """How a derived size is made a multiple of tile_size: config.fit, or "stretch" in
+    seamless mode (padding or cropping would break the wrap-around); None when nothing is
+    derived (tileset=False, a canvas, or both out_width and out_height given)."""
+    if not config.tileset or config.canvas is not None or (
+            config.out_width is not None and config.out_height is not None):
+        return None
+    return "stretch" if config.seamless else config.fit
+
+
 def resolve_layout(width: int, height: int,
                    config: Config) -> tuple[int, int, tuple[int, int, int, int] | None]:
-    """(out_width, out_height, layout); layout is None unless `canvas` is set, else
-    (inner width, inner height, left, top): the image's size and offset inside the area
-    left by the outline margin."""
+    """(out_width, out_height, layout); layout is None unless the image is smaller than the
+    canvas (`canvas`, or fit="pad" with a tileset), else (inner width, inner height, left,
+    top): the image's size and offset inside the area left by the outline margin."""
     m2 = 2 * outline_margin(config)
     if config.canvas is not None:
         cw, ch = config.canvas_size
@@ -104,23 +120,72 @@ def resolve_layout(width: int, height: int,
                 iw, ih = min(aw, max(1, round(ah * width / height))), ah
         return cw, ch, (iw, ih, (aw - iw) // 2, (ah - ih) // 2)
     ow, oh = config.out_width, config.out_height
+    fixed = None   # the axis whose size is a target: 0 = width, 1 = height
     if config.scale is not None:
         ow = max(8, round(width / config.scale))
         oh = max(8, round(height / config.scale))
     elif ow is None and oh is None:
         longest = PRESET_LONGEST_EDGE[config.preset]
         if width >= height:
-            ow, oh = longest, max(8, round((longest - m2) * height / width) + m2)
+            ow, oh, fixed = longest, max(8, round((longest - m2) * height / width) + m2), 0
         else:
-            ow, oh = max(8, round((longest - m2) * width / height) + m2), longest
+            ow, oh, fixed = max(8, round((longest - m2) * width / height) + m2), longest, 1
     elif ow is None:
-        ow = max(8, round((oh - m2) * width / height) + m2)
+        ow, fixed = max(8, round((oh - m2) * width / height) + m2), 1
     elif oh is None:
-        oh = max(8, round((ow - m2) * height / width) + m2)
-    if config.tileset:
-        t = config.tile_size
-        ow, oh = math.ceil(ow / t) * t, math.ceil(oh / t) * t
-    return int(ow), int(oh), None
+        oh, fixed = max(8, round((ow - m2) * height / width) + m2), 0
+    mode = fit_mode(config)
+    if mode is None:
+        return int(ow), int(oh), None
+    return _fit_tiles(width, height, (int(ow), int(oh)), fixed, mode, config.tile_size)
+
+
+def _fit_tiles(width: int, height: int, size: tuple[int, int], fixed: int | None, mode: str,
+               t: int) -> tuple[int, int, tuple[int, int, int, int] | None]:
+    """resolve_layout for a derived tileset size (outline margin is 0 with tilesets).
+
+    The target axis (`fixed`: the given out_width/out_height, or the preset's longest edge) is
+    rounded *down* to a multiple of t so it never exceeds the target, and the other axis is
+    re-derived from it; with `scale` both sizes are kept. The canvas rounds each size up to a
+    multiple. "pad" centers the aspect-preserving image on it with transparent pixels,
+    "stretch" scales the image to the whole canvas and "crop" has run() crop the input to the
+    canvas aspect first.
+    """
+    # DEVIATION: Section 5 step 2f rounds both dims up, which stretches the image and can exceed
+    # the target edge; that is fit="stretch" now, and the default "pad" keeps the aspect.
+    if t > max(size):
+        raise ValueError(
+            f"tile_size ({t}) exceeds the longest output edge ({max(size)}) derived for a "
+            f"{width}x{height} input; lower tile_size or raise the output size")
+    inner = list(size)
+    if fixed is not None:
+        dims = (width, height)
+        inner[fixed] = size[fixed] // t * t
+        inner[1 - fixed] = max(1, round(inner[fixed] * dims[1 - fixed] / dims[fixed]))
+    cw, ch = (math.ceil(v / t) * t for v in inner)
+    if mode == "stretch":
+        source, result = width / height, cw / ch
+        if abs(result / source - 1.0) > STRETCH_WARN_ASPECT:
+            warnings.warn(f"fit='stretch' changes the aspect ratio from {source:.3f} "
+                          f"({width}x{height}) to {result:.3f} ({cw}x{ch}) to fit "
+                          f"tile_size={t}; use fit='pad' or 'crop' to keep it",
+                          UserWarning, stacklevel=3)
+    if mode != "pad" or (inner[0], inner[1]) == (cw, ch):
+        return cw, ch, None
+    iw, ih = inner
+    return cw, ch, (iw, ih, (cw - iw) // 2, (ch - ih) // 2)
+
+
+def fit_crop(width: int, height: int, out_width: int, out_height: int) -> tuple[int, int, int, int]:
+    """Centered (y0, y1, x0, x1) of a width×height input with the aspect of the output; the
+    axis in excess is cropped, the other is kept whole."""
+    if width * out_height > height * out_width:
+        cw = max(1, round(height * out_width / out_height))
+        x0 = (width - cw) // 2
+        return 0, height, x0, x0 + cw
+    ch = max(1, round(width * out_height / out_width))
+    y0 = (height - ch) // 2
+    return y0, y0 + ch, 0, width
 
 
 def remove_background(rgb: np.ndarray, alpha: np.ndarray) -> np.ndarray:
@@ -280,6 +345,14 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
 
     h, w = mask.shape
     out_w, out_h, layout = resolve_layout(w, h, config)
+    if fit_mode(config) == "crop":
+        # The downscalers always fill the whole target, so the cropped part of the canvas is
+        # removed from the input instead (centered, to the canvas aspect).
+        cy0, cy1, cx0, cx1 = fit_crop(w, h, out_w, out_h)
+        rgb, mask = rgb[cy0:cy1, cx0:cx1], mask[cy0:cy1, cx0:cx1]
+        h, w = mask.shape
+        if not mask.any():
+            raise PixelforgeError("no opaque pixels left after fit='crop'")
     margin = outline_margin(config)
     inner_w, inner_h = (layout[0], layout[1]) if layout else (out_w - 2 * margin,
                                                                out_h - 2 * margin)
@@ -312,4 +385,4 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
     return Preprocessed(lab=np.ascontiguousarray(lab), mask=np.ascontiguousarray(mask),
                         out_width=out_w, out_height=out_h, pad_out=pad_out,
                         background_keyed=background_keyed, outline_margin=margin,
-                        layout=layout)
+                        layout=layout, fit=fit_mode(config))

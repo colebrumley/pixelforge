@@ -87,6 +87,10 @@ scale from the largest frame's subject and gives every frame the same canvas, so
 frames cropped to their alpha keep a constant size; the first JSON line reports `scale` and
 `canvas`.
 
+With a tileset, a derived size must be a multiple of `--tile-size`: `--fit pad` (default) keeps
+the aspect and pads with transparent pixels, centered; `--fit stretch` scales to fill (warns
+if the aspect changes by more than 2 %); `--fit crop` crops the input centered.
+
 `convert` writes to `OUTDIR` (default `out/`):
 
 | file | content |

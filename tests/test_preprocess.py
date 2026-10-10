@@ -187,3 +187,51 @@ def test_resolve_dims_with_canvas():
                          sprite.replace(key_bg=False))
     assert (pre.inner_width, pre.inner_height, pre.target_width) == (30, 30, 30)
     assert pre.canvas_pad() == ((1, 1), (9, 9))
+
+
+def test_tileset_fit_pad_keeps_aspect_and_pads_centered():
+    pad = Config(preset="background", out_width=64)
+    assert pad.fit == "pad"
+    assert preprocess.resolve_layout(160, 96, pad) == (64, 48, (64, 38, 0, 5))
+    # Default 256 longest edge: content 256x171 (rounded), canvas padded up to 176.
+    assert preprocess.resolve_layout(300, 200, Config(preset="background")) == \
+        (256, 176, (256, 171, 0, 2))
+    assert preprocess.resolve_layout(200, 300, Config(preset="background")) == \
+        (176, 256, (171, 256, 2, 0))
+    assert preprocess.fit_mode(Config(preset="background", out_width=64, out_height=48)) is None
+    assert preprocess.fit_mode(Config(preset="sprite")) is None
+
+
+@pytest.mark.filterwarnings("ignore:fit='stretch'")
+def test_tileset_fit_stretch_and_crop_fill_the_canvas():
+    for fit in ("stretch", "crop"):
+        config = Config(preset="background", out_width=64, fit=fit)
+        assert preprocess.resolve_layout(160, 96, config) == (64, 48, None)
+    assert preprocess.fit_crop(160, 96, 64, 48) == (0, 96, 16, 144)
+    assert preprocess.fit_crop(96, 160, 64, 48) == (44, 116, 0, 96)
+    with pytest.raises(ValueError, match="fit"):
+        Config(fit="zoom")
+
+
+@pytest.mark.filterwarnings("ignore:fit='stretch'")
+def test_tileset_longest_edge_never_exceeds_the_target():
+    for fit in ("pad", "stretch", "crop"):
+        config = Config(preset="background", tile_size=24, fit=fit)
+        out_w, out_h, _ = preprocess.resolve_layout(300, 200, config)
+        assert (out_w, out_h) == (240, 168) and max(out_w, out_h) <= 256
+    with pytest.raises(ValueError, match="tile_size"):
+        preprocess.resolve_layout(300, 200, Config(preset="background", tile_size=1000))
+
+
+def test_stretch_warns_about_aspect_change_and_pad_does_not():
+    import warnings
+    with pytest.warns(UserWarning, match="aspect ratio from 1.667"):
+        preprocess.resolve_layout(160, 96, Config(preset="background", out_width=64,
+                                                  fit="stretch"))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for fit in ("pad", "crop"):
+            preprocess.resolve_layout(160, 96, Config(preset="background", out_width=64, fit=fit))
+        # Within 2 %: no warning.
+        preprocess.resolve_layout(128, 95, Config(preset="background", out_width=64,
+                                                 fit="stretch"))

@@ -153,6 +153,7 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
              "colors_used": int(len(np.unique(indices[indices >= 0]))),
              "config_hash": config.hash(),
              "background_keyed": bool(pre.background_keyed),
+             "fit": pre.fit, "content_size": [int(pre.inner_width), int(pre.inner_height)],
              "outline_index": post_stats["outline_index"],
              "outline_margin": int(pre.outline_margin),
              "outline_clipped": bool(post_stats["outline_clipped"]),
