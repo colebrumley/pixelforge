@@ -21,8 +21,17 @@ All notable changes to this project are documented here. The format follows
 - `_meta.json` fields `palette_sha256`, `palette`, `environment` and, with `--remove-bg`,
   `remove_bg_versions`.
 - Inline palettes: `--palette-name hex:rrggbb,rrggbb,...`.
+- Logging: a `pixelforge` logger (silent by default) with one INFO line per pipeline stage and
+  kopf/gerstner iteration progress (DEBUG each, INFO every 10th).
+- CLI `-v/--verbose` (`-v` stages, `-vv` iterations) and `-q/--quiet`; messages go to stderr
+  as `pixelforge: ...`, stdout stays JSON-only.
+- A warning when `key_bg` finds no flat background on an opaque input, suggesting
+  `--remove-bg` or an alpha channel.
+- `--help` text, per-preset defaults and allowed values for every flag (`config.FIELD_HELP`).
 
 ### Changed
+
+- `--g-T-final` is now `--g-t-final`; the old spelling remains as a hidden alias.
 
 - Downscalers weight colors by input alpha; semi-transparent fringes pull less (opaque
   inputs are unchanged).

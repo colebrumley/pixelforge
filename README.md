@@ -94,6 +94,11 @@ Errors print one line and exit 2 for configuration problems (bad flags, unknown 
 `--remove-bg` without rembg) or 1 for anything else; `pixelforge --debug ...` or
 `PIXELFORGE_DEBUG=1` prints the full traceback instead.
 
+Runs take from under a second (box) to a minute or more (kopf and gerstner at large sizes) and
+are silent until the JSON result unless asked: `pixelforge -v convert ...` logs each stage with
+its duration to stderr, `-vv` every downscaler iteration, `-q` only errors. stdout carries only
+the JSON results. Library callers get the same messages from the `pixelforge` logger.
+
 `--scale N` fixes the downscale ratio (output = cropped input / N per axis); `--canvas WxH` fits
 the subject inside a fixed canvas, centered, outline included. Neither combines with
 `--out-width/--out-height`. Unless one of them (or both `--out-*`) is given, `batch` derives one

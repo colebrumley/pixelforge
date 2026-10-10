@@ -41,7 +41,8 @@ Timings on an Apple M1 Max, 1024×1024 → 64×64: kopf ≈ 36 s (50 iterations)
 box well under a second. `pixelforge convert … --preset background` on a 256×256 input
 (256×256 output, 65 536 kernels) takes about 30 s. Gerstner at 256×256 output with 32 colors
 is the slow corner: 5 s to 2 minutes depending on how many annealing iterations the image
-needs.
+needs. Without `-v` such runs print nothing until the result; `-v` logs per-stage timings and
+`-vv` each iteration (logging only reads values, it never changes an output).
 
 On a shared 4-core Linux box (CPU time, a noisy 256² gradient resized up), kopf 512² → 64²
 went from 52 s (50 iterations × 1.04 s, peak 141 MiB traced) to 26 s (32 × 0.83 s, 67 MiB)
