@@ -372,24 +372,159 @@ def side_by_side(images: list[np.ndarray], gap: int) -> np.ndarray:
     return sheet
 
 
+# `compare --prepass`: the columns of the proof sheet, from no pre-pass to the strongest.
+PREPASS_COLUMNS = ({"enhance": 0.0, "ink": 0.0}, {"enhance": 0.5, "ink": 0.0},
+                   {"enhance": 1.0, "ink": 0.0}, {"enhance": 1.0, "ink": 0.6})
+MAX_SWEEP_VALUES = 12
+_TRUE, _FALSE = ("on", "true", "yes", "1"), ("off", "false", "no", "0")
+LABEL_BG, LABEL_FG, LABEL_PAD = (40, 40, 40, 255), (255, 255, 255, 255), 6
+
+
+def parse_sweep(text: str) -> list[dict]:
+    """"palette-size=8,12,16" -> [{"palette_size": 8}, ...]: one Config override per value.
+
+    The field is named as its flag or as the Config field; "none" unsets an optional field and
+    booleans take on/off. Values are split on commas, so fields whose values contain one
+    (inline palettes) cannot be swept.
+    """
+    name, sep, values = text.partition("=")
+    by_flag = {f.name.lower(): f for f in fields(Config)}
+    spec = by_flag.get(name.strip().lstrip("-").replace("-", "_").lower())
+    if not sep or spec is None:
+        raise ConfigError(f"--sweep takes FIELD=VALUE[,VALUE...] with a Config field, got {text!r}")
+    if spec.name == "method":
+        raise ConfigError("--sweep cannot vary method: the methods are the rows of the sheet")
+    parts = [p.strip() for p in spec.type.split("|")]
+    raws = [v.strip() for v in values.split(",")]
+    if not 1 <= len(raws) <= MAX_SWEEP_VALUES or "" in raws:
+        raise ConfigError(f"--sweep takes 1 to {MAX_SWEEP_VALUES} non-empty values, got {text!r}")
+    columns = []
+    for raw in raws:
+        if raw.lower() == "none" and "None" in parts:
+            value = None
+        elif parts[0] == "bool":
+            if raw.lower() not in _TRUE + _FALSE:
+                raise ConfigError(f"--sweep {spec.name} takes on/off values, got {raw!r}")
+            value = raw.lower() in _TRUE
+        else:
+            try:
+                value = _CLICK_TYPES[parts[0]](raw)
+            except ValueError:
+                raise ConfigError(f"--sweep {spec.name}: {raw!r} is not {parts[0]}") from None
+        columns.append({spec.name: value})
+    return columns
+
+
+def _show(value) -> str:
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    return "none" if value is None else f"{value:g}" if isinstance(value, float) else str(value)
+
+
+def override_flags(overrides: dict) -> str:
+    """The `convert` flags that apply `overrides` (None, i.e. "not set", has no flag)."""
+    flags = []
+    for name, value in overrides.items():
+        flag = "--" + name.replace("_", "-").lower()
+        if isinstance(value, bool):
+            flags.append(flag if value else "--no-" + flag[2:])
+        elif value is not None:
+            flags.append(f"{flag} {_show(value)}")
+    return " ".join(flags)
+
+
+def proof_sheet(cells: list[list[np.ndarray]], row_labels: list[str],
+                column_labels: list[str]) -> np.ndarray:
+    """A labelled grid of RGBA images: cells[row][column], transparent between the cells."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    font = ImageFont.load_default()
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+    def size(label: str) -> tuple[int, int]:
+        left, top, right, bottom = probe.textbbox((0, 0), label, font=font)
+        return right + 2 * LABEL_PAD, bottom + 2 * LABEL_PAD
+
+    gap = LABEL_PAD
+    left = max(size(label)[0] for label in row_labels)
+    top = max(size(label)[1] for label in column_labels)
+    widths = [max(size(label)[0], *(row[c].shape[1] for row in cells))
+              for c, label in enumerate(column_labels)]
+    heights = [max(size(label)[1], *(im.shape[0] for im in row))
+               for row, label in zip(cells, row_labels)]
+    sheet = Image.new("RGBA", (left + sum(widths) + gap * len(widths),
+                               top + sum(heights) + gap * len(heights)), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(sheet)
+    draw.rectangle((0, 0, sheet.width, top - 1), fill=LABEL_BG)
+    draw.rectangle((0, 0, left - 1, sheet.height), fill=LABEL_BG)
+    xs = [left + gap + sum(widths[:c]) + gap * c for c in range(len(widths))]
+    ys = [top + gap + sum(heights[:r]) + gap * r for r in range(len(heights))]
+    for x, label in zip(xs, column_labels):
+        draw.text((x + LABEL_PAD, LABEL_PAD), label, fill=LABEL_FG, font=font)
+    for y, label, row in zip(ys, row_labels, cells):
+        draw.text((LABEL_PAD, y + LABEL_PAD), label, fill=LABEL_FG, font=font)
+        for x, im in zip(xs, row):
+            sheet.paste(Image.fromarray(im, mode="RGBA"), (x, y))
+    return np.asarray(sheet)
+
+
 @cli.command()
 @click.argument("input_path", metavar="INPUT", type=click.Path(dir_okay=False))
 @click.option("-o", "--outdir", type=click.Path(file_okay=False), default="out",
               show_default=True, help="Output directory.")
+@click.option("--prepass", is_flag=True, default=False,
+              help="Proof sheet: every method at four --enhance/--ink settings.")
+@click.option("--sweep", default=None, metavar="FIELD=V1,V2,...",
+              help="Proof sheet: every method at each value of one option, "
+                   "e.g. palette-size=8,12,16.")
 @force_option
 @config_options
 @handle_errors
-def compare(input_path, outdir, force, config_path, max_input_pixels, **flags):
+def compare(input_path, outdir, prepass, sweep, force, config_path, max_input_pixels, **flags):
     """Compare box, kopf and gerstner side by side.
 
-    Runs all three methods with the same config and writes INPUT_compare.png.
+    Runs all three methods with the same config and writes INPUT_compare.png, plus each
+    method's own outputs.
+
+    With --prepass or --sweep it writes only a labelled proof sheet instead: one row per
+    method (only the given one with --method), one column per setting. The JSON result lists
+    the flags that reproduce each cell with `convert`.
     """
     from PIL import Image
 
+    if prepass and sweep is not None:
+        raise ConfigError("--prepass and --sweep cannot be combined")
+    stem = Path(input_path).stem
+    sheet_path = Path(outdir) / f"{stem}_compare.png"
+    if prepass or sweep is not None:
+        columns = list(PREPASS_COLUMNS) if prepass else parse_sweep(sweep)
+        methods = METHODS if flags.get("method") is None else (flags["method"],)
+        base = build_config(config_path, flags)
+        check_collisions([Path(input_path)], [sheet_path], force)
+        # Every cell is validated before the first (slow) one runs.
+        configs = [[base.replace(method=method, **column) for column in columns]
+                   for method in methods]
+        loaded = io.load(input_path, io.MAX_INPUT_PIXELS if max_input_pixels is None
+                         else max_input_pixels)
+        labels = [" ".join(f"{name}={_show(value)}" for name, value in column.items())
+                  for column in columns]
+        previews, report = [], []
+        for method, row in zip(methods, configs):
+            previews.append([])
+            for column, label, config in zip(columns, labels, row):
+                log.info("cell %s / %s", method, label)
+                result = pipeline.run_loaded(loaded, config)
+                previews[-1].append(io.upscale_nearest(result.image, config.scale_preview))
+                report.append({"method": method, "column": label, "stats": result.stats,
+                               "flags": override_flags({"method": method, **column})})
+        Path(outdir).mkdir(parents=True, exist_ok=True)
+        Image.fromarray(proof_sheet(previews, list(methods), labels), mode="RGBA").save(sheet_path)
+        _emit({"compare": str(sheet_path), "cells": report})
+        return
+
     flags.pop("method", None)
     base = build_config(config_path, flags)
-    stem = Path(input_path).stem
-    outputs = [Path(outdir) / f"{stem}_compare.png"]
+    outputs = [sheet_path]
     for method in METHODS:
         outputs += pipeline.output_paths(Path(outdir) / f"{stem}_{method}", base.tileset).values()
     check_collisions([Path(input_path)], outputs, force)
@@ -400,7 +535,6 @@ def compare(input_path, outdir, force, config_path, max_input_pixels, **flags):
         report[method] = {"outputs": result.save(Path(outdir) / f"{stem}_{method}"),
                           "stats": result.stats}
         previews.append(io.upscale_nearest(result.image, config.scale_preview))
-    sheet_path = Path(outdir) / f"{stem}_compare.png"
     Image.fromarray(side_by_side(previews, gap=base.scale_preview), mode="RGBA").save(sheet_path)
     _emit({"compare": str(sheet_path), "methods": report})
 

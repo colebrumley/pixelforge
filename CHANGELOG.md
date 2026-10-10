@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `--enhance` (with `--enhance-radius`) and `--ink`: an opt-in pre-pass before downscaling
+  for photos. `enhance` stretches the subject's luminance and adds local contrast at about
+  two output pixels, so eyes, mouths and other sub-pixel features survive; `ink` darkens thin
+  dark features. Off by default and in every preset, so output pixels are unchanged; every
+  `config_hash` changes because `Config` has three new fields.
+- `compare --prepass` and `compare --sweep FIELD=V1,V2,...` write a labelled proof sheet
+  (methods × settings) and report the `convert` flags for each cell; `--method` limits the
+  sheet to one row. Plain `compare` is unchanged.
+- README: a photo sample (`docs/sample_photo.png`, from an AI-generated portrait) and guidance
+  on source photos.
+
 ### Fixed
 
 - `convert`, `batch` and `compare` refuse (exit 2) to write an output over an input file, and

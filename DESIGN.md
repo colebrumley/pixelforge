@@ -33,6 +33,10 @@ Also used: R. Achanta et al., "SLIC Superpixels" (modified as in Gerstner), and 
 "Deterministic annealing for clustering, compression, classification, regression, and related
 optimization problems", Proc. IEEE, 1998 (the MCDA source).
 
+Before downscaling, an optional pre-pass for photos (`enhance`, `ink`; off by default)
+exaggerates features about one output pixel in size, which the downscalers would otherwise
+average away.
+
 After downscaling, the image is quantized (optionally with selective ordered dithering) and
 post-processed: hue-shifted palette ramps, saturation, orphan-pixel removal, jaggy cleanup
 and an outline for sprites; backgrounds can be cut into a de-duplicated tileset + tilemap.
@@ -275,6 +279,19 @@ The R_k half-width stays at the specified 2 output units.
   0.5, so the anti-aliased halo does not take palette entries. The gallery runs the fixtures with
   `key_bg=False` because they are test patterns, not sprites; images in `samples/` use the
   preset as-is.
+- `Config` has three more fields that are not in the spec, `enhance`, `enhance_radius` and
+  `ink` (`preprocess.enhance`), all off by default. The downscalers are faithful to the
+  source, and on a photo that loses whatever is smaller than an output pixel: gerstner
+  dropped an eye and the mouth of a 128-px portrait. The pre-pass runs after pre-reduction
+  and before denoising, on luminance only, with every radius in output pixels: a levels
+  stretch between the subject's 1st and 99th percentiles, an unsharp mask of sigma
+  `enhance_radius`, and for `ink` a darkening where a difference of Gaussians (0.5 and 1.6
+  output pixels) finds a thin dark feature. The right strength depends on the photo: `enhance=1`
+  suited a dim, low-contrast portrait, while on a bright one it pushed light skin to near
+  white and 0.5 read better, hence `compare --prepass`. When the backdrop is not keyed it is
+  part of the "subject" and of the percentiles. It is not in any preset because sources that
+  already have outlines and full contrast lose their mid-tone shading (the knight sample's
+  armor goes to black and white, and `ink` turns its blue shield nearly black).
 
 **Tests (Section 12).**
 

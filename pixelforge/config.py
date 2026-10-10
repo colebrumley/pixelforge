@@ -42,7 +42,8 @@ _CANVAS = re.compile(r"([0-9]+)x([0-9]+)")
 # Upper bounds that keep a single run's memory and CPU finite (inclusive).
 UPPER_BOUNDS = {"out_width": 4096, "out_height": 4096, "scale": 4096, "scale_preview": 64,
                 "denoise_sigma_spatial": 16, "kopf_max_iters": 1000, "g_max_iters": 10000,
-                "saturation_beta": 5, "seed": 2**63 - 1, "tile_size": 512}
+                "saturation_beta": 5, "seed": 2**63 - 1, "tile_size": 512,
+                "enhance": 4, "enhance_radius": 16, "ink": 1}
 
 
 # One-line --help text per Config field (the CLI generates a flag for each).
@@ -63,6 +64,10 @@ FIELD_HELP = MappingProxyType({
     "denoise_sigma_spatial": "Denoise spatial sigma in input pixels (after pre-reduction).",
     "prereduce_max_ratio": "Box-reduce inputs larger than this many times the output first "
                            "(0 = never).",
+    "enhance": "Exaggerate features before downscaling: levels stretch plus local contrast "
+               "(0 = off; for photos, try 0.5 to 1).",
+    "enhance_radius": "Feature size the local contrast acts on, in output pixels.",
+    "ink": "Darken thin dark features (lines, lashes, creases) before downscaling, 0..1.",
     "method": "Downscaling algorithm.",
     "kopf_max_iters": "Iteration cap for the kopf downscaler.",
     "kopf_tol": "kopf convergence tolerance (RMS color change in the unit cube).",
@@ -132,6 +137,10 @@ class Config:
     denoise_sigma_color: float = 0.08  # bilateral, in [0,1] sRGB units
     denoise_sigma_spatial: float = 2.0  # in input pixels, after any pre-reduction
     prereduce_max_ratio: int = 8      # box-reduce inputs > this × output first; 0 = never
+    # DEVIATION: Section 4 — enhance, enhance_radius and ink are not in the spec.
+    enhance: float = 0.0              # levels stretch + local contrast before downscaling; 0 = off
+    enhance_radius: float = 2.0       # local-contrast Gaussian sigma, in output pixels
+    ink: float = 0.0                  # 0..1, darkening of thin dark features; 0 = off
     # --- downscale ---
     method: str = "gerstner"          # "box" | "kopf" | "gerstner"
     kopf_max_iters: int = 50
@@ -328,10 +337,10 @@ class Config:
                 raise ConfigError(f"{name} must be >= 1, got {getattr(self, name)}")
         for name in ("g_T_final", "g_m", "kopf_tol", "saturation_beta", "denoise_sigma_color",
                      "denoise_sigma_spatial", "g_bilateral_sigma_color",
-                     "g_bilateral_sigma_spatial"):
+                     "g_bilateral_sigma_spatial", "enhance_radius"):
             if not getattr(self, name) > 0:
                 raise ConfigError(f"{name} must be > 0, got {getattr(self, name)}")
-        for name in ("dither_variance_threshold", "tile_dedupe_tolerance"):
+        for name in ("dither_variance_threshold", "tile_dedupe_tolerance", "enhance", "ink"):
             if not getattr(self, name) >= 0:
                 raise ConfigError(f"{name} must be >= 0, got {getattr(self, name)}")
         if not 0 <= self.tileset_columns <= 256:
