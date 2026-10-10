@@ -67,11 +67,12 @@ class Config:
     alpha_threshold: int = 128        # input alpha < this → transparent
     denoise: str = "bilateral"        # "none" | "bilateral" | "median"
     denoise_sigma_color: float = 0.08  # bilateral, in [0,1] sRGB units
-    denoise_sigma_spatial: float = 2.0
+    denoise_sigma_spatial: float = 2.0  # in input pixels, after any pre-reduction
+    prereduce_max_ratio: int = 8      # box-reduce inputs > this × output first; 0 = never
     # --- downscale ---
     method: str = "gerstner"          # "box" | "kopf" | "gerstner"
     kopf_max_iters: int = 50
-    kopf_tol: float = 1e-3
+    kopf_tol: float = 1e-3            # RMS Δν (unit-cube color); RMS Δμ < 10× this, output px
     # --- palette ---
     palette_size: int = 16            # K. Ignored if palette_name set.
     palette_name: str | None = None   # bundled name or path to .hex/.gpl
@@ -254,6 +255,8 @@ class Config:
                 f"orphan_max_delta must be finite and >= 0, got {self.orphan_max_delta}")
         if not 0 <= self.key_bg_fringe <= 8:
             raise ConfigError(f"key_bg_fringe must be in [0, 8], got {self.key_bg_fringe}")
+        if self.prereduce_max_ratio < 0:
+            raise ConfigError(f"prereduce_max_ratio must be >= 0, got {self.prereduce_max_ratio}")
         if not 0.0 <= self.outline_darken <= 1.0:
             raise ConfigError(f"outline_darken must be in [0, 1], got {self.outline_darken}")
         for name in ("kopf_max_iters", "g_max_iters", "tile_size", "scale_preview",

@@ -235,3 +235,53 @@ def test_stretch_warns_about_aspect_change_and_pad_does_not():
         # Within 2 %: no warning.
         preprocess.resolve_layout(128, 95, Config(preset="background", out_width=64,
                                                  fit="stretch"))
+
+
+def _reduce_config(**overrides):
+    kw = dict(preset="sprite", key_bg=False, crop_to_alpha=False, denoise="none",
+              out_width=16, out_height=16, prereduce_max_ratio=8)
+    kw.update(overrides)
+    return Config(**kw)
+
+
+def test_prereduce_factor_and_disable():
+    rgb = np.full((256, 256, 3), 0.25)
+    alpha = np.full((256, 256), 255, dtype=np.uint8)
+    pre = preprocess.run(rgb, alpha, _reduce_config())
+    assert pre.prereduce_factor == 2 and pre.mask.shape == (128, 128)
+    off = preprocess.run(rgb, alpha, _reduce_config(prereduce_max_ratio=0))
+    assert off.prereduce_factor == 1 and off.mask.shape == (256, 256)
+    # Below 2 × ratio × output on either axis there is nothing to gain.
+    narrow = preprocess.run(rgb[:, :250], alpha[:, :250], _reduce_config())
+    assert narrow.prereduce_factor == 1
+    with pytest.raises(ValueError):
+        Config(prereduce_max_ratio=-1)
+
+
+def test_prereduce_block_mean_is_exact_and_remainder_is_trimmed():
+    rgb = (np.arange(5 * 7 * 3).reshape(5, 7, 3) % 16) / 16.0   # dyadic: exact in float64
+    small, mask = preprocess.prereduce(rgb, np.ones((5, 7), dtype=bool), 2)
+    assert small.shape == (2, 3, 3) and mask.all()
+    expected = (rgb[0:4:2, 0:6:2] + rgb[1:4:2, 0:6:2] + rgb[0:4:2, 1:6:2]
+                + rgb[1:4:2, 1:6:2]) / 4.0
+    assert np.array_equal(small, expected)
+
+
+def test_prereduce_mask_threshold_and_transparent_fill_does_not_bleed():
+    rgb = np.zeros((4, 8, 3))                  # transparent pixels are black ...
+    rgb[:, :3] = (0.8, 0.2, 0.1)               # ... the opaque part is red
+    mask = np.zeros((4, 8), dtype=bool)
+    mask[:, :3] = True                         # columns 0-2 opaque
+    mask[0, 4] = True                          # one opaque pixel in block (0, 2)
+    rgb[0, 4] = (0.8, 0.2, 0.1)
+    small, small_mask = preprocess.prereduce(rgb, mask, 2)
+    # Block columns: 0 fully opaque, 1 half opaque (kept), 2 a quarter (dropped), 3 empty.
+    assert small_mask.tolist() == [[True, True, False, False], [True, True, False, False]]
+    assert np.array_equal(small[:, :2], np.broadcast_to((0.8, 0.2, 0.1), (2, 2, 3)))
+
+
+def test_pipeline_reports_prereduce_factor():
+    rgba = np.full((256, 256, 4), 255, dtype=np.uint8)
+    rgba[:, :128, :3] = 40
+    result = run_loaded(io.from_rgba(rgba, "test"), _reduce_config(method="box"))
+    assert result.stats["prereduce_factor"] == 2

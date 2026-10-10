@@ -1,7 +1,7 @@
 import numpy as np
 from scipy import ndimage
 
-from pixelforge import color
+from pixelforge import Config, color
 from pixelforge.downscale import box, kopf
 
 DARK_L = 50.0   # "dark" = closer to black than to white
@@ -51,3 +51,19 @@ def test_max_iters_is_respected(preprocessed):
     out = kopf.run(pre.lab, pre.mask, 16, 16, config)
     assert out.stats["iterations"] == 3 and not out.stats["converged"]
     assert out.small_lab.shape == (16, 16, 3) and out.small_mask.all()
+
+
+def test_solid_color_converges_quickly():
+    # A non-integer ratio, where border truncation used to keep max |Δμ| above kopf_tol.
+    lab = np.broadcast_to(color.rgb_to_lab(np.array([[[0.3, 0.6, 0.2]]])), (50, 50, 3)).copy()
+    config = Config(method="kopf", out_width=32, out_height=32)
+    out = kopf.run(lab, np.ones((50, 50), dtype=bool), 32, 32, config)
+    assert out.stats["converged"] and out.stats["iterations"] < 10
+    assert color.delta_e(out.small_lab, lab[0, 0]).max() < 1e-6
+
+
+def test_thin_line_converges(preprocessed):
+    pre, config = preprocessed("line_diag", method="kopf", out_width=32, out_height=32,
+                               key_bg=False)
+    out = kopf.run(pre.lab, pre.mask, 32, 32, config)
+    assert out.stats["converged"] and out.stats["iterations"] < config.kopf_max_iters

@@ -43,6 +43,12 @@ box well under a second. `pixelforge convert … --preset background` on a 256×
 is the slow corner: 5 s to 2 minutes depending on how many annealing iterations the image
 needs.
 
+On a shared 4-core Linux box (CPU time, a noisy 256² gradient resized up), kopf 512² → 64²
+went from 52 s (50 iterations × 1.04 s, peak 141 MiB traced) to 26 s (32 × 0.83 s, 67 MiB)
+once the per-slot offset arrays were dropped and the convergence test fixed; 1024² → 64²
+went from 204 s + 5 s preprocessing (50 × 4.1 s, 554 MiB) to 27 s + 1.6 s (31 × 0.88 s,
+67 MiB) with the 2× pre-reduction, at a mean ΔE of 1.1 from the old output.
+
 ## Determinism contract
 
 1. No unseeded randomness anywhere. `random`, `numpy.random` and `os.urandom` are not
@@ -106,9 +112,16 @@ The algorithmic deviations are marked with `# DEVIATION:` comments in the code.
 - *`small_mask`* is computed from spatial-only responsibilities, because transparent pixels
   are excluded from the EM and the specified ratio would always be 1.
 
-With the spec's convergence criterion (|Δμ| and |Δν| < `kopf_tol` and no σ change) most real
-images run to `kopf_max_iters`; the simple fixtures converge in 30–48 iterations. The
-R_k half-width stays at the specified 2 output units (the 1024² → 64² run takes ≈ 36 s).
+- *Convergence.* The spec's test (max |Δμ| and max |Δν| < `kopf_tol`, no σ change) was never
+  met on real content: border truncation and non-integer ratios keep a few centroids
+  drifting (a solid 100×100 → 64×64 plateaued at 1.1e-3), and 0.5–1 % of the kernels keep
+  growing σ every iteration. Kopf now stops when the RMS |Δμ| over fed kernels is below
+  10·`kopf_tol` output pixels, the RMS |Δν| (unit-cube color) below `kopf_tol`, and σ
+  changed on fewer than 2 % of the kernels not already at the cap. A solid image converges
+  in 3 iterations, `line_diag` in 5, noisy content in about 30, with a mean ΔE below 0.1
+  from the 50-iteration result.
+
+The R_k half-width stays at the specified 2 output units.
 
 **Gerstner (Section 7).**
 
@@ -207,6 +220,15 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
 - Preprocessing fills transparent pixels with the nearest opaque color before denoising,
   uses `mode="edge"` for the bilateral filter, and repeats inputs that are smaller than the
   output by an integer factor.
+- Inputs at least 2·`prereduce_max_ratio` (default 8) times the output on both axes are
+  first box-reduced by the integer factor ⌊min(h/out_h, w/out_w) / prereduce_max_ratio⌋:
+  an exact area mean of the sRGB image (transparent pixels filled with the nearest opaque
+  color first), a block being opaque when at least half its pixels are, and the trailing
+  rows/columns that do not fill a block dropped. Denoise and the downscalers then run on the
+  reduced image, so the `denoise_sigma_*` values are in reduced-image pixels. Kopf's kernels
+  span 4×4 output pixels, so at these ratios this is nearly lossless; together with the kopf
+  changes it cuts 1024² → 64² from 209 s to 29 s. `stats.prereduce_factor` reports the
+  factor; 0 disables it.
 - `convert` writes a fifth file, `NAME_palette.hex`.
 - The sprite preset has `remove_bg=False` instead of the spec's `None` ("True if rembg is
   installed"), so the same command gives the same config hash on every machine.

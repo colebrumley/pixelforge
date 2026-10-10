@@ -105,6 +105,9 @@ if the aspect changes by more than 2 %); `--fit crop` crops the input centered.
 (`hex:ff0000,00ff00,…`). `batch` writes its shared palette to `shared_palette.hex` and hands it
 to every frame inline, so the frames' metadata carries the colors, not the output path.
 
+Inputs much larger than the output are box-reduced to 8–16× the output size before denoising
+(`--prereduce-max-ratio`, 0 disables).
+
 `convert` writes to `OUTDIR` (default `out/`):
 
 | file | content |

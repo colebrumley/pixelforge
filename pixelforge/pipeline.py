@@ -225,6 +225,7 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
              "outline_index": post_stats["outline_index"],
              "outline_margin": int(pre.outline_margin),
              "outline_clipped": bool(post_stats["outline_clipped"]),
+             "prereduce_factor": int(pre.prereduce_factor),
              "method": dict(small.stats),
              "timings": {name: round(seconds, 4) for name, seconds in timings.items()}}
     result = Result(image=io.indices_to_rgba(indices, palette_rgb8), palette=palette_rgb8,
