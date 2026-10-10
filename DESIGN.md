@@ -107,6 +107,15 @@ The algorithmic deviations are marked with `# DEVIATION:` comments in the code.
   blurring a result that was exact after five iterations. It is replaced by the direction
   between the two kernels' M-step centroids, a robust measure of the same quantity (the net
   normal of the boundary between the two kernels' pixel sets).
+- *Truncated windows skip the shape constraints.* A kernel whose R_k window holds transparent
+  pixels or reaches past the image border has a lopsided footprint, so its one-sided variance
+  and centroid direction are set by the cut and fire on every iteration: on `circle_alpha`
+  256→32 a 2–4-kernel band along the silhouette (340 kernels) fired forever, 248 kernels ended
+  at the σ cap, and a dark line 4 px inside the edge came out fainter than with box. Such
+  kernels keep their σ, and the orientation test also needs a non-zero overlap `f` (no shared
+  pixels, no edge between the pair). No kernel now reaches the cap there, and the run
+  converges in 15 iterations. Residual: a line within ~3 px of the silhouette can still be
+  claimed by a mostly transparent kernel that `small_mask` then drops.
 - *Laplacian smoothing* averages displacements from the grid position rather than raw
   positions. Identical for interior kernels; it stops border kernels from being dragged
   inward every iteration.
