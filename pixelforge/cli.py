@@ -18,6 +18,7 @@ from .config import METHODS, PRESETS, Config
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff")
 BATCH_PIXELS_PER_IMAGE = 50_000
 SHARED_PALETTE_NAME = "shared_palette.hex"
+OUTPUT_STEM_SUFFIXES = ("_preview", "_tileset", "_compare")   # our own image outputs
 
 _CLICK_TYPES = {"int": int, "float": float, "str": str}
 
@@ -79,6 +80,21 @@ def handle_errors(func):
     return wrapper
 
 
+force_option = click.option("--force", is_flag=True, default=False,
+                            help="Allow outputs that overwrite an input file.")
+
+
+def check_collisions(inputs: list[Path], outputs: list[Path], force: bool) -> None:
+    """ConfigError if any output path resolves to an input file (unless force)."""
+    if force:
+        return
+    resolved = {Path(p).resolve(): Path(p) for p in inputs if Path(p).is_file()}
+    hits = sorted(f"{out} would overwrite input {resolved[Path(out).resolve()]}"
+                  for out in outputs if Path(out).resolve() in resolved)
+    if hits:
+        raise ConfigError("; ".join(hits) + " (use another --outdir, or --force)")
+
+
 def _emit(payload: dict) -> None:
     click.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 
@@ -93,13 +109,17 @@ def cli():
 @click.argument("input_path", metavar="INPUT", type=click.Path(dir_okay=False))
 @click.option("-o", "--outdir", type=click.Path(file_okay=False), default="out",
               show_default=True)
+@force_option
 @config_options
 @handle_errors
-def convert(input_path, outdir, config_path, **flags):
+def convert(input_path, outdir, force, config_path, **flags):
     """Convert one image."""
     config = build_config(config_path, flags)
+    prefix = Path(outdir) / Path(input_path).stem
+    check_collisions([Path(input_path)],
+                     list(pipeline.output_paths(prefix, config.tileset).values()), force)
     result = pipeline.run(input_path, config)
-    outputs = result.save(Path(outdir) / Path(input_path).stem)
+    outputs = result.save(prefix)
     _emit({"outputs": outputs, "stats": result.stats})
 
 
@@ -124,16 +144,34 @@ def shared_palette(paths: list[Path], config: Config) -> np.ndarray:
 @click.argument("input_dir", type=click.Path(file_okay=False))
 @click.option("-o", "--outdir", type=click.Path(file_okay=False), default="out",
               show_default=True)
+@force_option
 @config_options
 @handle_errors
-def batch(input_dir, outdir, config_path, **flags):
+def batch(input_dir, outdir, force, config_path, **flags):
     """Convert every image in a directory with ONE shared palette."""
     config = build_config(config_path, flags)
-    paths = sorted(p for p in Path(input_dir).iterdir()
-                   if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES)
+    paths = []
+    for p in sorted(Path(input_dir).iterdir()):
+        if not (p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES):
+            continue
+        if p.stem.endswith(OUTPUT_STEM_SUFFIXES):
+            click.echo(f"skipping {p}: looks like a pixelforge output", err=True)
+            continue
+        paths.append(p)
     if not paths:
         raise RuntimeError(f"no images found in {input_dir}")
     outdir = Path(outdir)
+    by_stem: dict[str, list[Path]] = {}
+    for p in paths:
+        by_stem.setdefault(p.stem, []).append(p)
+    clashes = [", ".join(str(p) for p in group) for group in by_stem.values() if len(group) > 1]
+    if clashes and not force:
+        raise ConfigError("inputs share an output name (later file would win): "
+                          + "; ".join(clashes) + " (rename them, or --force)")
+    outputs = [outdir / SHARED_PALETTE_NAME] if config.palette_name is None else []
+    for stem in by_stem:
+        outputs += pipeline.output_paths(outdir / stem, config.tileset).values()
+    check_collisions(paths, outputs, force)
     outdir.mkdir(parents=True, exist_ok=True)
     if config.palette_name is None:
         palette_path = outdir / SHARED_PALETTE_NAME
@@ -162,15 +200,20 @@ def side_by_side(images: list[np.ndarray], gap: int) -> np.ndarray:
 @click.argument("input_path", metavar="INPUT", type=click.Path(dir_okay=False))
 @click.option("-o", "--outdir", type=click.Path(file_okay=False), default="out",
               show_default=True)
+@force_option
 @config_options
 @handle_errors
-def compare(input_path, outdir, config_path, **flags):
+def compare(input_path, outdir, force, config_path, **flags):
     """Run box, kopf and gerstner with the same config; write a side-by-side PNG."""
     from PIL import Image
 
     flags.pop("method", None)
     base = build_config(config_path, flags)
     stem = Path(input_path).stem
+    outputs = [Path(outdir) / f"{stem}_compare.png"]
+    for method in METHODS:
+        outputs += pipeline.output_paths(Path(outdir) / f"{stem}_{method}", base.tileset).values()
+    check_collisions([Path(input_path)], outputs, force)
     previews, report = [], {}
     for method in METHODS:
         config = base.replace(method=method)
