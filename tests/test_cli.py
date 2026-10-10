@@ -237,3 +237,36 @@ def test_hint_when_no_background_to_key(fixture_path, tmp_path):
     assert result.stderr.count("--remove-bg") == 1
     result = _invoke("convert", fixture_path("circle_alpha"), "-o", tmp_path, *FAST)
     assert result.stderr == ""
+
+
+def test_every_config_field_has_help():
+    from pixelforge.config import FIELD_HELP, Config
+
+    assert set(FIELD_HELP) == set(Config.field_names())
+    assert all(text.strip() and "\n" not in text for text in FIELD_HELP.values())
+
+
+def test_convert_help_has_text_and_choices():
+    result = _invoke("convert", "--help")
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.output.split())
+    assert "Number of palette colors K; ignored with --palette-name." in text
+    assert "--dither [none|bayer4|bayer8|auto]" in text
+    assert "only applies with --tileset" in text
+    assert "[default: 16 (sprite), 32 (background)]" in text
+    assert "--g-t-final" in text and "--g-T-final" not in text
+
+
+@pytest.mark.parametrize("flag", ["--g-t-final", "--g-T-final"])
+def test_g_t_final_flag_and_legacy_alias(fixture_path, tmp_path, flag):
+    result = _invoke("convert", fixture_path("two_color"), "-o", tmp_path, *FAST, flag, "2.5")
+    assert result.exit_code == 0, result.output
+    meta = json.loads((tmp_path / "two_color_meta.json").read_text())
+    assert meta["config"]["g_T_final"] == 2.5
+
+
+def test_group_help_lists_one_line_summaries():
+    result = _invoke("--help")
+    assert result.exit_code == 0
+    for line in result.output.split("Commands:")[1].strip().splitlines():
+        assert not line.rstrip().endswith("..."), line

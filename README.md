@@ -80,8 +80,10 @@ pixelforge compare hero.png -o out                          # box, kopf, gerstne
 pixelforge palettes                                         # list bundled palettes
 ```
 
-Every `Config` field is a `--kebab-case` flag (`--flag/--no-flag` for booleans); `--config
-file.json` loads a config. Precedence: defaults ← preset ← JSON ← flags.
+Every `Config` field is a `--kebab-case` flag (`--flag/--no-flag` for booleans; `--g-t-final`
+for `g_T_final`, the old `--g-T-final` still works); `pixelforge convert --help` lists each with
+its description, per-preset default and allowed values. `--config file.json` loads a config.
+Precedence: defaults ← preset ← JSON ← flags.
 `Config.replace(preset=...)` re-applies the new preset to every field not set explicitly.
 
 `convert`, `batch` and `compare` refuse (exit 2) to write an output over an input file, and `batch`
