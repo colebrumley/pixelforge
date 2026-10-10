@@ -76,7 +76,7 @@ file.json` loads a config. Precedence: defaults ← preset ← JSON ← flags.
 | `NAME_preview.png` | nearest-neighbor upscale |
 | `NAME_palette.json`, `NAME_palette.hex` | the palette; `.hex` is reusable via `--palette-name` |
 | `NAME_meta.json` | stats, timings, config, config hash, input hash |
-| `NAME_tileset.png`, `NAME_tilemap.json` | background preset only |
+| `NAME_tileset.png`, `NAME_tilemap.json` | background preset only; tiles merge when mean ΔE < `tile_dedupe_tolerance` and every pixel's ΔE < 10 (flips included) |
 
 ## Library
 

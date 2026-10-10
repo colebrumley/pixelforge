@@ -122,7 +122,9 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
         tile_result = tiles.extract(indices, palette_lab, config)
         # DEVIATION: Section 9 — near-duplicate tiles were merged, so the output image is
         # re-rendered from the tileset and is exactly what the tilemap draws.
-        indices = tiles.reconstruct(tile_result.tiles, tile_result.tilemap)
+        rendered = tiles.reconstruct(tile_result.tiles, tile_result.tilemap)
+        tile_px_changed = int(np.count_nonzero(rendered != indices))
+        indices = rendered
         timings["tiles"] = clock() - t
 
     palette_rgb8 = color.lab_to_rgb8(palette_lab)
@@ -141,4 +143,5 @@ def run_loaded(loaded: io.Loaded, config: Config, timings: dict | None = None) -
         result.tileset = io.indices_to_rgba(result.tileset_indices, palette_rgb8)
         result.tilemap = tile_result.tilemap
         stats["tiles"] = int(len(tile_result.tiles))
+        stats["tiles_rerender_px_changed"] = tile_px_changed
     return result
