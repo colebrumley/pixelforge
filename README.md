@@ -19,9 +19,10 @@ palettes: NES, Game Boy, Genesis, SNES, PICO-8.
 
 Source on the left, pixelforge output on the right (nearest-neighbor upscaled).
 
-`pixelforge convert knight.png --preset sprite --method gerstner`: 1254×1254 → 45×66,
-17 colors, backdrop keyed out. (The outline adds a palette entry; with a named palette it
-snaps to the nearest palette color instead.)
+`pixelforge convert knight.png --preset sprite --method gerstner`: 1254×1254 → 64 px on the
+longest edge, 17 colors, backdrop keyed out. The canvas is exactly the requested size; the
+outline is drawn inside it. (The outline adds a palette entry; with a named palette it snaps
+to the nearest palette color instead.)
 
 ![Knight sprite before and after](docs/sample_sprite.png)
 

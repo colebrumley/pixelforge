@@ -33,7 +33,7 @@ def test_cli_convert_sprite(fixture_path, tmp_path):
     opaque = rgba[rgba[..., 3] > 0][:, :3]
     assert 2 <= len(np.unique(opaque, axis=0)) <= config.palette_size + 1
     assert (rgba[..., 3] == 0).any()
-    assert max(rgba.shape[:2]) in (64, 66)          # 64 px sprite (+1 px outline per side)
+    assert max(rgba.shape[:2]) == 64                # 64 px sprite, outline drawn inside
 
     preview = Image.open(tmp_path / "circle_alpha_preview.png")
     assert preview.size == (rgba.shape[1] * 8, rgba.shape[0] * 8)
@@ -229,3 +229,55 @@ def test_local_std_ignores_transparent_cells():
     assert std[mask].max() < 1e-3 and std[~mask].max() == 0.0
     lab[2, 2, 0] = 80.0               # real detail inside the opaque block is still seen
     assert quantize.local_std(lab, mask)[2, 2] > 5
+
+
+def _opaque_square(size=64):
+    rgba = np.zeros((size, size, 4), dtype=np.uint8)
+    rgba[..., :3] = (200, 60, 30)
+    rgba[size // 4:, :, :3] = (40, 120, 200)
+    rgba[..., 3] = 255
+    return io.from_rgba(rgba, "square")
+
+
+def _has_outline_ring(result):
+    ring = result.stats["outline_index"]
+    border = np.concatenate([result.indices[0, 1:-1], result.indices[-1, 1:-1],
+                             result.indices[1:-1, 0], result.indices[1:-1, -1]])
+    return ring is not None and (border == ring).all()
+
+
+def test_canvas_is_exactly_the_requested_size_with_outline():
+    from pixelforge.pipeline import run_loaded
+    base = dict(preset="sprite", method="box", key_bg=False)
+    result = run_loaded(_opaque_square(), Config(out_width=32, out_height=32, **base))
+    assert result.indices.shape == (32, 32)
+    assert _has_outline_ring(result)
+    assert (result.indices[1:-1, 1:-1] >= 0).all()
+    assert result.stats["outline_margin"] == 1 and result.stats["outline_clipped"] is False
+    only_height = run_loaded(_opaque_square(), Config(out_height=24, **base))
+    assert only_height.indices.shape == (24, 24)
+    assert _has_outline_ring(only_height)
+
+
+def test_canvas_is_exactly_the_requested_size_without_outline():
+    from pixelforge.pipeline import run_loaded
+    base = dict(preset="sprite", method="box", key_bg=False, outline="none")
+    result = run_loaded(_opaque_square(), Config(out_width=32, out_height=32, **base))
+    assert result.indices.shape == (32, 32) and (result.indices >= 0).all()
+    assert result.stats["outline_margin"] == 0 and result.stats["outline_index"] is None
+    assert result.stats["outline_clipped"] is False
+
+
+def test_default_sprite_longest_edge_is_exactly_64(fixture_path):
+    result = run(fixture_path("circle_alpha"), Config(preset="sprite", method="box"))
+    assert max(result.indices.shape) == 64
+    assert result.stats["outline_margin"] == 1
+
+
+def test_tileset_outline_is_clipped_not_padded():
+    from pixelforge.pipeline import run_loaded
+    config = Config(preset="sprite", method="box", key_bg=False, tileset=True, tile_size=8,
+                    out_width=32, out_height=32)
+    result = run_loaded(_opaque_square(), config)
+    assert result.indices.shape == (32, 32)
+    assert result.stats["outline_margin"] == 0 and result.stats["outline_clipped"] is True

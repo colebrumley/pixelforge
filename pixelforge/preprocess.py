@@ -31,29 +31,55 @@ class Preprocessed:
     out_height: int
     pad_out: int             # output pixels of wrap padding per side (0 unless seamless)
     background_keyed: bool = False   # a flat opaque background was made transparent
+    outline_margin: int = 0  # output pixels per side reserved for the outline ring (0 or 1)
+
+    @property
+    def inner_width(self) -> int:
+        """Width the image itself is downscaled to (the outline margin is added after)."""
+        return self.out_width - 2 * self.outline_margin
+
+    @property
+    def inner_height(self) -> int:
+        return self.out_height - 2 * self.outline_margin
 
     @property
     def target_width(self) -> int:
-        return self.out_width + 2 * self.pad_out
+        return self.inner_width + 2 * self.pad_out
 
     @property
     def target_height(self) -> int:
-        return self.out_height + 2 * self.pad_out
+        return self.inner_height + 2 * self.pad_out
+
+
+def outline_margin(config: Config) -> int:
+    """Output pixels per side reserved inside the canvas for the outline ring.
+
+    1 whenever an outline is drawn and tileset=False (whether or not the silhouette ends up
+    touching the edge), so the final canvas is always exactly the resolved size. Tilesets
+    reserve nothing: the canvas must stay a multiple of tile_size.
+    """
+    return 1 if config.outline != "none" and not config.tileset else 0
 
 
 def resolve_dims(width: int, height: int, config: Config) -> tuple[int, int]:
-    """Section 5 step 2f: output (width, height) for an input of the given size."""
+    """Section 5 step 2f: final output (width, height) for an input of the given size.
+
+    The result includes the outline margin (see outline_margin). A derived dimension keeps the
+    input aspect ratio of the inner (image) area, i.e. it is computed from the given size minus
+    the margin and the margin is added back; it is never below 8.
+    """
+    m2 = 2 * outline_margin(config)
     ow, oh = config.out_width, config.out_height
     if ow is None and oh is None:
         longest = PRESET_LONGEST_EDGE[config.preset]
         if width >= height:
-            ow, oh = longest, max(8, round(longest * height / width))
+            ow, oh = longest, max(8, round((longest - m2) * height / width) + m2)
         else:
-            ow, oh = max(8, round(longest * width / height)), longest
+            ow, oh = max(8, round((longest - m2) * width / height) + m2), longest
     elif ow is None:
-        ow = max(8, round(oh * width / height))
+        ow = max(8, round((oh - m2) * width / height) + m2)
     elif oh is None:
-        oh = max(8, round(ow * height / width))
+        oh = max(8, round((ow - m2) * height / width) + m2)
     if config.tileset:
         t = config.tile_size
         ow, oh = math.ceil(ow / t) * t, math.ceil(oh / t) * t
@@ -152,6 +178,7 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
 
     h, w = mask.shape
     out_w, out_h = resolve_dims(w, h, config)
+    margin = outline_margin(config)
 
     # DEVIATION: Section 5 — inputs smaller than the output are repeated by an integer factor
     # first, so that every output pixel is backed by at least one input pixel in all three
@@ -171,8 +198,8 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
     pad_out = 0
     if config.seamless:
         pad_out = SEAMLESS_PAD_OUT
-        pad_x = math.ceil(pad_out * w / out_w)
-        pad_y = math.ceil(pad_out * h / out_h)
+        pad_x = math.ceil(pad_out * w / (out_w - 2 * margin))
+        pad_y = math.ceil(pad_out * h / (out_h - 2 * margin))
         rgb = np.pad(rgb, ((pad_y, pad_y), (pad_x, pad_x), (0, 0)), mode="wrap")
         mask = np.pad(mask, ((pad_y, pad_y), (pad_x, pad_x)), mode="wrap")
 
@@ -180,4 +207,4 @@ def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
     lab = color.rgb_to_lab(rgb)
     return Preprocessed(lab=np.ascontiguousarray(lab), mask=np.ascontiguousarray(mask),
                         out_width=out_w, out_height=out_h, pad_out=pad_out,
-                        background_keyed=background_keyed)
+                        background_keyed=background_keyed, outline_margin=margin)

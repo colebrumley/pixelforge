@@ -134,7 +134,16 @@ R_k half-width stays at the specified 2 output units (the 1024² → 64² run ta
   `_palette.hex` fed back via `palette_name` reproduces itself. Otherwise a new entry is
   appended, or, in a full 256-entry palette, the nearest entry is overwritten with it.
   `stats.outline_index` names the entry used (`null` if no outline was drawn).
-- With `tileset=True` the outline pass does not pad the canvas.
+- The canvas is always exactly the resolved output size; the outline never grows it. With
+  an outline and `tileset=False`, a 1-px margin per side is always reserved inside the
+  requested size (`stats.outline_margin = 1`), whether or not the silhouette reaches the
+  edge: the image is downscaled to (W−2)×(H−2), padded with 1 transparent pixel per side
+  before post-processing, and the ring is drawn without further padding. A derived dimension
+  keeps the aspect ratio of that inner area (rounded, then the margin is added back; never
+  below 8), so the sprite preset gives exactly 64 px on the longest edge.
+- With `tileset=True` nothing is reserved or padded (the canvas must stay a multiple of
+  `tile_size`); where the silhouette touches the edge the outline is clipped and
+  `stats.outline_clipped` is true.
 
 **Pipeline, tiles, preprocessing (Sections 5 and 9).**
 

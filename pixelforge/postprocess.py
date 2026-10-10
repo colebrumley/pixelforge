@@ -166,8 +166,9 @@ def add_outline(idx: np.ndarray, palette_lab: np.ndarray, outline: str, darken: 
                 stats: dict | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Set every transparent pixel with an opaque 4-neighbor to the outline color.
 
-    The outline is drawn outside the silhouette; the canvas is padded by 1 px first if any
-    opaque pixel touches its edge.
+    The outline is drawn outside the silhouette. With `allow_pad=True` the canvas is padded by
+    1 px first if any opaque pixel touches its edge; with `allow_pad=False` the size is kept
+    and the ring is clipped on those edges (stats["outline_clipped"] = True).
 
     The outline color ("auto": the darkest entry blended toward black; or an explicit
     #rrggbb) reuses an entry with the same RGB8 value, else is appended as a new entry. With
@@ -179,10 +180,12 @@ def add_outline(idx: np.ndarray, palette_lab: np.ndarray, outline: str, darken: 
     """
     idx = np.array(idx, dtype=np.int64)
     palette_lab = np.array(palette_lab, dtype=np.float64)
+    opaque = idx >= 0
+    touches_edge = bool(opaque[0].any() or opaque[-1].any() or opaque[:, 0].any()
+                        or opaque[:, -1].any())
     if stats is not None:
         stats["outline_index"] = None
-    opaque = idx >= 0
-    touches_edge = opaque[0].any() or opaque[-1].any() or opaque[:, 0].any() or opaque[:, -1].any()
+        stats["outline_clipped"] = touches_edge and not allow_pad
     if allow_pad and touches_edge:
         idx = np.pad(idx, 1, mode="constant", constant_values=-1)
         opaque = idx >= 0
@@ -222,11 +225,15 @@ def add_outline(idx: np.ndarray, palette_lab: np.ndarray, outline: str, darken: 
 # ------------------------------------------------------------------------------------ run
 
 def run(indices: np.ndarray, palette_lab: np.ndarray, config, *, saturated: bool = False,
-        fixed_palette: bool = False, stats: dict | None = None) -> tuple[np.ndarray, np.ndarray]:
+        fixed_palette: bool = False, outline_margin: int = 0,
+        stats: dict | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Apply all passes. `saturated`: β was already applied (gerstner). `fixed_palette`: a
     named hardware palette is in use, whose colors are left untouched (the outline snaps to
-    one of them). If `stats` is given, stats["outline_index"] is the outline's palette index,
-    or None when no outline was drawn."""
+    one of them). `outline_margin`: the caller already reserved a transparent margin for the
+    outline (see preprocess.outline_margin), so the canvas is never padded here. If `stats`
+    is given, stats["outline_index"] is the outline's palette index, or None when no outline
+    was drawn, and stats["outline_clipped"] is True when the outline could not be drawn on an
+    edge the silhouette touches (no padding allowed)."""
     idx = np.array(indices, dtype=np.int64)
     palette_lab = np.array(palette_lab, dtype=np.float64)
 
@@ -243,11 +250,14 @@ def run(indices: np.ndarray, palette_lab: np.ndarray, config, *, saturated: bool
         idx = fix_jaggies(idx)
     if stats is not None:
         stats["outline_index"] = None
+        stats["outline_clipped"] = False
     if config.outline != "none":
-        # DEVIATION: Section 8.3 — with tileset=True the canvas is not padded for the
-        # outline, because that would break the tile_size | width, height requirement.
+        # DEVIATION: Section 8.3 — the canvas is never grown by the pipeline: the outline
+        # margin is reserved inside the requested size (outline_margin), and with tileset=True
+        # nothing is reserved or padded because the canvas must stay a multiple of tile_size;
+        # an outline on edges the silhouette touches is then clipped (stats.outline_clipped).
         idx, palette_lab = add_outline(idx, palette_lab, config.outline, config.outline_darken,
-                                       allow_pad=not config.tileset,
+                                       allow_pad=not config.tileset and not outline_margin,
                                        fixed_palette=fixed_palette, stats=stats)
         if config.remove_orphans:
             # The outline can create 1-px nubs.
