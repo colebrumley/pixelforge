@@ -43,16 +43,45 @@ def test_config_hash_is_stable_across_runs():
     assert Config().hash() == Config(**Config().to_dict()).hash()
 
 
-def test_seed_only_changes_gerstner_jitter(fixture_path, tmp_path):
-    args = ["--out-height", "16", "--palette-size", "4"]
-    runs = []
-    for i, seed in enumerate(("7", "7")):
-        outdir = tmp_path / str(i)
-        result = CliRunner().invoke(cli, ["convert", str(fixture_path("gradient6")), "-o",
-                                          str(outdir), "--seed", seed] + args)
-        assert result.exit_code == 0, result.output
-        runs.append((outdir / "gradient6.png").read_bytes())
-    assert runs[0] == runs[1]
+def _decoded(png_path):
+    """(mode, palette, pixels) of a PNG; the text chunks (which embed the config) excluded."""
+    from PIL import Image
+
+    with Image.open(png_path) as im:
+        return im.mode, im.getpalette(), im.info.get("transparency"), im.tobytes()
+
+
+def _convert_with_seed(path, outdir, method, seed):
+    args = ["convert", str(path), "-o", str(outdir), "--method", method, "--out-height", "16",
+            "--palette-size", "4", "--denoise", "none"]
+    if seed is not None:
+        args += ["--seed", str(seed)]
+    result = CliRunner().invoke(cli, args)
+    assert result.exit_code == 0, result.output
+    stem = Path(path).stem
+    return {"png": _decoded(outdir / f"{stem}.png"),
+            "preview": _decoded(outdir / f"{stem}_preview.png"),
+            "palette": (outdir / f"{stem}_palette.json").read_bytes(),
+            "palette_hex": (outdir / f"{stem}_palette.hex").read_bytes()}
+
+
+@pytest.mark.parametrize("method", METHODS)
+def test_seed_only_affects_gerstner(fixture_path, tmp_path, method, record_property):
+    """seed feeds only gerstner's optional MCDA jitter: box and kopf ignore it entirely.
+
+    The PNG bytes differ by the embedded config (seed is a field), so pixels, palette and
+    transparency are compared after decoding, plus the palette files byte for byte.
+    """
+    path = fixture_path("gradient6")
+    seeded = _convert_with_seed(path, tmp_path / "seeded", method, 7)
+    unseeded = _convert_with_seed(path, tmp_path / "unseeded", method, None)
+    if method == "gerstner":
+        # The jitter may or may not change the result; only record which.
+        record_property("gerstner_seed_changes_output", seeded != unseeded)
+    else:
+        assert seeded == unseeded
+        again = _convert_with_seed(path, tmp_path / "again", method, 12345)
+        assert again == unseeded
 
 
 # --- across process boundaries ---------------------------------------------------------------
