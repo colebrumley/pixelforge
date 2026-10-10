@@ -67,6 +67,7 @@ pixelforge palettes                                         # list bundled palet
 
 Every `Config` field is a `--kebab-case` flag (`--flag/--no-flag` for booleans); `--config
 file.json` loads a config. Precedence: defaults ← preset ← JSON ← flags.
+`Config.replace(preset=...)` re-applies the new preset to every field not set explicitly.
 
 `convert` writes to `OUTDIR` (default `out/`):
 

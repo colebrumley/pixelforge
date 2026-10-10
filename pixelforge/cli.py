@@ -53,7 +53,14 @@ def build_config(config_path, flags: dict) -> Config:
             if not isinstance(loaded, dict):
                 raise ValueError(f"{config_path} must contain a JSON object of Config fields")
             values.update(loaded)
-        values.update({name: value for name, value in flags.items() if value is not None})
+        given = {name: value for name, value in flags.items() if value is not None}
+        if "preset" in given and config_path is not None:
+            shadowed = sorted(set(values) & set(PRESETS[given["preset"]]) - set(given))
+            if shadowed:
+                click.echo(f"warning: --preset {given['preset']} does not override "
+                           f"{', '.join(shadowed)} from {config_path}; the JSON values win",
+                           err=True)
+        values.update(given)
         config = Config(**values)
         if config.palette_name is not None:
             palette.load_palette(config.palette_name)
