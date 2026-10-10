@@ -13,7 +13,8 @@ import math
 import numpy as np
 
 from ..errors import PixelforgeError
-from . import Downscaled
+from . import Downscaled, neighbor_mean4
+from .box import cell_index
 
 PERTURB_DELTA = 0.5      # sub-cluster offset along the principal axis, LAB units
 SPLIT_GROWTH = 3.0       # a pair splits once it is this many times further apart than placed
@@ -216,18 +217,7 @@ class PaletteAnnealer:
 
 def _laplacian_smooth(grid: np.ndarray, fraction: float) -> np.ndarray:
     """Move every value `fraction` of the way toward the mean of its 4-connected neighbors."""
-    total = np.zeros_like(grid)
-    count = np.zeros_like(grid)
-    total[1:] += grid[:-1]
-    count[1:] += 1
-    total[:-1] += grid[1:]
-    count[:-1] += 1
-    total[:, 1:] += grid[:, :-1]
-    count[:, 1:] += 1
-    total[:, :-1] += grid[:, 1:]
-    count[:, :-1] += 1
-    target = np.where(count > 0, total / np.maximum(count, 1), grid)
-    return grid + fraction * (target - grid)
+    return grid + fraction * (neighbor_mean4(grid) - grid)
 
 
 def bilateral_filter(image: np.ndarray, active: np.ndarray, sigma_color: float,
@@ -271,8 +261,8 @@ class _Grid:
         self.px = np.arange(wi) + 0.5            # pixel centers
         self.py = np.arange(hi) + 0.5
         # Initial-grid cell containing each pixel column / row.
-        self.home_x = (np.arange(wi, dtype=np.int64) * wo) // wi
-        self.home_y = (np.arange(hi, dtype=np.int64) * ho) // hi
+        self.home_x = cell_index(wi, wo)
+        self.home_y = cell_index(hi, ho)
 
     def search_radius(self, cx: np.ndarray, cy: np.ndarray) -> int:
         """Grid cells around the home cell that can hold a center inside the 2rx × 2ry window.

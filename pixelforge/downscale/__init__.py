@@ -22,6 +22,21 @@ class Downscaled:
     stats: dict = field(default_factory=dict)
 
 
+def neighbor_mean4(grid: np.ndarray) -> np.ndarray:
+    """Mean of each value's 4-connected neighbors (edges average the neighbors they have)."""
+    total = np.zeros_like(grid)
+    count = np.zeros_like(grid)
+    total[1:] += grid[:-1]
+    count[1:] += 1
+    total[:-1] += grid[1:]
+    count[:-1] += 1
+    total[:, 1:] += grid[:, :-1]
+    count[:, 1:] += 1
+    total[:, :-1] += grid[:, 1:]
+    count[:, :-1] += 1
+    return np.where(count > 0, total / np.maximum(count, 1), grid)
+
+
 def get(method: str):
     from . import box, gerstner, kopf
 
