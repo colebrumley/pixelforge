@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The Config in Rust (`crates/pixelforge/src/config/`, Phase 2 of
+  `docs/rust-migration-plan.md`): construction from presets and explicit values, Python's
+  coercion and validation with byte-identical error messages, `replace`, the palette
+  loaders (bundled palettes embedded, `.hex`/`.gpl` files, inline `hex:`), and a canonical
+  JSON writer reproducing `json.dumps(sort_keys=True, separators=(",", ":"))` with
+  Python's float `repr`, so `canonical_json()` and `hash()` match the Python Config byte
+  for byte. Rust tests cover the whole oracle corpus, all 104 recorded error messages and
+  10,000 float reprs; `tests/test_config_native.py` compares the new `_native.config_*`
+  functions and `palette_hex_lines` with the live Python `Config`. The Python `Config` is
+  still the one the pipeline uses.
 - The package now builds a Rust extension, `pixelforge._native`, with maturin (binding
   crate `crates/pixelforge-py`), so installing from the repo requires a stable Rust
   toolchain alongside Python 3.11+. The extension holds the kopf and gerstner per-pixel loops
