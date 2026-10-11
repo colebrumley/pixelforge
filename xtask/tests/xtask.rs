@@ -305,6 +305,18 @@ fn snapshot_save_then_compare_is_identical() {
     assert!(stdout.contains("ΔE mean / max"), "{stdout}");
 }
 
+#[test]
+fn snapshot_negative_tolerance_is_a_usage_error() {
+    let dir = TempDir::new("snap-negative");
+    let snap = dir.0.to_str().unwrap();
+    let out = xtask(&["snapshot", "compare", snap, "--tolerance-pixels=-1"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(text(&out.stderr).contains("invalid value '-1' for '--tolerance-pixels <N>'"));
+    // Without `=`, `-1` reads as an unknown flag: also a usage error.
+    let out = xtask(&["snapshot", "compare", snap, "--tolerance-pixels", "-1"]);
+    assert_eq!(out.status.code(), Some(2));
+}
+
 fn data_path(snap: &Path, key: &str) -> PathBuf {
     snap.join(snapshot::case_filename(key))
 }

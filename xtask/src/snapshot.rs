@@ -475,8 +475,7 @@ pub fn command() -> clap::Command {
                     Arg::new("tolerance-pixels")
                         .long("tolerance-pixels")
                         .value_name("N")
-                        .value_parser(clap::value_parser!(i64))
-                        .allow_negative_numbers(true)
+                        .value_parser(clap::value_parser!(i64).range(0..))
                         .default_value("0")
                         .help("up to N differing pixels per case still exit 0 (default: 0)"),
                 ),
