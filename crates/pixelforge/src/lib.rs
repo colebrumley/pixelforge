@@ -20,3 +20,4 @@ pub mod palette;
 pub mod parallel;
 pub mod pyrepr;
 pub mod pyunicode;
+pub mod quantize;
