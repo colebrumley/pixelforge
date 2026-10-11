@@ -1,0 +1,28 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "pixelforge developer tooling: cargo xtask fixtures|golden|bench|snapshot|gallery"
+publish = false
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+# The library only (no CLI): run, Output::save, io, color, pyjson.
+pixelforge = { path = "../crates/pixelforge", default-features = false }
+# The same parser and version as the pixelforge binary (builder API, as the CLI uses).
+clap = { version = "=4.5.61" }
+# The fixture formulas: np.sin / np.cos / np.hypot through a portable libm.
+libm = "0.2.16"
+# Fixture PNGs (RGB and RGBA): the decoder and encoder the library already uses.
+png = "=0.18.1"
+# Golden pixel digests.
+sha2 = "0.10.9"
+# Reading bench JSON (the Python-written files too), snapshot manifests and data into
+# pixelforge::pyjson::Json, keys in file order (src/json.rs); float_roundtrip so floats read
+# back exactly. Writing goes through pixelforge::pyjson.
+serde = "1.0.229"
+serde_json = { version = "1.0.152", features = ["float_roundtrip"] }

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/pixelforge", "crates/pixelforge-py"]
+members = ["crates/pixelforge", "crates/pixelforge-py", "xtask"]
 resolver = "2"
 
 [workspace.package]
