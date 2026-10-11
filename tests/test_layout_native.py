@@ -1,8 +1,8 @@
 """The native geometry (crates/pixelforge/src/layout.rs) reproduces pixelforge/preprocess.py
 bit for bit: outline margin, fit mode, resolve_layout with the tileset fit and its warning
 text, fit_crop, the integer repeat and its limit, the box pre-reduction (numpy's summation
-order) and the seamless wrap padding. The Python functions are the reference until the
-integration step switches preprocess.py over."""
+order) and the seamless wrap padding. The former Python functions, kept in
+tests/preprocess_reference.py, are the reference."""
 
 from __future__ import annotations
 
@@ -14,8 +14,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pixelforge import Config, _native, io, preprocess
+from pixelforge import Config, _native, io
 from pixelforge.errors import ConfigError, PixelforgeError
+from tests import preprocess_reference as pyref
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ("checker_tiles", "circle_alpha", "gradient6", "line_diag", "noisy_gradient",
@@ -68,7 +69,7 @@ def python_layout(w, h, config):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         try:
-            result = preprocess.resolve_layout(w, h, config)
+            result = pyref.resolve_layout(w, h, config)
         except ConfigError as exc:
             return ("error", str(exc)), []
     return result, [str(c.message) for c in caught if c.category is UserWarning]
@@ -101,8 +102,8 @@ def test_resolve_layout_grid(size):
         warned += bool(want_warnings)
         errors += want[0] == "error"
         if want[0] != "error":
-            assert _native.outline_margin(kwargs) == preprocess.outline_margin(config)
-            assert _native.fit_mode(kwargs) == preprocess.fit_mode(config)
+            assert _native.outline_margin(kwargs) == pyref.outline_margin(config)
+            assert _native.fit_mode(kwargs) == pyref.fit_mode(config)
     if size not in ((1, 1), (8, 8), (64, 64), (4096, 4095)):
         assert warned > 0
 
@@ -121,7 +122,7 @@ def test_resolve_layout_examples_and_warning():
 def test_fit_crop_grid():
     for w, h in SIZES:
         for ow, oh in itertools.product((1, 8, 16, 48, 64, 100), repeat=2):
-            assert _native.fit_crop(w, h, ow, oh) == preprocess.fit_crop(w, h, ow, oh)
+            assert _native.fit_crop(w, h, ow, oh) == pyref.fit_crop(w, h, ow, oh)
 
 
 def test_prereduce_factor_grid():
@@ -129,14 +130,14 @@ def test_prereduce_factor_grid():
         for oh, ow in [(1, 1), (8, 8), (16, 64), (48, 32)]:
             for ratio in (0, 1, 2, 8, 50):
                 assert _native.prereduce_factor(h, w, oh, ow, ratio) == \
-                    preprocess.prereduce_factor(h, w, oh, ow, ratio)
+                    pyref.prereduce_factor(h, w, oh, ow, ratio)
 
 
 # ------------------------------------------------------------------ pre-reduction
 
 def assert_prereduce(rgb, mask, factor, weight):
     rgb = np.ascontiguousarray(rgb, dtype=np.float64)
-    want = preprocess.prereduce(rgb, mask, factor, weight)
+    want = pyref.prereduce(rgb, mask, factor, weight)
     got = _native.prereduce(rgb, mask, factor, weight)
     assert len(got) == len(want)
     assert same(got[0], want[0]), (rgb.shape, factor)
@@ -204,7 +205,7 @@ def test_repeat_factor_and_limit():
     alpha = np.full((1, 2000), 255, dtype=np.uint8)
     config = Config(out_width=2000, out_height=2000, key_bg=False, denoise="none")
     with pytest.raises(PixelforgeError) as python:
-        preprocess.run(rgb, alpha, config)
+        pyref.run(rgb, alpha, config)
     with pytest.raises(PixelforgeError) as native:
         _native.repeat_factor(1, 2000, 2000, 2000)
     assert str(native.value) == str(python.value)
@@ -226,6 +227,6 @@ def test_wrap_pad_matches_numpy():
 def test_seamless_pads():
     for h, w in [(8, 8), (100, 37), (1024, 768)]:
         for ih, iw in [(8, 8), (16, 32), (63, 17)]:
-            want = (math.ceil(preprocess.SEAMLESS_PAD_OUT * h / ih),
-                    math.ceil(preprocess.SEAMLESS_PAD_OUT * w / iw))
+            want = (math.ceil(pyref.SEAMLESS_PAD_OUT * h / ih),
+                    math.ceil(pyref.SEAMLESS_PAD_OUT * w / iw))
             assert _native.seamless_pads(h, w, ih, iw) == want

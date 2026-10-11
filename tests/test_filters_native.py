@@ -1,5 +1,6 @@
 """The native filters (pixelforge._native: uniform_filter1d, gaussian_filter1d, median_filter3,
-denoise) against scipy.ndimage, scikit-image and the unchanged `preprocess.denoise`.
+denoise) against scipy.ndimage, scikit-image and the former `preprocess.denoise`
+(tests/preprocess_reference.py).
 
 Uniform and median filters are bitwise. The Gaussian filter and the bilateral differ in the
 last bits: scipy's and scikit-image's macOS arm64 wheels contract `acc += a * b` into a fused
@@ -17,7 +18,8 @@ import pytest
 from scipy import ndimage
 from skimage.restoration import denoise_bilateral
 
-from pixelforge import Config, _native, io, preprocess
+from pixelforge import Config, _native, io
+from tests import preprocess_reference as pyref
 
 FIXTURES = ("checker_tiles", "circle_alpha", "gradient6", "line_diag", "noisy_gradient",
             "seamless_src", "two_color")
@@ -90,7 +92,7 @@ def _crops():
     for name in FIXTURES:
         loaded = io.load(root / f"{name}.png")
         mask = loaded.alpha >= 128
-        rgb = preprocess._fill_transparent(loaded.rgb, mask)
+        rgb = pyref._fill_transparent(loaded.rgb, mask)
         out.append((name, np.ascontiguousarray(rgb[40:104, 50:114])))
     rng = np.random.default_rng(7)
     out.append(("random", rng.random((37, 45, 3))))
@@ -104,7 +106,7 @@ def test_denoise_none_and_median_are_bitwise():
     for name, rgb in _crops():
         for kind in ("none", "median"):
             config = Config(denoise=kind)
-            want = preprocess.denoise(rgb, config)
+            want = pyref.denoise(rgb, config)
             got = _native.denoise(rgb, config.to_dict())
             assert same_bits(got, np.asarray(want, dtype=np.float64)), (name, kind)
 
@@ -118,7 +120,7 @@ def test_denoise_bilateral_matches_skimage(sigmas):
     for _name, rgb in _crops():
         if ss >= 16 and rgb.shape[0] > 40:
             rgb = rgb[:32, :32].copy()        # the 97×97 window: keep skimage quick
-        want = preprocess.denoise(rgb, config)
+        want = pyref.denoise(rgb, config)
         got = _native.denoise(rgb, config.to_dict())
         assert got.shape == want.shape
         worst = max(worst, float(np.abs(got - want).max()))
@@ -137,7 +139,7 @@ PORTRAIT = Path("/Users/cole/Documents/lib/pixelforge/.claude/worktrees/16-bit-s
 def test_bilateral_portrait():
     rgb = np.ascontiguousarray(io.load(PORTRAIT).rgb)
     config = Config()
-    want = preprocess.denoise(rgb, config)
+    want = pyref.denoise(rgb, config)
     got = _native.denoise(rgb, config.to_dict())
     dev = np.abs(got - want).max(axis=-1)
     # Measured: 4 pixels above 1e-12 (colour-bin flips from skimage's fused distance), the

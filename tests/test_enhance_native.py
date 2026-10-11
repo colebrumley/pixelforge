@@ -1,6 +1,6 @@
 """The native enhance pass and its helpers (pixelforge._native: percentile, enhance_levels,
-subject_brightness_from, enhance) against the unchanged numpy functions in
-`pixelforge.preprocess`.
+subject_brightness_from, enhance) against the former numpy functions of
+`pixelforge.preprocess`, kept in tests/preprocess_reference.py.
 
 Percentiles and levels are bitwise. `enhance` differs from numpy in the last bits only:
 its Gaussian blurs (scipy's FMA contraction and exp's last bit, see test_filters_native.py)
@@ -12,7 +12,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pixelforge import Config, _native, io, preprocess
+from pixelforge import Config, _native, io
+from tests import preprocess_reference as pyref
 
 FIXTURES = ("checker_tiles", "circle_alpha", "gradient6", "line_diag", "noisy_gradient",
             "seamless_src", "two_color")
@@ -47,7 +48,7 @@ def test_enhance_levels_matches_python():
                {"enhance_black": 0.2, "enhance_white": 0.3}):
         config = Config(**kw)
         assert _native.enhance_levels(values, config.to_dict()) == \
-            preprocess.enhance_levels(values, config)
+            pyref.enhance_levels(values, config)
 
 
 def test_stretch_matches_python_bitwise():
@@ -55,7 +56,7 @@ def test_stretch_matches_python_bitwise():
     values = rng.random(300)
     for lo, hi in ((0.1, 0.9), (0.4, 0.5), (0.45, 0.45 + 1e-7), (-0.2, 1.2), (0.0, 1.0),
                    (0.3, 0.5), (0.2, 0.2 + 0.2), (0.6, 0.3)):
-        want = preprocess._stretch(values, lo, hi)
+        want = pyref._stretch(values, lo, hi)
         assert same_bits(_native.enhance_stretch(values, lo, hi), want), (lo, hi)
 
 
@@ -67,16 +68,16 @@ def test_gaussian_running_mean_path_is_bitwise(mode):
     for shape in ((40, 33), (7, 120), (3, 3), (1, 50)):
         a = rng.random(shape)
         for sigma in ((4.0, 4.0), (4.5, 9.3), (16.0, 5.0), (31.7, 64.0)):
-            want = preprocess._gaussian(a, sigma, mode)
+            want = pyref._gaussian(a, sigma, mode)
             got = _native.enhance_gaussian(a, sigma, mode)
             assert same_bits(got, want), (shape, sigma)
         # Below the threshold: the Gaussian kernel (last-bit differences only).
-        want = preprocess._gaussian(a, (1.5, 3.9), mode)
+        want = pyref._gaussian(a, (1.5, 3.9), mode)
         assert float(np.abs(_native.enhance_gaussian(a, (1.5, 3.9), mode) - want).max()) <= 1e-12
 
 
 def _subject(rgb, alpha, config):
-    rgb, mask, weight, _, _ = preprocess._subject(rgb, alpha, config)
+    rgb, mask, weight, _, _ = pyref._subject(rgb, alpha, config)
     return (np.ascontiguousarray(rgb), np.ascontiguousarray(mask),
             np.ascontiguousarray(weight))
 
@@ -93,7 +94,7 @@ def _cases():
     if PORTRAIT.is_file():
         loaded = io.load(PORTRAIT)
         rgb, mask, weight = _subject(loaded.rgb, loaded.alpha, Config())
-        small, small_mask, small_weight = preprocess.prereduce(rgb, mask, 4, weight)
+        small, small_mask, small_weight = pyref.prereduce(rgb, mask, 4, weight)
         out.append(("portrait/4", np.ascontiguousarray(small),
                     np.ascontiguousarray(small_mask), np.ascontiguousarray(small_weight)))
     return out
@@ -104,7 +105,7 @@ CASES = _cases()
 
 def test_subject_brightness_matches_python():
     for name, rgb, mask, weight in CASES:
-        want = preprocess._level_pixels(rgb.max(axis=-1), mask, weight)
+        want = pyref._level_pixels(rgb.max(axis=-1), mask, weight)
         assert same_bits(_native.subject_brightness_from(rgb, mask, weight), want), name
     # No mostly-opaque pixel: every masked pixel counts.
     rgb = np.random.default_rng(0).random((5, 6, 3))
@@ -128,7 +129,7 @@ def test_enhance_matches_python(enhance, ink, radius):
         cell = (h / 64, w / 64)
         for wrap in (False, True):
             for wt in (None, weight):
-                want = preprocess.enhance(rgb, mask, cell, config, wt, wrap=wrap)
+                want = pyref.enhance(rgb, mask, cell, config, wt, wrap=wrap)
                 got = _native.enhance(rgb, mask, cell, d, wt, wrap)
                 worst = max(worst, float(np.abs(got - want).max()))
                 flips += int((to8(got) != to8(want)).sum())
@@ -150,7 +151,7 @@ def test_enhance_cell_sizes_and_levels():
                      ({"ink": 1.0}, (2.5, 2.5)),
                      ({}, (2.0, 2.0))):
         config = Config(**kw)
-        want = preprocess.enhance(rgb, mask, cell, config, weight)
+        want = pyref.enhance(rgb, mask, cell, config, weight)
         got = _native.enhance(rgb, mask, cell, config.to_dict(), weight, False)
         assert float(np.abs(got - want).max()) <= 1e-9, kw
 
@@ -161,7 +162,7 @@ def test_enhance_flat_subject_and_transparent_pixels():
     mask = np.ones((12, 10), dtype=bool)
     mask[:, :2] = False
     config = Config(enhance=1.0, ink=0.5)
-    want = preprocess.enhance(rgb, mask, (1.5, 1.5), config)
+    want = pyref.enhance(rgb, mask, (1.5, 1.5), config)
     got = _native.enhance(rgb, mask, (1.5, 1.5), config.to_dict(), None, False)
     assert float(np.abs(got - want).max()) <= 1e-9
     assert same_bits(got[:, :2], rgb[:, :2])          # transparent pixels untouched

@@ -20,7 +20,7 @@ use crate::color::{py_shape, shaped, slice, value_error};
 use crate::config::build;
 
 /// `pixelforge.errors.<class>(message)` as a Python exception.
-fn pixelforge_error(py: Python<'_>, class: &str, message: &str) -> PyErr {
+pub(crate) fn pixelforge_error(py: Python<'_>, class: &str, message: &str) -> PyErr {
     match py
         .import("pixelforge.errors")
         .and_then(|m| m.getattr(class))
@@ -33,7 +33,7 @@ fn pixelforge_error(py: Python<'_>, class: &str, message: &str) -> PyErr {
 
 /// The argument as a C-contiguous `T` array of `ndim` dimensions (the last of length 3 when
 /// `rgb`): its shape and a readonly view.
-fn array<'py, T: numpy::Element>(
+pub(crate) fn array<'py, T: numpy::Element>(
     func: &str,
     name: &str,
     dtype: &str,
@@ -76,7 +76,7 @@ fn array<'py, T: numpy::Element>(
 }
 
 /// `(h, w)` of an image and its mask, which must agree (and be non-empty when `nonempty`).
-fn same_size(func: &str, a: &[usize], b: &[usize], names: (&str, &str)) -> PyResult<()> {
+pub(crate) fn same_size(func: &str, a: &[usize], b: &[usize], names: (&str, &str)) -> PyResult<()> {
     if a[..2] != b[..2] {
         return Err(value_error(
             func,
@@ -92,7 +92,7 @@ fn same_size(func: &str, a: &[usize], b: &[usize], names: (&str, &str)) -> PyRes
     Ok(())
 }
 
-fn nonempty(func: &str, shape: &[usize]) -> PyResult<()> {
+pub(crate) fn nonempty(func: &str, shape: &[usize]) -> PyResult<()> {
     if shape[0] == 0 || shape[1] == 0 {
         return Err(value_error(
             func,
