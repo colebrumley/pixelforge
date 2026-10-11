@@ -9,8 +9,9 @@ import math
 import numpy as np
 import pytest
 
-from pixelforge import Config, color, io, pipeline, tiles
+from pixelforge import Config, color, io, tiles
 from pixelforge.errors import PixelforgeError
+from tests import pipeline_reference
 
 # ------------------------------------------------------------------ reference (numpy)
 
@@ -268,11 +269,11 @@ def test_pipeline_inputs(fixture_path, monkeypatch, name, preset, method):
         captured.append((np.array(indices), np.array(palette_lab)))
         return real(indices, palette_lab, config)
 
-    monkeypatch.setattr(pipeline.tiles, "extract", spy)
+    monkeypatch.setattr(pipeline_reference.tiles, "extract", spy)
     config = Config(preset=preset, method=method, out_width=32, out_height=32, tileset=True,
                     tile_size=8)
     try:
-        pipeline.run(fixture_path(name), config)
+        pipeline_reference.run(fixture_path(name), config)
     except PixelforgeError as exc:      # e.g. a 1-px line keyed out entirely at 32 px
         pytest.skip(str(exc))
     assert len(captured) == 1

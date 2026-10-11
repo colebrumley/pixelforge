@@ -506,12 +506,22 @@ def test_downscaler_receives_alpha_weight(monkeypatch):
 
         return Recorder
 
+    # The pipeline runs natively since Phase 6, so the downscaler call is observed in the
+    # former Python orchestration (tests/pipeline_reference.py), and the native pipeline is
+    # required to give the same result.
+    from tests import pipeline_reference
+
+    config = Config(method="box", out_width=16, out_height=16, palette_size=4,
+                    alpha_threshold=128)
     monkeypatch.setattr(downscale, "get", fake_get)
-    run(rgba, Config(method="box", out_width=16, out_height=16, palette_size=4,
-                     alpha_threshold=128))
+    reference = pipeline_reference.run(rgba, config)
     (mask, weight), = seen
     assert weight.shape == mask.shape and np.array_equal(weight > 0, mask)
     assert np.allclose(np.unique(weight), [0.0, 128 / 255, 1.0])
+    native = run(rgba, config)
+    assert len(seen) == 1                   # the native pipeline does not call Python stages
+    assert np.array_equal(native.indices, reference.indices)
+    assert np.array_equal(native.palette_lab, reference.palette_lab)
 
 
 def test_run_loaded_logs_one_info_record_per_stage(fixture_path, caplog):

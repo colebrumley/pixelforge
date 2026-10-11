@@ -9,7 +9,7 @@ import pytest
 from click.testing import CliRunner
 from PIL import Image
 
-from pixelforge import Config, ConfigError, color, io, palette, preprocess, run, tiles
+from pixelforge import Config, ConfigError, color, io, preprocess, run, tiles
 from pixelforge.cli import cli
 
 FAST = dict(denoise="none", key_bg=False, out_width=16, out_height=16)
@@ -24,24 +24,26 @@ def _small(name: str, step: int) -> np.ndarray:
 
 
 @pytest.mark.parametrize("method", ["box", "kopf"])
-def test_mcda_palette_source_with_box_and_kopf(method, monkeypatch):
-    calls = []
-    real = palette.mcda
+def test_mcda_palette_source_with_box_and_kopf(method, caplog):
+    # The pipeline runs natively since Phase 6 and no longer calls the Python palette.mcda;
+    # its "palette/quantize" INFO line names the palette source that was used.
+    def sources():
+        return [r.getMessage().rsplit("(", 1)[1].rstrip(")") for r in caplog.records
+                if r.name == "pixelforge.pipeline"
+                and r.getMessage().startswith("palette/quantize")]
 
-    def spy(pixels, k, config):
-        calls.append(k)
-        return real(pixels, k, config)
-
-    monkeypatch.setattr(palette, "mcda", spy)
     image = _small("gradient6", 4)
     config = Config(method=method, palette_source="mcda", palette_size=6, kopf_max_iters=10,
                     **FAST, **RAW)
-    result = run(image, config)
-    assert calls == [6]
+    with caplog.at_level("INFO", logger="pixelforge"):
+        result = run(image, config)
+    assert sources() == ["mcda"]
     assert 2 <= len(result.palette) <= 6 and result.indices.shape == (16, 16)
     assert (result.indices >= 0).all()
-    median = run(image, config.replace(palette_source="median_cut"))
-    assert len(calls) == 1                     # median_cut does not go through mcda
+    caplog.clear()
+    with caplog.at_level("INFO", logger="pixelforge"):
+        median = run(image, config.replace(palette_source="median_cut"))
+    assert sources() == ["median_cut"]         # median_cut does not go through mcda
     assert not np.array_equal(median.palette, result.palette)
 
 
