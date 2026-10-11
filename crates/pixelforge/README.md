@@ -1,7 +1,7 @@
 # pixelforge (Rust library)
 
 The Rust library behind pixelforge: plain Rust, no Python dependency (only `libm`). It holds
-the per-pixel hot loops of the downscalers; orchestration, config
+the per-pixel hot loops of the downscalers and the Config field table; orchestration, config
 handling and I/O are still in Python while the migration in `docs/rust-migration-plan.md`
 proceeds. Python reaches it through the binding crate `crates/pixelforge-py` (PyO3 + the
 `numpy` crate), built as the extension module `pixelforge._native`.
@@ -33,6 +33,10 @@ Modules:
   pixel order like `np.bincount`, and per-band partial sums would change the rounding. The
   numpy versions are kept in `pixelforge/downscale/_reference/gerstner.py`.
 - `src/parallel.rs`: `thread_count` and `run_bands` (see the determinism rules below).
+- `src/config.rs`: the Config field table (name, type, default, help, choices, upper bound
+  per field; the presets and their longest edge), the single source the Rust Config, JSON
+  and CLI will be built from. `tests/test_field_table.py` compares it with
+  `pixelforge/config.py` through `_native.config_fields()` / `config_presets()`.
 
 The binding's own functions: `native_version`, `sum_f64` (sequential sum, a smoke test) and
 `thread_count` (the worker-thread count from `PIXELFORGE_THREADS`, recorded in

@@ -55,6 +55,11 @@ All notable changes to this project are documented here. The format follows
   every config validation message; a seed test that can fail; committed fixtures checked
   against `scripts/make_fixtures.py`.
 - A `slow` pytest marker on the full-size kopf cases; `pytest -m "not slow"` skips them.
+- The Config field table in Rust (`crates/pixelforge/src/config.rs`): every field's name,
+  type, default, help text, choices and upper bound, the presets and the per-preset longest
+  edge, transcribed from `pixelforge/config.py`. It is the single source the Rust `Config`,
+  JSON and CLI will be built from; `_native.config_fields()` and `_native.config_presets()`
+  expose it and `tests/test_field_table.py` fails on any drift from the Python tables.
 
 ### Changed
 

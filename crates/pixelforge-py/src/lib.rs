@@ -4,6 +4,7 @@
 //! converts and checks arguments, releases the GIL and calls it. Determinism rules: see
 //! crates/pixelforge/README.md.
 
+mod config;
 mod gerstner;
 mod kopf;
 
@@ -47,5 +48,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(kopf::kopf_em_step, m)?)?;
     m.add_function(wrap_pyfunction!(kopf::kopf_c_step, m)?)?;
     m.add_function(wrap_pyfunction!(kopf::kopf_spatial_refill, m)?)?;
+    config::register(m)?;
     Ok(())
 }
