@@ -79,6 +79,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Post-processing and tiles are native (`crates/pixelforge/src/postprocess.rs` and
+  `tiles.rs`, migration plan Phase 3): saturation, orphan removal (own 8-connected
+  labelling instead of `scipy.ndimage.label`), jaggies, the outline, tile extraction with its
+  near-duplicate search, reconstruction, the tileset sheet, Tiled `.tmj` and CSV. Palette
+  ramps still run in Python before the native call. Bitwise identical to the numpy version
+  (`tests/test_postprocess_native.py`, `tests/test_tiles_native.py` keep it as the
+  reference); the snapshot matrix and goldens are unchanged.
 - Colour conversion is native (`crates/pixelforge/src/color.rs`, migration plan Phase 2):
   `pixelforge.color`'s `rgb_to_lab`, `lab_to_rgb`, `rgb8_to_lab`, `lab_to_rgb8` and
   `nearest_index` call `pixelforge._native` instead of scikit-image and scipy's `cKDTree`.
