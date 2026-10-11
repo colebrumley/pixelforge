@@ -107,6 +107,25 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The box and kopf downscalers are native (migration plan Phase 5, part A):
+  `pixelforge.downscale.box.run` calls `_native.box_run`
+  (`crates/pixelforge/src/boxfilter.rs`) and `kopf.run` calls `_native.kopf_run`
+  (`crates/pixelforge/src/kopf_run.rs`: initialisation, window/truncation/ghost bookkeeping,
+  M-step and C-step algebra, shape constraints, starved re-seeding, convergence, the final
+  refill, over the existing per-pixel loops). Both are bitwise identical to the Python
+  versions: the 48-case snapshot matrix (fixtures, samples, portrait, knight; box, kopf,
+  gerstner × sprite/background) is identical and every golden passes unchanged. kopf
+  reproduces numpy's macOS (Accelerate) routines exactly: `np.linalg.eigh` on 2×2 is
+  LAPACK's `dsteqr`/`dlaev2` path with the two fused multiply-adds Accelerate performs
+  (bitwise on 20,000 random SPD matrices), the `(V·w) @ Vᵀ` reconstruction fuses as its
+  BLAS does, `np.hypot` is `sqrt(fma(small, small, big²))` (bitwise on 200,000 samples;
+  `libm::hypot` differs on 10 %), and `1.1 ** fires` is a table of correctly rounded
+  powers (`libm::pow` is 1 ulp off at n = 4). The fused multiply-adds are `libm::fma`, so
+  results are the same on every platform; on numpy builds with another LAPACK the old
+  Python kopf differed from this in the last bits. kopf's progress lines now come from the
+  `pixelforge.kopf` logger (was `pixelforge.downscale.kopf`), same text. Downscale time on
+  the 1024² portrait (background preset, kopf): 2.61 s → 1.68 s on a loaded machine (load
+  average 16–22). Parity tests: `tests/test_box_native.py`, `tests/test_kopf_run_native.py`.
 - Preprocessing is native (`crates/pixelforge/src/preprocess.rs`, migration plan Phase 4):
   `pixelforge.preprocess.run` calls `_native.preprocess_run`, which assembles the masks,
   layout, enhance pass, filters and LAB conversion in Rust, and `subject_bbox`,
