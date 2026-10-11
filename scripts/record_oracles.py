@@ -386,9 +386,29 @@ def record_edt() -> dict:
 
 # ---------------------------------------------------------------------------- (d) bilateral
 
-def record_bilateral() -> dict:
-    from pixelforge import Config, preprocess
+def _scipy_fill_transparent(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    # The pre-Phase-4 transparent fill of pixelforge.preprocess, on scipy itself.
+    from scipy import ndimage
 
+    if mask.all():
+        return rgb
+    nearest = ndimage.distance_transform_edt(~mask, return_distances=False, return_indices=True)
+    return rgb[nearest[0], nearest[1]]
+
+
+def _skimage_denoise_bilateral(rgb: np.ndarray, sigma_color: float,
+                               sigma_spatial: float) -> np.ndarray:
+    # The pre-Phase-4 bilateral denoise of pixelforge.preprocess, on scikit-image itself.
+    from skimage.restoration import denoise_bilateral
+
+    out = denoise_bilateral(rgb, sigma_color=sigma_color, sigma_spatial=sigma_spatial,
+                            channel_axis=-1, mode="edge")
+    return np.clip(np.asarray(out, dtype=np.float64), 0.0, 1.0)
+
+
+def record_bilateral() -> dict:
+    # scikit-image and scipy themselves, not pixelforge.preprocess (native since Phase 4):
+    # these files are the reference the native bilateral is tested against.
     # The sigma_spatial 0.5 cases (5 × 5 window) use 32 × 32 crops to stay within the size
     # budget; their top-left corner matches the 48 × 48 crops.
     crops = [("noisy_gradient", 100, 100, 48, 0.08, 2.0),
@@ -401,10 +421,8 @@ def record_bilateral() -> dict:
         rgba = load_rgba(name)[top:top + size, left:left + size]
         mask = rgba[..., 3] >= 128
         rgb = rgba[..., :3].astype(np.float64) / 255.0
-        filled = preprocess._fill_transparent(rgb, mask)
-        cfg = Config(denoise="bilateral", denoise_sigma_color=sigma_color,
-                     denoise_sigma_spatial=sigma_spatial)
-        out = preprocess.denoise(filled, cfg)
+        filled = _scipy_fill_transparent(rgb, mask)
+        out = _skimage_denoise_bilateral(filled, sigma_color, sigma_spatial)
         filled8 = np.round(filled * 255.0).astype(np.uint8)
         assert np.array_equal(filled8.astype(np.float64) / 255.0, filled)
         cases.append({"fixture": name, "top": top, "left": left, "size": size,
@@ -644,17 +662,17 @@ whose items are all scalars is written on one line. Conventions:
 - `edt_indices.json`: `cases` of `{name, mask, distances, indices_row, indices_col}` from
   `scipy.ndimage.distance_transform_edt(~mask, return_distances=True, return_indices=True)`:
   for each pixel, the distance to and the coordinates of the opaque pixel it copies its
-  colour from (`_fill_transparent`), which pins scipy's tie-breaking. Masks: five 48×48
+  colour from (the transparent fill), which pins scipy's tie-breaking. Masks: five 48×48
   random masks at opaque densities 0.1, 0.3, 0.5, 0.7, 0.9
   (`default_rng(20261010).random((48, 48)) < density`, drawn in that order);
   `circle_alpha.png` alpha >= 128 at rows 20..84, cols 20..84; a single opaque pixel at
   (17, 30) in 48×48; and an all-opaque 16×16.
-- `skimage_bilateral.json`: `cases` of `pixelforge.preprocess.denoise` with
-  `denoise="bilateral"`, i.e. `skimage.restoration.denoise_bilateral(rgb, sigma_color,
-  sigma_spatial, channel_axis=-1, mode="edge")` clipped to [0, 1]. The input is
+- `skimage_bilateral.json`: `cases` of `skimage.restoration.denoise_bilateral(rgb,
+  sigma_color, sigma_spatial, channel_axis=-1, mode="edge")` clipped to [0, 1] (the
+  pre-Phase-4 `preprocess.denoise` with `denoise="bilateral"`). The input is
   `filled_rgb8 / 255.0`: the fixture crop at (`top`, `left`) of `size` × `size`, with
-  transparent pixels (`mask` = alpha >= 128 within the crop) filled by
-  `preprocess._fill_transparent` on the crop. Crops: `noisy_gradient.png` and
+  transparent pixels (`mask` = alpha >= 128 within the crop) given the colour of the opaque
+  pixel `scipy.ndimage.distance_transform_edt(~mask, return_indices=True)` picks. Crops: `noisy_gradient.png` and
   `circle_alpha.png` at the default sigmas (0.08, 2.0) at 48×48 and at sigma_spatial 0.5 at
   32×32 (same corner; smaller to stay within the size budget), and a 24×24 corner crop of
   `noisy_gradient.png` at sigma_color 0.5, sigma_spatial 16. `output` is size rows of

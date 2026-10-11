@@ -1,18 +1,22 @@
-"""Preprocessing: background removal, alpha mask, crop, enhance, denoise, LAB, output dims."""
+"""Preprocessing: background removal, alpha mask, crop, enhance, denoise, LAB, output dims.
+
+Runs natively (`pixelforge._native`, from crates/pixelforge/src/preprocess.rs and the
+`mask`, `layout`, `enhance`, `filters` and `color` modules it assembles). The masks, keying,
+distance transform, layout, repeat, pre-reduction, median filter and percentiles are bitwise
+identical to the former Python version (kept as tests/preprocess_reference.py, which the
+parity tests run); the Gaussian blurs of `enhance` and the bilateral denoise agree with it to
+the last bit or two (see CHANGELOG.md). Only `remove_background` (rembg) still runs in Python.
+"""
 
 from __future__ import annotations
 
-import math
-import warnings
 from dataclasses import dataclass
 
 import numpy as np
-from scipy import ndimage
 
-from . import color
-from .config import PRESET_LONGEST_EDGE, Config
+from . import _native
+from .config import Config
 from .errors import ConfigError, PixelforgeError  # noqa: F401 - re-exported for compatibility
-from .io import MAX_INPUT_PIXELS
 
 # Output pixels of wrapped context added on every side in seamless mode (Section 9:
 # the input is wrap-padded by 2·r input pixels, i.e. 2 output pixels).
@@ -26,6 +30,24 @@ KEY_BG_MIN_BORDER_FRACTION = 0.9
 
 # fit="stretch" warns when it changes the aspect ratio by more than this fraction.
 STRETCH_WARN_ASPECT = 0.02
+
+# Width in pixels of the widest anti-aliasing fringe the background keying expects.
+FRINGE_DEPTH = 3
+
+# Percentiles of the subject's brightness (largest channel) that `enhance` maps to black and
+# white. Brightness, not luminance: a saturated color reaches its ceiling at a luminance far
+# below 1, and stretching its luminance to "white" would clip it flat.
+ENHANCE_LEVELS = (1.0, 99.0)
+# The levels stretch never amplifies by more than 1 / this: a subject whose luminance range is
+# narrower (a flat color with sensor noise) is stretched to part of the range only.
+ENHANCE_MIN_RANGE = 0.2
+# `ink` finds thin dark features as a difference of Gaussians at these sigmas (output pixels):
+# a response of INK_ONSET (luminance, 0..1) starts the darkening and INK_ONSET + INK_RANGE
+# gives all of it.
+INK_SIGMAS = (0.5, 1.6)
+INK_ONSET, INK_RANGE = 0.02, 0.04
+# Blurs at least this wide (input pixels) use running means instead of a Gaussian kernel.
+BLUR_BOX_SIGMA = 4.0
 
 
 @dataclass
@@ -78,6 +100,18 @@ class Preprocessed:
         return self.inner_height + 2 * self.pad_out
 
 
+def _rgb(rgb: np.ndarray) -> np.ndarray:
+    return np.ascontiguousarray(rgb, dtype=np.float64)
+
+
+def _bool(mask: np.ndarray) -> np.ndarray:
+    return np.ascontiguousarray(mask, dtype=bool)
+
+
+def _f64(values: np.ndarray | None) -> np.ndarray | None:
+    return None if values is None else np.ascontiguousarray(values, dtype=np.float64)
+
+
 def outline_margin(config: Config) -> int:
     """Output pixels per side reserved inside the canvas for the outline ring.
 
@@ -85,7 +119,7 @@ def outline_margin(config: Config) -> int:
     touching the edge), so the final canvas is always exactly the resolved size. Tilesets
     reserve nothing: the canvas must stay a multiple of tile_size.
     """
-    return 1 if config.outline != "none" and not config.tileset else 0
+    return _native.outline_margin(config.to_dict())
 
 
 def resolve_dims(width: int, height: int, config: Config) -> tuple[int, int]:
@@ -104,97 +138,26 @@ def fit_mode(config: Config) -> str | None:
     """How a derived size is made a multiple of tile_size: config.fit, or "stretch" in
     seamless mode (padding or cropping would break the wrap-around); None when nothing is
     derived (tileset=False, a canvas, or both out_width and out_height given)."""
-    if not config.tileset or config.canvas is not None or (
-            config.out_width is not None and config.out_height is not None):
-        return None
-    return "stretch" if config.seamless else config.fit
+    return _native.fit_mode(config.to_dict())
 
 
 def resolve_layout(width: int, height: int,
                    config: Config) -> tuple[int, int, tuple[int, int, int, int] | None]:
     """(out_width, out_height, layout); layout is None unless the image is smaller than the
     canvas (`canvas`, or fit="pad" with a tileset), else (inner width, inner height, left,
-    top): the image's size and offset inside the area left by the outline margin."""
-    m2 = 2 * outline_margin(config)
-    if config.canvas is not None:
-        cw, ch = config.canvas_size
-        aw, ah = cw - m2, ch - m2
-        if config.scale is not None:
-            iw, ih = max(1, round(width / config.scale)), max(1, round(height / config.scale))
-        if config.scale is None or iw > aw or ih > ah:
-            # Fit inside, preserving aspect; the longer relative side fills the canvas exactly.
-            if width * ah >= height * aw:
-                iw, ih = aw, min(ah, max(1, round(aw * height / width)))
-            else:
-                iw, ih = min(aw, max(1, round(ah * width / height))), ah
-        return cw, ch, (iw, ih, (aw - iw) // 2, (ah - ih) // 2)
-    ow, oh = config.out_width, config.out_height
-    fixed = None   # the axis whose size is a target: 0 = width, 1 = height
-    if config.scale is not None:
-        ow = max(8, round(width / config.scale))
-        oh = max(8, round(height / config.scale))
-    elif ow is None and oh is None:
-        longest = PRESET_LONGEST_EDGE[config.preset]
-        if width >= height:
-            ow, oh, fixed = longest, max(8, round((longest - m2) * height / width) + m2), 0
-        else:
-            ow, oh, fixed = max(8, round((longest - m2) * width / height) + m2), longest, 1
-    elif ow is None:
-        ow, fixed = max(8, round((oh - m2) * width / height) + m2), 1
-    elif oh is None:
-        oh, fixed = max(8, round((ow - m2) * height / width) + m2), 0
-    mode = fit_mode(config)
-    if mode is None:
-        return int(ow), int(oh), None
-    return _fit_tiles(width, height, (int(ow), int(oh)), fixed, mode, config.tile_size)
+    top): the image's size and offset inside the area left by the outline margin.
 
-
-def _fit_tiles(width: int, height: int, size: tuple[int, int], fixed: int | None, mode: str,
-               t: int) -> tuple[int, int, tuple[int, int, int, int] | None]:
-    """resolve_layout for a derived tileset size (outline margin is 0 with tilesets).
-
-    The target axis (`fixed`: the given out_width/out_height, or the preset's longest edge) is
-    rounded *down* to a multiple of t so it never exceeds the target, and the other axis is
-    re-derived from it; with `scale` both sizes are kept. The canvas rounds each size up to a
-    multiple. "pad" centers the aspect-preserving image on it with transparent pixels,
-    "stretch" scales the image to the whole canvas and "crop" has run() crop the input to the
-    canvas aspect first.
+    With a tileset the derived size is rounded to tile_size (see fit_mode): the target edge
+    down, the canvas up; ConfigError when tile_size exceeds the longest derived edge, and a
+    UserWarning when fit="stretch" changes the aspect ratio by more than STRETCH_WARN_ASPECT.
     """
-    # DEVIATION: Section 5 step 2f rounds both dims up, which stretches the image and can exceed
-    # the target edge; that is fit="stretch" now, and the default "pad" keeps the aspect.
-    if t > max(size):
-        raise ConfigError(
-            f"tile_size ({t}) exceeds the longest output edge ({max(size)}) derived for a "
-            f"{width}x{height} input; lower tile_size or raise the output size")
-    inner = list(size)
-    if fixed is not None:
-        dims = (width, height)
-        inner[fixed] = size[fixed] // t * t
-        inner[1 - fixed] = max(1, round(inner[fixed] * dims[1 - fixed] / dims[fixed]))
-    cw, ch = (math.ceil(v / t) * t for v in inner)
-    if mode == "stretch":
-        source, result = width / height, cw / ch
-        if abs(result / source - 1.0) > STRETCH_WARN_ASPECT:
-            warnings.warn(f"fit='stretch' changes the aspect ratio from {source:.3f} "
-                          f"({width}x{height}) to {result:.3f} ({cw}x{ch}) to fit "
-                          f"tile_size={t}; use fit='pad' or 'crop' to keep it",
-                          UserWarning, stacklevel=3)
-    if mode != "pad" or (inner[0], inner[1]) == (cw, ch):
-        return cw, ch, None
-    iw, ih = inner
-    return cw, ch, (iw, ih, (cw - iw) // 2, (ch - ih) // 2)
+    return _native.resolve_layout(width, height, config.to_dict())
 
 
 def fit_crop(width: int, height: int, out_width: int, out_height: int) -> tuple[int, int, int, int]:
     """Centered (y0, y1, x0, x1) of a width×height input with the aspect of the output; the
     axis in excess is cropped, the other is kept whole."""
-    if width * out_height > height * out_width:
-        cw = max(1, round(height * out_width / out_height))
-        x0 = (width - cw) // 2
-        return 0, height, x0, x0 + cw
-    ch = max(1, round(width * out_height / out_width))
-    y0 = (height - ch) // 2
-    return y0, y0 + ch, 0, width
+    return _native.fit_crop(width, height, out_width, out_height)
 
 
 def remove_background(rgb: np.ndarray, alpha: np.ndarray) -> np.ndarray:
@@ -219,88 +182,15 @@ def flat_background(rgb: np.ndarray, tolerance: float,
     The background color is the per-channel median of the border pixels. If nearly the whole
     border has that color, every pixel of that color that is 4-connected to the border is
     background; regions of the same color enclosed by the subject are kept. Up to ``fringe``
-    passes of `_unmix_fringe` then key out the anti-aliased edge between subject and backdrop.
+    passes then key out the anti-aliased edge between subject and backdrop (pixels covering
+    less than half of the subject color, estimated against a nearby fully opaque pixel).
     """
-    border = np.concatenate([rgb[0], rgb[-1], rgb[1:-1, 0], rgb[1:-1, -1]])
-    reference = np.median(border, axis=0)
-    border_close = np.abs(border - reference).max(axis=1) <= tolerance
-    if border_close.mean() < KEY_BG_MIN_BORDER_FRACTION:
-        return None
-    close = np.abs(rgb - reference).max(axis=-1) <= tolerance
-    labels, _ = ndimage.label(close)
-    on_border = np.unique(np.concatenate([labels[0], labels[-1], labels[:, 0], labels[:, -1]]))
-    background = np.isin(labels, on_border[on_border > 0])
-    if background.all():
-        return None
-    background = _unmix_fringe(rgb, background, reference, fringe)
-    if background.all():
-        return None
-    return background
-
-
-_EIGHT_NEIGHBOURS = np.ones((3, 3), dtype=bool)
-# Width in pixels of the widest anti-aliasing fringe `_unmix_fringe` expects.
-FRINGE_DEPTH = 3
-
-
-def _unmix_fringe(rgb: np.ndarray, background: np.ndarray, reference: np.ndarray,
-                  passes: int) -> np.ndarray:
-    """Grow ``background`` into the anti-aliased edge of the subject.
-
-    Each pass looks at the opaque pixels 8-adjacent to the background and estimates how much of
-    the subject they cover as ``max_c |p - bg| / max_c |fg - bg|``, where ``fg`` is the color of
-    a nearby opaque pixel that is not adjacent to the background (see below). Pixels covering
-    less than half are keyed out. Anti-aliasing fringes are 1-3 px wide, hence a few passes; it
-    stops early once a pass keys out nothing. Regions enclosed by the subject never touch the
-    background and are left alone.
-    """
-    background = background.copy()
-    for _ in range(passes):
-        edge = ndimage.binary_dilation(background, structure=_EIGHT_NEIGHBOURS) & ~background
-        shallow = ~background & ~edge
-        if not edge.any() or not shallow.any():
-            break
-        ey, ex = np.nonzero(edge)
-        _, near = ndimage.distance_transform_edt(~shallow, return_indices=True)
-        fg = rgb[near[0][ey, ex], near[1][ey, ex]]
-        # The pixel just inside a fringe is itself partly mixed, so where the subject is thick
-        # enough the reference color comes from beyond the widest fringe instead (a pixel at
-        # coverage 0.4 must not be compared against one at 0.7). Thin parts keep the nearest
-        # non-edge pixel rather than borrowing the color of some distant region.
-        deep = ~ndimage.binary_dilation(background, structure=_EIGHT_NEIGHBOURS,
-                                        iterations=FRINGE_DEPTH + 1)
-        if deep.any():
-            dist, far = ndimage.distance_transform_edt(~deep, return_indices=True)
-            use = dist[ey, ex] <= 2 * FRINGE_DEPTH
-            fg[use] = rgb[far[0][ey[use], ex[use]], far[1][ey[use], ex[use]]]
-        p = rgb[ey, ex]
-        mixed = np.abs(p - reference).max(axis=-1)
-        full = np.abs(fg - reference).max(axis=-1)
-        # A subject color indistinguishable from the backdrop gives no coverage estimate;
-        # such pixels are kept.
-        keyed = (full > 1e-6) & (2.0 * mixed < full)
-        if not keyed.any():
-            break
-        background[ey[keyed], ex[keyed]] = True
-    return background
-
-
-def _fill_transparent(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    """Give transparent pixels the color of the nearest opaque pixel.
-
-    Their RGB is otherwise arbitrary and would bleed into the opaque edge during denoising.
-    """
-    if mask.all():
-        return rgb
-    nearest = ndimage.distance_transform_edt(~mask, return_distances=False, return_indices=True)
-    return rgb[nearest[0], nearest[1]]
+    return _native.flat_background(_rgb(rgb), tolerance, fringe)
 
 
 def prereduce_factor(h: int, w: int, out_h: int, out_w: int, max_ratio: int) -> int:
     """Largest integer box factor that keeps the input >= max_ratio × the output on both axes."""
-    if max_ratio <= 0:
-        return 1
-    return max(1, int(min(h // out_h, w // out_w) // max_ratio))
+    return _native.prereduce_factor(h, w, out_h, out_w, max_ratio)
 
 
 def prereduce(rgb: np.ndarray, mask: np.ndarray, factor: int,
@@ -312,121 +202,34 @@ def prereduce(rgb: np.ndarray, mask: np.ndarray, factor: int,
     bleed into edge blocks. A block is opaque when at least half of its pixels are. With
     ``weight`` its area mean (0 on transparent blocks) is returned as a third array.
     """
-    h, w = (mask.shape[0] // factor) * factor, (mask.shape[1] // factor) * factor
-    hb, wb = h // factor, w // factor
-    filled = _fill_transparent(rgb, mask)[:h, :w]
-    small = filled.reshape(hb, factor, wb, factor, 3).mean(axis=(1, 3))
-    coverage = mask[:h, :w].reshape(hb, factor, wb, factor).mean(axis=(1, 3))
-    small_mask = coverage >= 0.5
-    if weight is None:
-        return small, small_mask
-    small_weight = weight[:h, :w].reshape(hb, factor, wb, factor).mean(axis=(1, 3))
-    return small, small_mask, np.where(small_mask, small_weight, 0.0)
+    return _native.prereduce(_rgb(rgb), _bool(mask), factor, _f64(weight))
 
 
 def denoise(rgb: np.ndarray, config: Config) -> np.ndarray:
-    """Denoise the (possibly pre-reduced) image; the bilateral sigmas are in its pixels."""
+    """Denoise the (possibly pre-reduced) image; the bilateral sigmas are in its pixels.
+
+    "median" is a 3×3 median per channel (edges repeated); "bilateral" is scikit-image 0.26's
+    `denoise_bilateral` with edge padding, clipped to [0, 1].
+    """
     if config.denoise == "none":
         return rgb
-    if config.denoise == "median":
-        return np.stack([ndimage.median_filter(rgb[..., c], size=3, mode="nearest")
-                         for c in range(3)], axis=-1)
-    from skimage.restoration import denoise_bilateral
-
-    # DEVIATION: Section 5 — mode="edge" instead of skimage's default zero padding, which
-    # darkens the image border. Transparent pixels were filled with the nearest opaque color
-    # by the caller for the same reason.
-    out = denoise_bilateral(rgb, sigma_color=config.denoise_sigma_color,
-                            sigma_spatial=config.denoise_sigma_spatial, channel_axis=-1,
-                            mode="edge")
-    return np.clip(np.asarray(out, dtype=np.float64), 0.0, 1.0)
-
-
-# Rec. 709 luma weights; `enhance` changes luminance only and scales RGB to match.
-_LUMA = np.array([0.2126, 0.7152, 0.0722])
-# Percentiles of the subject's brightness (largest channel) that `enhance` maps to black and
-# white. Brightness, not luminance: a saturated color reaches its ceiling at a luminance far
-# below 1, and stretching its luminance to "white" would clip it flat.
-ENHANCE_LEVELS = (1.0, 99.0)
-# The levels stretch never amplifies by more than 1 / this: a subject whose luminance range is
-# narrower (a flat color with sensor noise) is stretched to part of the range only.
-ENHANCE_MIN_RANGE = 0.2
-# `ink` finds thin dark features as a difference of Gaussians at these sigmas (output pixels):
-# a response of INK_ONSET (luminance, 0..1) starts the darkening and INK_ONSET + INK_RANGE
-# gives all of it.
-INK_SIGMAS = (0.5, 1.6)
-INK_ONSET, INK_RANGE = 0.02, 0.04
-# Blurs at least this wide (input pixels) use running means instead of a Gaussian kernel.
-BLUR_BOX_SIGMA = 4.0
-
-
-def _level_pixels(value: np.ndarray, mask: np.ndarray, weight: np.ndarray) -> np.ndarray:
-    """The brightnesses the levels are measured on: the subject's mostly opaque pixels."""
-    solid = mask & (weight >= 0.5)
-    return value[solid if solid.any() else mask]
-
-
-def subject_brightness(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> np.ndarray:
-    """Brightness (largest channel) of the subject's pixels after keying, for levels shared
-    between images."""
-    rgb, mask, weight, _, _ = _subject(rgb, alpha, config)
-    return _level_pixels(rgb.max(axis=-1), mask, weight)
+    return _native.denoise(_rgb(rgb), config.to_dict())
 
 
 def enhance_levels(value: np.ndarray, config: Config) -> tuple[float, float]:
     """(black, white) brightness for the levels stretch: `enhance_black` / `enhance_white`
     where given, else the ENHANCE_LEVELS percentiles of ``value``."""
-    lo, hi = (float(v) for v in np.percentile(value, ENHANCE_LEVELS))
-    if config.enhance_black is not None:
-        lo = config.enhance_black
-    if config.enhance_white is not None:
-        hi = config.enhance_white
-    return lo, hi
-
-
-def _stretch(value: np.ndarray, lo: float, hi: float) -> np.ndarray:
-    """Map [lo, hi] to [0, 1], with the gain capped at 1 / ENHANCE_MIN_RANGE.
-
-    A narrower range is mapped to an interval of matching width placed between where it was
-    and the full range, so a flat subject is left as it is instead of turning into noise.
-    """
-    spread = hi - lo
-    if spread <= 1e-6 or spread >= 1.0:
-        return value if spread <= 1e-6 else np.clip((value - lo) / spread, 0.0, 1.0)
-    gain = 1.0 / max(spread, ENHANCE_MIN_RANGE)
-    new_lo = lo * (1.0 - spread * gain) / (1.0 - spread)
-    return np.clip(new_lo + gain * (value - lo), 0.0, 1.0)
+    return _native.enhance_levels(_f64(np.ravel(value)), config.to_dict())
 
 
 def _gaussian(image: np.ndarray, sigma: tuple[float, float], mode: str) -> np.ndarray:
-    """Gaussian blur whose cost does not grow with sigma.
+    """Gaussian blur of a 2-D array whose cost does not grow with sigma.
 
     From BLUR_BOX_SIGMA pixels up, each axis is filtered with three running means whose widths
     give the same variance (the usual box approximation, within a few percent of a Gaussian);
-    below it the exact kernel is used.
+    below it the exact kernel is used. ``mode`` is "nearest" or "wrap".
     """
-    out = image
-    for axis, sg in enumerate(sigma):
-        if sg < BLUR_BOX_SIGMA:
-            out = ndimage.gaussian_filter1d(out, sg, axis=axis, mode=mode)
-            continue
-        ideal = math.sqrt(12.0 * sg * sg / 3 + 1.0)
-        low = int(ideal) - (1 - int(ideal) % 2)          # largest odd width <= ideal
-        narrow = round((12.0 * sg * sg - 3 * low * low - 12 * low - 9) / (-4.0 * low - 4.0))
-        limit = out.shape[axis] - (1 - out.shape[axis] % 2)   # odd, within the image
-        for i in range(3):
-            width = min(low if i < narrow else low + 2, limit)
-            out = ndimage.uniform_filter1d(out, width, axis=axis, mode=mode)
-    return out
-
-
-def _blur(values: np.ndarray, cover: np.ndarray, sigma: tuple[float, float],
-          wrap: bool) -> np.ndarray:
-    """Gaussian mean of ``values`` weighted by ``cover`` (a normalized convolution); ``wrap``
-    treats the image as periodic."""
-    mode = "wrap" if wrap else "nearest"
-    return _gaussian(values * cover, sigma, mode) / np.maximum(
-        _gaussian(cover, sigma, mode), 1e-6)
+    return _native.enhance_gaussian(_f64(image), tuple(sigma), mode)
 
 
 def enhance(rgb: np.ndarray, mask: np.ndarray, cell: tuple[float, float], config: Config,
@@ -439,7 +242,7 @@ def enhance(rgb: np.ndarray, mask: np.ndarray, cell: tuple[float, float], config
     two scaled by ``config.enhance`` and the last by ``config.ink``:
 
     1. levels: the subject's brightness range (largest channel, see enhance_levels) is
-       stretched to black and white, with a capped gain (see _stretch);
+       stretched to black and white, with a capped gain (1 / ENHANCE_MIN_RANGE);
     2. local contrast: an unsharp mask of radius ``enhance_radius``, which amplifies features
        up to that size and leaves larger gradients alone;
     3. ink: pixels darker than their surroundings at about one output pixel are darkened. The
@@ -455,143 +258,35 @@ def enhance(rgb: np.ndarray, mask: np.ndarray, cell: tuple[float, float], config
     """
     if config.enhance <= 0 and config.ink <= 0:
         return rgb
-    cover = mask.astype(np.float64) if weight is None else np.where(mask, weight, 0.0)
-
-    def blur(values: np.ndarray, sigma_out: float) -> np.ndarray:
-        return _blur(values, cover, (sigma_out * cell[0], sigma_out * cell[1]), wrap)
-
-    luma, peak = rgb @ _LUMA, rgb.max(axis=-1)
-    levels = enhance_levels(_level_pixels(peak, mask, cover), config)
-    # Luminance of the image with its brightness stretched: never above a pixel's ceiling.
-    stretched = luma * _stretch(peak, *levels) / np.maximum(peak, 1e-6)
-    out = luma
-    if config.enhance > 0:
-        base = luma + min(config.enhance, 1.0) * (stretched - luma)
-        out = np.clip(base + config.enhance * (base - blur(base, config.enhance_radius)),
-                      0.0, 1.0)
-    if config.ink > 0:
-        dog = blur(stretched, INK_SIGMAS[1]) - blur(stretched, INK_SIGMAS[0])  # > 0: locally dark
-        out = out * (1.0 - config.ink * np.clip((dog - INK_ONSET) / INK_RANGE, 0.0, 1.0))
-    # The luminance at which the pixel's brightest channel reaches 1; brightening saturates
-    # toward it (slope 1 at no change), so no channel clips and the hue does not shift.
-    headroom = np.maximum(np.where(peak > 1e-6, luma / np.maximum(peak, 1e-6), 1.0) - luma, 0.0)
-    rise = np.maximum(out - luma, 0.0)
-    eased = headroom * -np.expm1(-rise / np.maximum(headroom, 1e-9))
-    out = np.where(out > luma, luma + eased, out)
-    gain = out / np.maximum(luma, 1e-6)
-    return np.where(mask[..., None], np.clip(rgb * gain[..., None], 0.0, 1.0), rgb)
+    return _native.enhance(_rgb(rgb), _bool(mask), (float(cell[0]), float(cell[1])),
+                           config.to_dict(), _f64(weight), bool(wrap))
 
 
-def _subject(rgb: np.ndarray, alpha: np.ndarray, config: Config):
-    """(rgb, mask, weight, background_keyed, crop box (y0, y1, x0, x1)) before any denoising.
-
-    ``weight`` is alpha / 255 on the mask and 0 elsewhere (see Preprocessed.weight).
-    """
-    rgb = np.asarray(rgb, dtype=np.float64)
+def _inputs(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> tuple[np.ndarray, np.ndarray]:
+    """The image as contiguous float64 and its alpha, replaced by rembg when remove_bg."""
+    rgb = _rgb(rgb)
     alpha = np.asarray(alpha, dtype=np.uint8)
-
     if config.remove_bg:
         alpha = remove_background(rgb, alpha)
+    return rgb, np.ascontiguousarray(alpha)
 
-    mask = alpha >= config.alpha_threshold
-    if not mask.any():
-        raise PixelforgeError("image is fully transparent after alpha thresholding")
 
-    # Not in the spec: image generators return sprites on an opaque flat background, which
-    # would otherwise take part in every statistic and swallow most of the palette.
-    background_keyed = False
-    if config.key_bg and mask.all():
-        background = flat_background(rgb, config.key_bg_tolerance, config.key_bg_fringe)
-        if background is not None:
-            mask = ~background
-            background_keyed = True
-
-    # Membership stays binary (mask), but semi-transparent pixels count in proportion to their
-    # alpha, so an anti-aliased fringe just above alpha_threshold does not come out as a solid
-    # band of its own color. The floor of 1/255 keeps every opaque pixel's weight positive
-    # (alpha_threshold=0 admits alpha-0 pixels).
-    weight = np.where(mask, np.maximum(alpha, 1).astype(np.float64) / 255.0, 0.0)
-
-    box = (0, mask.shape[0], 0, mask.shape[1])
-    if config.crop_to_alpha and not mask.all():
-        ys, xs = np.nonzero(mask)
-        y0, y1 = max(int(ys.min()) - 1, 0), min(int(ys.max()) + 2, mask.shape[0])
-        x0, x1 = max(int(xs.min()) - 1, 0), min(int(xs.max()) + 2, mask.shape[1])
-        box = (y0, y1, x0, x1)
-    return rgb, mask, weight, background_keyed, box
+def subject_brightness(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> np.ndarray:
+    """Brightness (largest channel) of the subject's pixels after keying, for levels shared
+    between images."""
+    rgb, alpha = _inputs(rgb, alpha, config)
+    return _native.subject_brightness(rgb, alpha, config.to_dict())
 
 
 def subject_bbox(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> tuple[int, int, int, int]:
     """The crop box (y0, y1, x0, x1) run() would use: after keying, before denoising."""
-    return _subject(rgb, alpha, config)[4]
+    rgb, alpha = _inputs(rgb, alpha, config)
+    return _native.subject_bbox(rgb, alpha, config.to_dict())
 
 
 def run(rgb: np.ndarray, alpha: np.ndarray, config: Config) -> Preprocessed:
-    rgb, mask, weight, background_keyed, (y0, y1, x0, x1) = _subject(rgb, alpha, config)
-    rgb, mask, weight = rgb[y0:y1, x0:x1], mask[y0:y1, x0:x1], weight[y0:y1, x0:x1]
-
-    h, w = mask.shape
-    out_w, out_h, layout = resolve_layout(w, h, config)
-    if fit_mode(config) == "crop":
-        # The downscalers always fill the whole target, so the cropped part of the canvas is
-        # removed from the input instead (centered, to the canvas aspect).
-        cy0, cy1, cx0, cx1 = fit_crop(w, h, out_w, out_h)
-        rgb, mask = rgb[cy0:cy1, cx0:cx1], mask[cy0:cy1, cx0:cx1]
-        weight = weight[cy0:cy1, cx0:cx1]
-        h, w = mask.shape
-        if not mask.any():
-            raise PixelforgeError("no opaque pixels left after fit='crop'")
-    margin = outline_margin(config)
-    inner_w, inner_h = (layout[0], layout[1]) if layout else (out_w - 2 * margin,
-                                                               out_h - 2 * margin)
-
-    # DEVIATION: Section 5 — inputs smaller than the output are repeated by an integer factor
-    # first, so that every output pixel is backed by at least one input pixel in all three
-    # downscalers (otherwise gerstner would leave superpixels without pixels).
-    factor = max(math.ceil(out_w / w), math.ceil(out_h / h))
-    if factor > 1:
-        # Checked before allocating: a 2000×1 input with a square output would otherwise be
-        # repeated into hundreds of millions of float64 pixels.
-        if h * w * factor * factor > MAX_INPUT_PIXELS:
-            raise PixelforgeError(
-                f"a {w}x{h} input is too small for a {out_w}x{out_h} output: repeating it "
-                f"{factor}x per axis would exceed {MAX_INPUT_PIXELS} pixels")
-        rgb = np.repeat(np.repeat(rgb, factor, axis=0), factor, axis=1)
-        mask = np.repeat(np.repeat(mask, factor, axis=0), factor, axis=1)
-        weight = np.repeat(np.repeat(weight, factor, axis=0), factor, axis=1)
-        h, w = mask.shape
-
-    # DEVIATION: Section 5 — inputs far larger than the output are first box-reduced by an
-    # integer factor (exact area mean), so that denoise and the downscalers run on less than
-    # 2 × prereduce_max_ratio × the output resolution. Kopf's kernels span 4×4 output pixels, so
-    # at these ratios the reduction is nearly lossless, and it bounds time and memory. Up to
-    # factor − 1 trailing rows/columns that do not fill a block are dropped.
-    reduce_by = prereduce_factor(h, w, out_h, out_w, config.prereduce_max_ratio)
-    if reduce_by > 1:
-        small_rgb, small_mask, small_weight = prereduce(rgb, mask, reduce_by, weight)
-        if small_mask.any():     # else a sparse subject would vanish: keep full resolution
-            rgb, mask, weight = small_rgb, small_mask, small_weight
-            h, w = mask.shape
-        else:
-            reduce_by = 1
-
-    # Before denoising: the bilateral filter then sees the exaggerated edges and keeps them.
-    # Before the seamless padding: the image is filtered as the periodic tile it is.
-    rgb = enhance(rgb, mask, (h / inner_h, w / inner_w), config, weight, wrap=config.seamless)
-
-    pad_out = 0
-    if config.seamless:
-        pad_out = SEAMLESS_PAD_OUT
-        pad_x = math.ceil(pad_out * w / inner_w)
-        pad_y = math.ceil(pad_out * h / inner_h)
-        rgb = np.pad(rgb, ((pad_y, pad_y), (pad_x, pad_x), (0, 0)), mode="wrap")
-        mask = np.pad(mask, ((pad_y, pad_y), (pad_x, pad_x)), mode="wrap")
-        weight = np.pad(weight, ((pad_y, pad_y), (pad_x, pad_x)), mode="wrap")
-
-    rgb = denoise(_fill_transparent(rgb, mask), config)
-    lab = color.rgb_to_lab(rgb)
-    return Preprocessed(lab=np.ascontiguousarray(lab), mask=np.ascontiguousarray(mask),
-                        out_width=out_w, out_height=out_h, pad_out=pad_out,
-                        background_keyed=background_keyed, outline_margin=margin,
-                        layout=layout, fit=fit_mode(config), prereduce_factor=reduce_by,
-                        weight=np.ascontiguousarray(weight))
+    """Alpha mask (rembg first when remove_bg), keying, crop, output size, fit="crop", integer
+    repeat of small inputs, box pre-reduction of large ones, enhance, seamless wrap padding,
+    transparent fill, denoise and CIELAB: the image the downscalers work on."""
+    rgb, alpha = _inputs(rgb, alpha, config)
+    return Preprocessed(**_native.preprocess_run(rgb, alpha, config.to_dict()))

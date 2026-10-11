@@ -1,8 +1,8 @@
 """The native masks (crates/pixelforge/src/mask.rs) reproduce pixelforge/preprocess.py and the
 scipy routines it calls, bit for bit: the exact distance transform with scipy's feature
 indices, transparent filling, 4-connected labelling, 8-neighbour dilation, flat-background
-keying with fringe unmixing, and the subject mask, weight and crop box. The Python functions
-are the reference until the integration step switches preprocess.py over."""
+keying with fringe unmixing, and the subject mask, weight and crop box. The former Python
+functions, kept in tests/preprocess_reference.py, are the reference."""
 
 from __future__ import annotations
 
@@ -14,8 +14,9 @@ import numpy as np
 import pytest
 from scipy import ndimage
 
-from pixelforge import Config, _native, io, preprocess
+from pixelforge import Config, _native, io
 from pixelforge.errors import ConfigError, PixelforgeError
+from tests import preprocess_reference as pyref
 
 ROOT = Path(__file__).resolve().parent.parent
 # samples/ is not committed (.gitignore); PIXELFORGE_SAMPLES points elsewhere, e.g. at the
@@ -137,7 +138,7 @@ def test_fill_transparent_random():
         if not mask.any():
             continue
         rgb = rng.random(mask.shape + (3,))
-        assert same(_native.fill_transparent(rgb, mask), preprocess._fill_transparent(rgb, mask))
+        assert same(_native.fill_transparent(rgb, mask), pyref._fill_transparent(rgb, mask))
 
 
 @pytest.mark.parametrize("name", FIXTURES)
@@ -146,7 +147,7 @@ def test_fill_transparent_fixtures(name):
     mask = loaded.alpha >= 128
     if mask.any():
         assert same(_native.fill_transparent(loaded.rgb, mask),
-                    preprocess._fill_transparent(loaded.rgb, mask))
+                    pyref._fill_transparent(loaded.rgb, mask))
 
 
 @pytest.mark.parametrize("name", sample_ids())
@@ -154,7 +155,7 @@ def test_fill_transparent_samples(name):
     loaded = sample(name)
     mask = loaded.alpha >= 128
     assert same(_native.fill_transparent(loaded.rgb, mask),
-                preprocess._fill_transparent(loaded.rgb, mask))
+                pyref._fill_transparent(loaded.rgb, mask))
 
 
 def same_partition(native, n_native, reference, n_reference):
@@ -194,7 +195,7 @@ def composite(rgb, alpha, backdrop):
 def assert_flat_background(rgb, tolerance, fringe):
     rgb = np.ascontiguousarray(rgb, dtype=np.float64)
     got = _native.flat_background(rgb, tolerance, fringe)
-    want = preprocess.flat_background(rgb, tolerance, fringe)
+    want = pyref.flat_background(rgb, tolerance, fringe)
     if want is None:
         assert got is None
     else:
@@ -266,7 +267,7 @@ def test_unmix_fringe_directly():
         background = np.abs(rgb - reference).max(axis=-1) <= 0.02
         for passes in range(5):
             got = _native.unmix_fringe(rgb, background, tuple(reference), passes)
-            want = preprocess._unmix_fringe(rgb, background, reference, passes)
+            want = pyref._unmix_fringe(rgb, background, reference, passes)
             assert np.array_equal(got, want)
     for _ in range(20):
         h, w = (int(v) for v in rng.integers(2, 30, 2))
@@ -275,7 +276,7 @@ def test_unmix_fringe_directly():
         reference = rng.random(3)
         for passes in (1, 3):
             got = _native.unmix_fringe(rgb, background, tuple(reference), passes)
-            assert np.array_equal(got, preprocess._unmix_fringe(rgb, background, reference,
+            assert np.array_equal(got, pyref._unmix_fringe(rgb, background, reference,
                                                                 passes))
 
 
@@ -299,7 +300,7 @@ def assert_subject(rgb, alpha, kwargs):
     alpha = np.ascontiguousarray(alpha, dtype=np.uint8)
     config = Config(**kwargs)
     try:
-        _, mask, weight, keyed, box = preprocess._subject(rgb, alpha, config)
+        _, mask, weight, keyed, box = pyref._subject(rgb, alpha, config)
     except PixelforgeError as exc:
         with pytest.raises(PixelforgeError, match=str(exc)):
             _native.subject(rgb, alpha, kwargs)

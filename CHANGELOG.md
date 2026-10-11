@@ -9,7 +9,7 @@ All notable changes to this project are documented here. The format follows
 ### Added
 
 - Preprocessing filters and the enhance pass in Rust (Phase 4 of
-  `docs/rust-migration-plan.md`, not yet called by the pipeline): `filters.rs` ports
+  `docs/rust-migration-plan.md`): `filters.rs` ports
   scipy's `uniform_filter1d` (any size, `nearest`/`wrap`), `gaussian_filter1d`, the 3×3
   `median_filter` and scikit-image 0.26's `denoise_bilateral` (`mode="edge"`, its lookup
   tables as written, including the spatial table's `-win_size // 2` grid; threaded per pixel
@@ -35,8 +35,7 @@ All notable changes to this project are documented here. The format follows
   the seamless wrap padding). Bitwise identical to the Python functions on the EDT
   oracle, 200 random masks, the fixtures and samples, and 1,728 configs × 14 input sizes;
   exposed as `_native.edt`, `subject`, `resolve_layout`, `prereduce` and friends for
-  `tests/test_mask_native.py` and `tests/test_layout_native.py`. `preprocess.py` still runs
-  the Python versions.
+  `tests/test_mask_native.py` and `tests/test_layout_native.py`.
 - The Config in Rust (`crates/pixelforge/src/config/`, Phase 2 of
   `docs/rust-migration-plan.md`): construction from presets and explicit values, Python's
   coercion and validation with byte-identical error messages, `replace`, the palette
@@ -108,6 +107,25 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Preprocessing is native (`crates/pixelforge/src/preprocess.rs`, migration plan Phase 4):
+  `pixelforge.preprocess.run` calls `_native.preprocess_run`, which assembles the masks,
+  layout, enhance pass, filters and LAB conversion in Rust, and `subject_bbox`,
+  `subject_brightness` and the module's other functions are thin calls into `_native`;
+  `pixelforge/preprocess.py` no longer imports scipy or scikit-image. Reproduced bitwise:
+  the alpha mask, flat-background keying with fringe unmixing, the exact distance transform
+  (scipy's feature indices, ties included), crop, layout and `fit`, integer repeat, box
+  pre-reduction, seamless padding, uniform and median filters, and percentiles. The
+  Gaussian blurs of `enhance` and the bilateral denoise differ in the last bits: the macOS
+  arm64 wheels of scipy and scikit-image fuse multiply-adds in the Gaussian correlation and
+  the bilateral accumulation, and this port does not (plan Decision 6), so it also matches
+  FMA-free Linux builds. Snapshot compare against 5a35744: all 48 cases
+  identical (no pixel, palette or hash moved), so `tests/golden.json` is unchanged.
+  Preprocess stage on the 1024² portrait, background preset (`stats.timings.preprocess`,
+  one run each): 2.37 s → 0.26 s; with `enhance=1.0, ink=0.6`: 2.54 s → 0.56 s (10-core
+  M1 Max, load average 8 before and 19–23 after). `remove_bg` still runs rembg from Python
+  before the native stage. The former implementation is kept as
+  `tests/preprocess_reference.py` for the parity tests, and `scripts/record_oracles.py`
+  records the bilateral oracle on scipy and scikit-image directly.
 - Post-processing and tiles are native (`crates/pixelforge/src/postprocess.rs` and
   `tiles.rs`, migration plan Phase 3): saturation, orphan removal (own 8-connected
   labelling instead of `scipy.ndimage.label`), jaggies, the outline, tile extraction with its

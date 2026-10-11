@@ -12,6 +12,7 @@ mod kopf;
 mod mask;
 mod npsum;
 mod postprocess;
+mod preprocess;
 mod quantize;
 
 use numpy::PyReadonlyArray1;
@@ -61,5 +62,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     postprocess::register(m)?;
     quantize::register(m)?;
     mask::register(m)?;
+    preprocess::register(m)?;
     Ok(())
 }
