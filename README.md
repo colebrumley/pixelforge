@@ -4,7 +4,8 @@
 
 pixelforge converts raster images into 16-bit-style pixel art: sprites, backgrounds and
 tiles. It is deterministic: the same input and the same config give the same PNG on every
-run.
+run. There are two limits, `--remove-bg` and best-effort identity across CPU architectures;
+see [Determinism](#determinism).
 
 You pick one of three downscalers per run:
 
