@@ -12,6 +12,9 @@ All notable changes to this project are documented here. The format follows
   overflows the frame-count check (a panic in debug builds); it reads as one frame.
 - `--remove-bg` creates its temporary directory owner-only (`0o700`) on Unix, so other local
   users cannot read the image handed to `rembg` or its output.
+- `xtask bench` records an input outside the repository by its file name with
+  `"external": true` instead of its absolute local path; the committed `bench/*.json` files
+  were rewritten the same way.
 - Developer tooling: `determinism_guard.rs` also bans `exp2`, `exp_m1`, `ln_1p`, `log2`,
   `log10`, `tan`, `sin_cos`, the inverse and hyperbolic functions and `hypot`, in method and
   `f64::`/`f32::` forms; `xtask gallery` no longer overwrites the images of two inputs with

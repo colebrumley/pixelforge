@@ -229,7 +229,8 @@ Over the 30 cases of the fixture matrix plus the two photos, the Rust binary is 
 faster than the pure-Python version and 1.6–7× faster than the Python version that already
 had the Rust hot loops; what it gained in the second step is everything outside the kernels
 (decoding, preprocessing, the annealer, palette and quantization, output files). The
-portrait and the knight sprite are photos outside the repository; the others are fixtures.
+portrait and the knight sprite are photos outside the repository (the bench files record
+them by file name, with `"external": true`); the others are fixtures.
 
 Threads (`PIXELFORGE_THREADS`, same machine and load, minimum of 3; the output is identical
 at every count):

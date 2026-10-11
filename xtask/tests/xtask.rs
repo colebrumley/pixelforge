@@ -114,7 +114,7 @@ fn golden_check_fails_on_a_stale_file() {
 
 #[test]
 fn python_bench_files_round_trip_and_compare() {
-    for name in ["0edd462.json", "9f53516.json"] {
+    for name in ["0edd462.json", "9f53516.json", "aaec276.json"] {
         let path = root().join("bench").join(name);
         let content = std::fs::read_to_string(&path).unwrap();
         let report = bench::read_report(&path).unwrap();
@@ -193,6 +193,10 @@ fn bench_writes_the_schema_and_compares() {
         ("two_color", "sprite", "box")
     );
     assert_eq!(case.input, "tests/fixtures/two_color.png");
+    assert!(!case.external);
+    assert!(!std::fs::read_to_string(&out_path)
+        .unwrap()
+        .contains("\"external\""));
     assert!(case.total_s > 0.0 || case.timings.iter().any(|(k, _)| k == "downscale"));
     assert_eq!((case.iterations, case.output_size), (1, [64, 64]));
     // The file is exactly what json.dumps(indent=2) writes for the parsed report.
@@ -216,6 +220,43 @@ fn bench_writes_the_schema_and_compares() {
     let out = xtask(&args);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(text(&out.stdout).contains("compare: "));
+}
+
+#[test]
+fn bench_records_an_outside_input_by_file_name() {
+    let dir = TempDir::new("bench-external");
+    let input = dir.0.join("outside_photo.png");
+    std::fs::copy(fixtures::default_dir().join("two_color.png"), &input).unwrap();
+    let out_path = dir.0.join("bench.json");
+    let out = xtask(&[
+        "bench",
+        "--inputs",
+        input.to_str().unwrap(),
+        "--methods",
+        "box",
+        "--presets",
+        "sprite",
+        "--no-warmup",
+        "--out",
+        out_path.to_str().unwrap(),
+    ]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let content = std::fs::read_to_string(&out_path).unwrap();
+    assert!(
+        content.contains("\"input\": \"outside_photo.png\",\n      \"external\": true,\n"),
+        "{content}"
+    );
+    assert!(!content.contains(dir.0.to_str().unwrap()));
+    let report = bench::read_report(&out_path).unwrap();
+    let cases = bench::cases_of(&report);
+    assert_eq!(cases.len(), 1);
+    assert_eq!(cases[0].input, "outside_photo.png");
+    assert!(cases[0].external);
+    assert_eq!(cases[0].label, "outside_photo");
+    assert_eq!(
+        Some(&Json::List(vec![cases[0].to_json()])),
+        get(&report, "cases")
+    );
 }
 
 #[test]

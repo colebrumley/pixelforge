@@ -17,7 +17,7 @@ use pixelforge::pyjson::{dumps, py_round, Json, Layout};
 use pixelforge::pyrepr::str_repr;
 use sha2::{Digest, Sha256};
 
-use crate::json::{as_f64, as_i64, as_list, as_str, get};
+use crate::json::{as_bool, as_f64, as_i64, as_list, as_str, get};
 use crate::{display_path, fail, git, resolve, root, stem, Fail};
 
 pub const DEFAULT_INPUTS: [&str; 4] = ["line_diag", "circle_alpha", "noisy_gradient", "gradient6"];
@@ -423,7 +423,11 @@ pub fn warm_up(methods: &[String]) -> Result<(), Fail> {
 /// A measured case, as the JSON has it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CaseResult {
+    /// Repository-relative for an input in the checkout, the bare file name otherwise
+    /// (older files may hold an absolute path).
     pub input: String,
+    /// The input is outside the repository (`"external": true`, written only when set).
+    pub external: bool,
     pub label: String,
     pub preset: String,
     pub method: String,
@@ -447,8 +451,11 @@ impl CaseResult {
     }
 
     pub fn to_json(&self) -> Json {
-        Json::Object(vec![
-            ("input".into(), Json::Str(self.input.clone())),
+        let mut items = vec![("input".into(), Json::Str(self.input.clone()))];
+        if self.external {
+            items.push(("external".into(), Json::Bool(true)));
+        }
+        items.extend([
             ("label".into(), Json::Str(self.label.clone())),
             ("preset".into(), Json::Str(self.preset.clone())),
             ("method".into(), Json::Str(self.method.clone())),
@@ -466,7 +473,24 @@ impl CaseResult {
             ),
             ("palette_size".into(), Json::Int(self.palette_size)),
             ("repeat".into(), Json::Int(self.repeat)),
-        ])
+        ]);
+        Json::Object(items)
+    }
+}
+
+/// The `input` and `external` fields for an input file: the repository-relative path for a
+/// file in the checkout, the bare file name (and `true`) for one outside it, so the
+/// committed reports carry no local paths.
+pub fn recorded_input(path: &Path) -> (String, bool) {
+    let path = resolve(path);
+    match path.strip_prefix(root()) {
+        Ok(rel) => (rel.display().to_string(), false),
+        Err(_) => (
+            path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            true,
+        ),
     }
 }
 
@@ -505,8 +529,10 @@ pub fn run_case(case: &Case, repeat: i64, label: &str) -> Result<CaseResult, Fai
                 .collect()
         })
         .unwrap_or_default();
+    let (input, external) = recorded_input(&case.path);
     Ok(CaseResult {
-        input: display_path(&case.path),
+        input,
+        external,
         label: label.to_string(),
         preset: case.preset.clone(),
         method: case.method.clone(),
@@ -756,6 +782,7 @@ pub fn cases_of(report: &Json) -> Vec<CaseResult> {
             let dim = |n: usize| size.get(n).and_then(as_i64).unwrap_or(0);
             CaseResult {
                 input: s(c, "input"),
+                external: get(c, "external").and_then(as_bool).unwrap_or(false),
                 label: s(c, "label"),
                 preset: s(c, "preset"),
                 method: s(c, "method"),

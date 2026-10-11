@@ -666,7 +666,8 @@
       "repeat": 1
     },
     {
-      "input": "/Users/cole/Documents/lib/pixelforge/.claude/worktrees/16-bit-sprite-photo-5897f3/out/photo/knight_src.png",
+      "input": "knight_src.png",
+      "external": true,
       "label": "knight_src",
       "preset": "sprite",
       "method": "box",
@@ -691,7 +692,8 @@
       "repeat": 1
     },
     {
-      "input": "/Users/cole/Documents/lib/pixelforge/.claude/worktrees/16-bit-sprite-photo-5897f3/out/photo/knight_src.png",
+      "input": "knight_src.png",
+      "external": true,
       "label": "knight_src",
       "preset": "sprite",
       "method": "kopf",
@@ -718,7 +720,8 @@
       "repeat": 1
     },
     {
-      "input": "/Users/cole/Documents/lib/pixelforge/.claude/worktrees/16-bit-sprite-photo-5897f3/out/photo/knight_src.png",
+      "input": "knight_src.png",
+      "external": true,
       "label": "knight_src",
       "preset": "sprite",
       "method": "gerstner",
@@ -746,7 +749,8 @@
       "repeat": 1
     },
     {
-      "input": "/Users/cole/Documents/lib/pixelforge/.claude/worktrees/16-bit-sprite-photo-5897f3/out/sample/portrait.png",
+      "input": "portrait.png",
+      "external": true,
       "label": "portrait",
       "preset": "background",
       "method": "box",
@@ -772,7 +776,8 @@
       "repeat": 1
     },
     {
-      "input": "/Users/cole/Documents/lib/pixelforge/.claude/worktrees/16-bit-sprite-photo-5897f3/out/sample/portrait.png",
+      "input": "portrait.png",
+      "external": true,
       "label": "portrait",
       "preset": "background",
       "method": "kopf",
@@ -800,7 +805,8 @@
       "repeat": 1
     },
     {
-      "input": "/Users/cole/Documents/lib/pixelforge/.claude/worktrees/16-bit-sprite-photo-5897f3/out/sample/portrait.png",
+      "input": "portrait.png",
+      "external": true,
       "label": "portrait",
       "preset": "background",
       "method": "gerstner",
