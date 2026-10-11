@@ -9,6 +9,7 @@ mod config;
 mod gerstner;
 mod kopf;
 mod npsum;
+mod postprocess;
 
 use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
@@ -53,5 +54,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     config::register(m)?;
     color::register(m)?;
     npsum::register(m)?;
+    postprocess::register(m)?;
     Ok(())
 }

@@ -98,7 +98,7 @@ fn config_error_py(py: Python<'_>, message: &str) -> PyErr {
     }
 }
 
-fn build(py: Python<'_>, kw: &Bound<'_, PyDict>) -> PyResult<Config> {
+pub(crate) fn build(py: Python<'_>, kw: &Bound<'_, PyDict>) -> PyResult<Config> {
     Config::new(&kwargs(kw)?).map_err(|e| config_error_py(py, &e.0))
 }
 

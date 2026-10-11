@@ -18,5 +18,7 @@ pub mod kopf;
 pub mod npsum;
 pub mod palette;
 pub mod parallel;
+pub mod postprocess;
 pub mod pyrepr;
 pub mod pyunicode;
+pub mod tiles;
