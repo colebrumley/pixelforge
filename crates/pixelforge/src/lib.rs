@@ -15,6 +15,8 @@ pub mod color;
 pub mod config;
 pub mod gerstner;
 pub mod kopf;
+pub mod layout;
+pub mod mask;
 pub mod npsum;
 pub mod palette;
 pub mod parallel;
