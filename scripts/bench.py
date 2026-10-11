@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import platform
@@ -57,8 +58,19 @@ def display_path(path: Path) -> str:
     return str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path)
 
 
-def input_label(path: Path) -> str:
-    return path.stem
+def input_labels(paths) -> dict[Path, str]:
+    """Label per input, keyed by resolved path: the file stem, or, when two different files
+    share a stem, ``STEM-HHHHHHHH`` with the first 8 hex digits of the SHA-256 of the file's
+    display_path (so labels of inputs with a unique stem never change)."""
+    by_stem: dict[str, set[Path]] = {}
+    for path in paths:
+        by_stem.setdefault(path.stem, set()).add(path.resolve())
+    labels = {}
+    for stem, group in by_stem.items():
+        for path in group:
+            labels[path] = stem if len(group) == 1 else (
+                f"{stem}-{hashlib.sha256(display_path(path).encode()).hexdigest()[:8]}")
+    return labels
 
 
 def build_cases(inputs, presets, methods, extra_cases=()) -> list[tuple[Path, str, str]]:
@@ -79,8 +91,15 @@ def build_cases(inputs, presets, methods, extra_cases=()) -> list[tuple[Path, st
     return [(path, preset, method) for path, preset in pairs for method in methods]
 
 
-def case_key(path: Path, preset: str, method: str) -> str:
-    return f"{input_label(path)}/{preset}/{method}"
+def case_key(label: str, preset: str, method: str) -> str:
+    return f"{label}/{preset}/{method}"
+
+
+def case_keys(cases) -> list[str]:
+    """One key per (path, preset, method) case, built over the whole list so that inputs
+    sharing a file stem get distinct labels (see input_labels)."""
+    labels = input_labels(path for path, _, _ in cases)
+    return [case_key(labels[path.resolve()], preset, method) for path, preset, method in cases]
 
 
 def case_config(preset: str, method: str):
@@ -148,7 +167,7 @@ def warm_up(methods) -> None:
             run(rgb, Config(preset=preset, method=method, out_width=16, out_height=16))
 
 
-def run_case(path: Path, preset: str, method: str, repeat: int) -> dict:
+def run_case(path: Path, preset: str, method: str, repeat: int, label: str) -> dict:
     from pixelforge import run
 
     best = None
@@ -162,7 +181,7 @@ def run_case(path: Path, preset: str, method: str, repeat: int) -> dict:
     total, result = best
     stats = result.stats
     method_stats = stats.get("method", {})
-    return {"input": display_path(path), "label": input_label(path), "preset": preset, "method": method,
+    return {"input": display_path(path), "label": label, "preset": preset, "method": method,
             "config_hash": result.config.hash(), "total_s": round(total, 4),
             "timings": dict(stats["timings"]), "iterations": int(stats["iterations"]),
             "method_stats": {k: v for k, v in method_stats.items()
@@ -189,10 +208,10 @@ def results_table(cases: list[dict]) -> str:
 
 
 def compare_table(old: dict, new: dict) -> str:
-    old_cases = {case_key(Path(c["label"]), c["preset"], c["method"]): c for c in old["cases"]}
+    old_cases = {case_key(c["label"], c["preset"], c["method"]): c for c in old["cases"]}
     rows = []
     for c in new["cases"]:
-        key = case_key(Path(c["label"]), c["preset"], c["method"])
+        key = case_key(c["label"], c["preset"], c["method"])
         o = old_cases.get(key)
         if o is None:
             rows.append([c["label"], c["preset"], c["method"], "-", f"{c['total_s']:.3f}", "-",
@@ -229,9 +248,10 @@ def main(argv=None) -> int:
               "warmup": not args.no_warmup, "cases": []}
     if not args.no_warmup:
         warm_up(args.methods)
-    for path, preset, method in cases:
-        print(f"running {case_key(path, preset, method)} ...", file=sys.stderr, flush=True)
-        report["cases"].append(run_case(path, preset, method, args.repeat))
+    for (path, preset, method), key in zip(cases, case_keys(cases)):
+        print(f"running {key} ...", file=sys.stderr, flush=True)
+        report["cases"].append(run_case(path, preset, method, args.repeat,
+                                        key.split("/", 1)[0]))
 
     print(results_table(report["cases"]))
     if old is not None:

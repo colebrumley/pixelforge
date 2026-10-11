@@ -6,12 +6,19 @@
 
 ``save`` runs the same case matrix as scripts/bench.py and writes, per case, an .npz with
 ``indices``, ``palette`` (uint8) and ``palette_lab``, plus DIR/manifest.json with the git sha
-and each case's input path and ``Config.hash()``. ``compare`` re-runs every case in the
-manifest and reports whether the output is identical, how many pixels differ, the mean and
-max CIE76 ΔE over the differing pixels that are opaque in both, whether the palettes are
-identical, and whether the config hash still matches (if not, the comparison is not
-like-for-like). Exit code 0 if every case is identical, or with --tolerance-pixels N > 0 if
-every case has at most N differing pixels; 1 otherwise. DIR defaults to bench/snapshots/.
+and each case's input path and ``Config.hash()``. Input paths inside the repository are stored
+relative to the repository root (and resolved against it by ``compare``, whatever the working
+directory); other inputs are stored as absolute paths. ``compare`` re-runs every case in the
+manifest and reports whether the output is identical, whether the rendered pixels are
+identical, how many pixels differ, the mean and max CIE76 ΔE over the differing pixels that
+are opaque in both, whether the palettes are identical, and whether the config hash still
+matches (if not, the comparison is not like-for-like).
+
+"identical" means the same indices and palette, i.e. the same indexed PNG; "pixels identical"
+means the same rendered colors and transparency, which a reordered palette with remapped
+indices also satisfies. Exit code 0 if every case is identical, or with --tolerance-pixels
+N > 0 if every case has at most N differing pixels; 1 otherwise. DIR defaults to
+bench/snapshots/.
 """
 
 from __future__ import annotations
@@ -30,6 +37,8 @@ import bench  # noqa: E402
 ROOT = bench.ROOT
 DEFAULT_DIR = ROOT / "bench" / "snapshots"
 MANIFEST = "manifest.json"
+IDENTICAL_HELP = ('"identical" = same indices and palette, i.e. the same PNG; '
+                  '"pixels identical" = same rendered colors.')
 
 
 def case_filename(key: str) -> str:
@@ -43,17 +52,27 @@ def run_case(path: Path, preset: str, method: str):
     return config, run(path, config)
 
 
+def manifest_path(path: Path) -> str:
+    """Repository-relative for inputs under ROOT, absolute otherwise."""
+    return bench.display_path(path)
+
+
+def resolve_manifest_path(stored: str) -> Path:
+    """Inverse of manifest_path: relative paths are relative to ROOT, not the cwd."""
+    path = Path(stored)
+    return path if path.is_absolute() else ROOT / path
+
+
 def save(directory: Path, cases) -> dict:
     directory.mkdir(parents=True, exist_ok=True)
     manifest = {**bench.git_info(), "cases": {}}
-    for path, preset, method in cases:
-        key = bench.case_key(path, preset, method)
+    for (path, preset, method), key in zip(cases, bench.case_keys(cases)):
         print(f"saving {key} ...", file=sys.stderr, flush=True)
         config, result = run_case(path, preset, method)
         np.savez_compressed(directory / case_filename(key), indices=result.indices,
                             palette=np.asarray(result.palette, dtype=np.uint8),
                             palette_lab=result.palette_lab)
-        manifest["cases"][key] = {"input": str(path), "preset": preset, "method": method,
+        manifest["cases"][key] = {"input": manifest_path(path), "preset": preset, "method": method,
                                   "config_hash": config.hash(), "file": case_filename(key)}
     (directory / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest
@@ -73,12 +92,14 @@ def compare_arrays(old: dict, indices: np.ndarray, palette: np.ndarray) -> dict:
     palette = np.asarray(palette, dtype=np.uint8)
     palette_identical = old_pal.shape == palette.shape and bool((old_pal == palette).all())
     if old_idx.shape != indices.shape:
-        return {"identical": False, "shape_mismatch": True,
+        return {"identical": False, "pixels_identical": False, "shape_mismatch": True,
                 "old_shape": list(old_idx.shape), "new_shape": list(indices.shape),
                 "diff_pixels": int(max(old_idx.size, indices.size)),
                 "mean_delta_e": None, "max_delta_e": None, "alpha_diff_pixels": None,
                 "palette_identical": palette_identical}
-    # Compare colors, not raw indices: a reordered palette with the same picture is identical.
+    # Count differences in rendered colors, not raw indices, so a reordered palette with
+    # remapped indices shows 0 differing pixels (pixels_identical) while ``identical`` stays
+    # False: the indexed PNG differs.
     old_opaque, new_opaque = old_idx >= 0, indices >= 0
     old_rgb = old_pal[np.clip(old_idx, 0, None)]
     new_rgb = palette[np.clip(indices, 0, None)]
@@ -94,6 +115,7 @@ def compare_arrays(old: dict, indices: np.ndarray, palette: np.ndarray) -> dict:
     n_diff = int(diff.sum())
     return {"identical": n_diff == 0 and palette_identical
             and bool((old_idx == indices).all()),
+            "pixels_identical": n_diff == 0,
             "shape_mismatch": False, "diff_pixels": n_diff,
             "alpha_diff_pixels": int(alpha_diff.sum()),
             "mean_delta_e": mean_de, "max_delta_e": max_de,
@@ -108,7 +130,7 @@ def compare(directory: Path, tolerance_pixels: int = 0) -> tuple[int, list[dict]
     reports = []
     for key, entry in manifest["cases"].items():
         print(f"comparing {key} ...", file=sys.stderr, flush=True)
-        config, result = run_case(Path(entry["input"]), entry["preset"], entry["method"])
+        config, result = run_case(resolve_manifest_path(entry["input"]), entry["preset"], entry["method"])
         with np.load(directory / entry["file"]) as data:
             old = {name: data[name] for name in data.files}
         report = compare_arrays(old, result.indices, result.palette)
@@ -121,13 +143,15 @@ def compare(directory: Path, tolerance_pixels: int = 0) -> tuple[int, list[dict]
         de = ("-" if r["mean_delta_e"] is None
               else f"{r['mean_delta_e']:.2f} / {r['max_delta_e']:.2f}")
         diff = str(r["diff_pixels"]) + (" (shape)" if r["shape_mismatch"] else "")
-        rows.append([r["key"], "yes" if r["identical"] else "NO", diff, de,
+        rows.append([r["key"], "yes" if r["identical"] else "NO",
+                     "yes" if r["pixels_identical"] else "no", diff, de,
                      "yes" if r["palette_identical"] else "no",
                      "yes" if r["config_hash_match"] else "NO (not like-for-like)"])
     print(f"snapshot {directory} (git {manifest.get('git_sha', '?')[:7]}"
           f"{', dirty' if manifest.get('git_dirty') else ''}) vs "
           f"{bench.git_info()['git_sha'][:7]}")
-    print(bench.format_table(rows, ["case", "identical", "diff px", "ΔE mean / max",
+    print(bench.format_table(rows, ["case", "identical", "pixels same", "diff px",
+                                    "ΔE mean / max",
                                     "palette same", "config hash same"]))
     if any(not r["config_hash_match"] for r in reports):
         print("note: config hash changed for some cases; those comparisons are not "
@@ -136,6 +160,10 @@ def compare(directory: Path, tolerance_pixels: int = 0) -> tuple[int, list[dict]
     # only if more than N pixels differ.
     failing = [r["key"] for r in reports if not r["identical"] and (
         tolerance_pixels == 0 or r["shape_mismatch"] or r["diff_pixels"] > tolerance_pixels)]
+    reordered = [r["key"] for r in reports if r["pixels_identical"] and not r["identical"]]
+    if reordered:
+        print(f"{len(reordered)} case(s) render the same pixels but are not identical "
+              f"(indices or palette differ, so the PNG differs): {', '.join(reordered)}")
     if not failing and all(r["identical"] for r in reports):
         print("all identical")
     elif not failing:
@@ -147,12 +175,15 @@ def compare(directory: Path, tolerance_pixels: int = 0) -> tuple[int, list[dict]
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
+                                     epilog=IDENTICAL_HELP)
     sub = parser.add_subparsers(dest="command", required=True)
     p_save = sub.add_parser("save", help="run the case matrix and store the outputs")
     p_save.add_argument("dir", nargs="?", type=Path, default=DEFAULT_DIR)
     bench.add_case_arguments(p_save)
-    p_cmp = sub.add_parser("compare", help="re-run the stored cases and compare")
+    p_cmp = sub.add_parser(
+        "compare", help="re-run the stored cases and compare",
+        description=IDENTICAL_HELP)
     p_cmp.add_argument("dir", nargs="?", type=Path, default=DEFAULT_DIR)
     p_cmp.add_argument("--tolerance-pixels", type=int, default=0, metavar="N",
                        help="up to N differing pixels per case still exit 0 (default: 0)")
