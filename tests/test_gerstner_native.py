@@ -1,5 +1,6 @@
-"""Native gerstner kernels (`_native.slic_assign`, `_native.bilateral_filter`) against the
-numpy reference in `pixelforge/downscale/_reference/gerstner.py`."""
+"""Native gerstner kernels (`_native.slic_assign`, `_native.bilateral_filter`,
+`_native.superpixel_stats`) against the numpy reference in
+`pixelforge/downscale/_reference/gerstner.py`."""
 
 import os
 import subprocess
@@ -179,6 +180,117 @@ def test_bilateral_filter_rejects_wrong_dtype():
     with pytest.raises(TypeError):
         _native.bilateral_filter(np.zeros((4, 4, 3)), np.ones((4, 4), dtype=np.int64),
                                  12.0, 1.0)
+
+
+# --- superpixel statistics ---------------------------------------------------------------------
+
+def _bincount_stats(assigned_to, mask, weight, lab, n_sp):
+    """The seven np.bincount calls of the reference iteration, verbatim."""
+    ys, xs = np.nonzero(mask)
+    px, py = xs + 0.5, ys + 0.5
+    col = np.ascontiguousarray(lab[ys, xs], dtype=np.float64)
+    pix_w = None if weight is None else np.asarray(weight, dtype=np.float64)[ys, xs]
+    assign = assigned_to[mask]
+    assigned = assign >= 0
+    a, a_px, a_py, a_col = assign[assigned], px[assigned], py[assigned], col[assigned]
+    a_w = None if pix_w is None else pix_w[assigned]
+    count = np.bincount(a, minlength=n_sp)
+    mass = count if a_w is None else np.bincount(a, weights=a_w, minlength=n_sp)
+    sums = np.stack([np.bincount(a, weights=reference._weighted(a_col[:, c], a_w),
+                                 minlength=n_sp) for c in range(3)], axis=1)
+    sum_x = np.bincount(a, weights=reference._weighted(a_px, a_w), minlength=n_sp)
+    sum_y = np.bincount(a, weights=reference._weighted(a_py, a_w), minlength=n_sp)
+    return count, mass, sums, sum_x, sum_y
+
+
+def _check_stats(assigned_to, mask, weight, lab, n_sp):
+    channels = np.ascontiguousarray(np.moveaxis(lab, -1, 0), dtype=np.float64)
+    w = None if weight is None else np.ascontiguousarray(weight, dtype=np.float64)
+    got = _native.superpixel_stats(assigned_to, np.ascontiguousarray(mask), w, channels, n_sp)
+    expected = _bincount_stats(assigned_to, mask, weight, lab, n_sp)
+    count, mass, sums, sum_x, sum_y = got
+    assert count.dtype == np.int64 and count.shape == (n_sp,)
+    assert sums.shape == (n_sp, 3)
+    assert np.array_equal(count, expected[0])
+    if weight is None:
+        assert np.array_equal(mass, count.astype(np.float64))   # mass is the pixel count
+    else:
+        assert np.array_equal(mass, expected[1])
+    for g, e in zip((sums, sum_x, sum_y), expected[2:]):
+        assert g.dtype == np.float64 and np.array_equal(g, e)
+    return got
+
+
+@pytest.mark.parametrize("preset", sorted(PRESETS))
+@pytest.mark.parametrize("name", ["circle_alpha", "noisy_gradient"])
+def test_superpixel_stats_is_bitwise_equal_to_bincount(preprocessed, monkeypatch, name,
+                                                       preset):
+    pre, _ = preprocessed(name, preset=preset, method="gerstner", **PRESETS[preset])
+    calls = _recorded_assign_calls(preprocessed, name, preset, monkeypatch)
+    n_sp = pre.target_width * pre.target_height
+    weights = [None]
+    if pre.weight is not None and not np.all(pre.weight[pre.mask] == 1.0):
+        weights.append(pre.weight)
+    if name == "circle_alpha":
+        assert len(weights) == 2 and not pre.mask.all()   # the weighted, masked case runs
+    for *_, kwargs, assigned_to in calls:
+        if not kwargs.get("windowed", True):
+            continue
+        for weight in weights:
+            _check_stats(assigned_to, pre.mask, weight, pre.lab, n_sp)
+
+
+def test_superpixel_stats_unassigned_and_empty_superpixels():
+    rng = np.random.default_rng(21)
+    hi, wi, n_sp = 37, 29, 12
+    lab = rng.random((hi, wi, 3)) * 100.0
+    mask = rng.random((hi, wi)) > 0.2
+    weight = rng.random((hi, wi))
+    assigned_to = rng.integers(0, n_sp, (hi, wi))
+    assigned_to[rng.random((hi, wi)) < 0.15] = -1    # unassigned pixels
+    assigned_to[assigned_to == 5] = 4                # superpixel 5 gets no pixels
+    assigned_to[~mask & (rng.random((hi, wi)) < 0.5)] = 11   # masked pixels never count
+    for w in (None, weight):
+        count, mass, sums, sum_x, sum_y = _check_stats(assigned_to, mask, w, lab, n_sp)
+        assert count[5] == 0 and mass[5] == 0.0 and not sums[5].any()
+        assert sum_x[5] == 0.0 and sum_y[5] == 0.0
+    as_u8 = _native.superpixel_stats(assigned_to, mask.astype(np.uint8), None,
+                                     np.ascontiguousarray(np.moveaxis(lab, -1, 0)), n_sp)
+    for g, e in zip(as_u8, _check_stats(assigned_to, mask, None, lab, n_sp)):
+        assert np.array_equal(g, e)
+    nothing = _native.superpixel_stats(np.full((hi, wi), -1, dtype=np.int64), mask, None,
+                                       np.ascontiguousarray(np.moveaxis(lab, -1, 0)), n_sp)
+    assert not any(a.any() for a in nothing)
+
+
+def _stats_args(hi=6, wi=5, n_sp=4):
+    return dict(assigned_to=np.zeros((hi, wi), dtype=np.int64),
+                mask=np.ones((hi, wi), dtype=bool), weight=np.ones((hi, wi)),
+                channels=np.zeros((3, hi, wi)), n_sp=n_sp)
+
+
+def test_superpixel_stats_valid_args_run():
+    count, *_ = _native.superpixel_stats(**_stats_args())
+    assert count.tolist() == [30, 0, 0, 0]
+
+
+@pytest.mark.parametrize("change, error", [
+    (dict(mask=np.ones((6, 4), dtype=bool)), ValueError),
+    (dict(weight=np.ones((5, 5))), ValueError),
+    (dict(channels=np.zeros((3, 6, 4))), ValueError),
+    (dict(channels=np.zeros((4, 6, 5))), ValueError),
+    (dict(assigned_to=np.full((6, 5), 4, dtype=np.int64)), ValueError),   # outside -1..n_sp
+    (dict(assigned_to=np.zeros((6, 10), dtype=np.int64)[:, ::2]), ValueError),
+    (dict(mask=np.ones((6, 10), dtype=bool)[:, ::2]), ValueError),
+    (dict(weight=np.ones((6, 10))[:, ::2]), ValueError),
+    (dict(channels=np.zeros((3, 6, 10))[:, :, ::2]), ValueError),
+    (dict(assigned_to=np.zeros((6, 5), dtype=np.int32)), TypeError),
+    (dict(mask=np.ones((6, 5), dtype=np.float64)), TypeError),
+    (dict(weight=np.ones((6, 5), dtype=np.float32)), TypeError),
+])
+def test_superpixel_stats_rejects_bad_input(change, error):
+    with pytest.raises(error):
+        _native.superpixel_stats(**{**_stats_args(), **change})
 
 
 # --- thread-count invariance ------------------------------------------------------------------
