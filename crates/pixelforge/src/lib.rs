@@ -9,6 +9,7 @@
 //! no `target-cpu=native`, no `mul_add` unless used unconditionally, `exp` from the `libm`
 //! crate, and reductions in a fixed order that does not depend on the thread count.
 
+pub mod color;
 pub mod config;
 pub mod gerstner;
 pub mod kopf;

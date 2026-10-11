@@ -32,6 +32,14 @@ Modules:
   of the numerics. `superpixel_stats` is single-threaded on purpose: it sums in row-major
   pixel order like `np.bincount`, and per-band partial sums would change the rounding. The
   numpy versions are kept in `pixelforge/downscale/_reference/gerstner.py`.
+- `src/color.rs`: sRGB <-> CIELAB (`rgb_to_lab`, `lab_to_rgb`, `rgb8_to_lab`, `lab_to_rgb8`),
+  scikit-image 0.26's formulas (D65/2° white, its `xyz_from_rgb` matrix and the bits of its
+  inverse) with `libm::pow`/`libm::cbrt`; `delta_e`, `nearest_index` (brute-force CIE76,
+  ties to the lowest index), `palette_distance_matrix`, `hex_to_rgb8`, `rgb8_to_hex`, all over
+  slices of interleaved triples. `tests/color_oracle.rs` checks them against `tests/oracle/`
+  (LAB within 1e-9, measured 6e-14; `lab_to_rgb8` exact). In Python `pixelforge.color`
+  calls `_native.rgb_to_lab`, `lab_to_rgb`, `rgb8_to_lab`, `lab_to_rgb8` and
+  `nearest_index`.
 - `src/parallel.rs`: `thread_count` and `run_bands` (see the determinism rules below).
 - `src/config.rs`: the Config field table (name, type, default, help, choices, upper bound
   per field; the presets and their longest edge), the single source the Rust Config, JSON
@@ -53,9 +61,17 @@ fails to link on macOS (Python symbols resolve at import time); use `uv sync` or
 Determinism rules (outputs must be byte-identical on every machine):
 
 - float64 only; no fast-math, no `target-cpu=native`, no `mul_add` unless used unconditionally.
-- `exp` from the pure-Rust `libm` crate, never `f64::exp` (platform libm differs in the last bit).
-  Shortcuts around it must be exact (kopf skips the call below libm's own underflow
-  threshold, where it returns exactly 0).
+- Every transcendental function from the pure-Rust `libm` crate (`libm::exp`, `expm1`, `log`,
+  `pow`, `cbrt`, `sin`, `cos`, `atan2`, `hypot`), never the `f64` methods (`f64::exp`,
+  `powf`, `cbrt`, `ln`, ... call the platform libm, which differs in the last bit between
+  macOS and Linux). `f64::sqrt` is IEEE-exact and allowed. No `powi` (its result depends on
+  the compiler's expansion) and no `mul_add`/FMA. Shortcuts around a libm call must be exact
+  (kopf skips `exp` below libm's own underflow threshold, where it returns exactly 0).
+- Rounding to integers uses `f64::round_ties_even` wherever Python used `np.round` or `round()`
+  (half to even: 2.5 -> 2). `f64::round` (half away from zero) is never used.
+  `tests/determinism_guard.rs` fails if a source file of either crate contains `.round()`,
+  `f64::exp(`, `.exp()`, `.powf(`, `.powi(`, `.cbrt()`, `.ln(`, `.log(`, `.sin(`, `.cos(`,
+  `.atan2(` or `.mul_add(` outside a comment; nothing is allow-listed.
 - Python passes C-contiguous arrays of the exact dtype and shape; the binding checks them and
   raises `ValueError` naming the argument (see the helpers in
   `crates/pixelforge-py/src/kopf.rs`) rather than relying on pyo3's conversion error. The
