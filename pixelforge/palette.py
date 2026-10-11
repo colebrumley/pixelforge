@@ -1,9 +1,10 @@
 """Palette construction: median cut, standalone MCDA, hardware palettes, hue ramps.
 
-Median cut, the hue ramps, `build` (except the mcda source) and the `.hex` text run
-natively (`pixelforge._native`, from crates/pixelforge/src/palette.rs): median cut bitwise
-identical to the former numpy version, the ramps within one ulp (libm's hypot, atan2, cos
-and sin); the mcda source, the file I/O and the parsers are still here.
+Median cut, MCDA, the hue ramps, `build` and the `.hex` text run natively
+(`pixelforge._native`, from crates/pixelforge/src/palette.rs and annealer.rs): median cut
+bitwise identical to the former numpy version, the ramps within one ulp (libm's hypot,
+atan2, cos and sin), MCDA within the annealer's replaced BLAS/LAPACK routines; the file I/O
+and the parsers are still here.
 """
 
 from __future__ import annotations
@@ -58,19 +59,10 @@ def median_cut(lab_pixels: np.ndarray, K: int) -> np.ndarray:
 
 
 def mcda(lab_pixels: np.ndarray, K: int, config) -> np.ndarray:
-    """The palette half of Section 7 applied directly to pixel colors (no superpixels)."""
-    from .downscale.gerstner import PaletteAnnealer
-
+    """The palette half of Section 7 applied directly to pixel colors (no superpixels):
+    gerstner's annealer on the pixels with a uniform prior, at most g_max_iters steps."""
     pixels = np.ascontiguousarray(lab_pixels, dtype=np.float64).reshape(-1, 3)
-    if len(pixels) == 0:
-        raise ValueError("mcda needs at least one pixel")
-    annealer = PaletteAnnealer(pixels, K, config)
-    weights = np.full(len(pixels), 1.0 / len(pixels))
-    for _ in range(config.g_max_iters):
-        annealer.step(pixels, weights)
-        if annealer.done:
-            break
-    return annealer.colors.copy()
+    return _native.mcda(pixels, int(K), config.to_dict())
 
 
 # ----------------------------------------------------------------------- hardware palettes

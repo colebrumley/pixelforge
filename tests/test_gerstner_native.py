@@ -354,3 +354,6 @@ def test_reference_shares_the_tunable_constants():
     for name in ("PERTURB_DELTA", "SPLIT_GROWTH", "SPLIT_SPREAD", "STALL_EVENTS",
                  "EXHAUSTED_T_FRACTION", "_MAX_SEARCH_RADIUS"):
         assert getattr(gerstner, name) == getattr(reference, name)
+    # ... and the native stage's (the Python constants mirror the library's).
+    for name, value in _native.gerstner_constants().items():
+        assert getattr(gerstner, name) == value, name
