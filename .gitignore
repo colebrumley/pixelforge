@@ -9,3 +9,4 @@ build/
 gallery/
 out/
 samples/
+bench/snapshots/
