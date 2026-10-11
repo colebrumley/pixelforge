@@ -96,6 +96,9 @@ All notable changes to this project are documented here. The format follows
   unchanged); the remaining spec deviations carry `# DEVIATION:` comments.
 - Kopf folds per-kernel block sums into place through slices instead of `np.ix_` gathers
   and scatters (output bitwise unchanged): portrait background 39.4 s → 35.2 s here.
+- gerstner's bilateral filter computes the symmetric colour/spatial weight once per ± offset
+  pair and shifts it for the mirror offset (output bitwise unchanged): 67 → 50 ms per call
+  on 256×256.
 
 - Downscalers weight colors by input alpha; semi-transparent fringes pull less (opaque
   inputs are unchanged).

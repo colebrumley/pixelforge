@@ -233,15 +233,34 @@ def bilateral_filter(image: np.ndarray, active: np.ndarray, sigma_color: float,
     den = np.zeros((h, w))
     inv_color = 1.0 / (2.0 * sigma_color * sigma_color)
     inv_spatial = 1.0 / (2.0 * sigma_spatial * sigma_spatial)
+    # The unmasked weight is symmetric: w(p, p + d) = w(p + d, p). Bitwise so, not just
+    # mathematically: (a − b)² == (b − a)² exactly in IEEE arithmetic, the channel sum runs in
+    # the same order, and the spatial term depends on dx² + dy² only. So the weight of offset
+    # d at pixel p is the weight of offset −d at pixel p + d, and the exp() is needed for only
+    # one offset of each ± pair. The loop visits offsets in lexicographic order, so every d
+    # before (0, 0) comes before its mirror: it computes its weights and parks them, zero-
+    # padded, under the mirror's key; the mirror reads them back shifted by d. Shifted-in
+    # padding (p + d outside the image) is 0 where the direct formula gives some finite
+    # value, but padded_active is 0 there too, so both masked weights are +0.
+    # The accumulation below is unchanged (same offsets, same order, same operations), so
+    # the output is bitwise identical to computing every exp() directly.
+    mirrored: dict[tuple[int, int], np.ndarray] = {}
     for dy in range(-radius, radius + 1):
         for dx in range(-radius, radius + 1):
             ys = slice(radius + dy, radius + dy + h)
             xs = slice(radius + dx, radius + dx + w)
             neighbor = padded[ys, xs]
-            diff = neighbor - image
-            d2 = (diff * diff).sum(axis=-1)
-            weight = np.exp(-d2 * inv_color - (dx * dx + dy * dy) * inv_spatial)
-            weight *= padded_active[ys, xs]
+            if (dy, dx) in mirrored:
+                weight = mirrored.pop((dy, dx))[ys, xs] * padded_active[ys, xs]
+            else:
+                diff = neighbor - image
+                d2 = (diff * diff).sum(axis=-1)
+                weight = np.exp(-d2 * inv_color - (dx * dx + dy * dy) * inv_spatial)
+                if (dy, dx) != (0, 0):
+                    parked = np.zeros(padded_active.shape)
+                    parked[radius:radius + h, radius:radius + w] = weight
+                    mirrored[(-dy, -dx)] = parked
+                weight *= padded_active[ys, xs]
             num += weight[..., None] * neighbor
             den += weight
     out = image.copy()

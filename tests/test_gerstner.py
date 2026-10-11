@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from pixelforge import Config, color
 from pixelforge.downscale import gerstner
@@ -180,3 +181,43 @@ def test_shared_grid_helpers():
     g = gerstner._Grid(30, 20, 7, 5)
     assert np.array_equal(g.home_x, box.cell_index(20, 5))
     assert np.array_equal(g.home_y, box.cell_index(30, 7))
+
+
+def _bilateral_reference(image, active, sigma_color, sigma_spatial):
+    """bilateral_filter before the symmetric-weight sharing: one exp() per offset."""
+    h, w = active.shape
+    radius = int(np.ceil(2.0 * sigma_spatial))
+    padded = np.zeros((h + 2 * radius, w + 2 * radius, 3))
+    padded[radius:radius + h, radius:radius + w] = image
+    padded_active = np.zeros((h + 2 * radius, w + 2 * radius))
+    padded_active[radius:radius + h, radius:radius + w] = active
+    num = np.zeros((h, w, 3))
+    den = np.zeros((h, w))
+    inv_color = 1.0 / (2.0 * sigma_color * sigma_color)
+    inv_spatial = 1.0 / (2.0 * sigma_spatial * sigma_spatial)
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            ys = slice(radius + dy, radius + dy + h)
+            xs = slice(radius + dx, radius + dx + w)
+            neighbor = padded[ys, xs]
+            diff = neighbor - image
+            d2 = (diff * diff).sum(axis=-1)
+            weight = np.exp(-d2 * inv_color - (dx * dx + dy * dy) * inv_spatial)
+            weight *= padded_active[ys, xs]
+            num += weight[..., None] * neighbor
+            den += weight
+    out = image.copy()
+    ok = den > 0
+    out[ok] = num[ok] / den[ok][:, None]
+    return out
+
+
+@pytest.mark.parametrize("sigma_spatial", [0.4, 1.0, 1.5, 2.3])
+def test_bilateral_filter_matches_reference_bitwise(sigma_spatial):
+    rng = np.random.default_rng(7)
+    h, w = 41, 37
+    image = rng.random((h, w, 3)) * np.array([100.0, 160.0, 160.0]) - np.array([0.0, 80.0, 80.0])
+    active = rng.random((h, w)) > 0.2
+    expected = _bilateral_reference(image, active, 12.0, sigma_spatial)
+    got = gerstner.bilateral_filter(image, active, 12.0, sigma_spatial)
+    assert np.array_equal(got, expected)
