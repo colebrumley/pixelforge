@@ -21,8 +21,8 @@ pub const SEAMLESS_PAD_OUT: i64 = 2;
 pub const STRETCH_WARN_ASPECT: f64 = 0.02;
 
 /// `pixelforge.io.MAX_INPUT_PIXELS`: the largest image the pipeline accepts, also the bound
-/// on the repeated input.
-pub const MAX_INPUT_PIXELS: u64 = 24_000_000;
+/// on the repeated input (defined in `io`).
+pub use crate::io::MAX_INPUT_PIXELS;
 
 /// The canvas layout `(inner width, inner height, left, top)`: the image's size and offset
 /// inside the area left by the outline margin.
