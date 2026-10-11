@@ -7,7 +7,13 @@ need it; install the CLI with `cargo install --git https://github.com/colebrumle
 ## Install
 
 Not on PyPI. Building needs a stable Rust toolchain (`rustup`) and Python 3.11 or newer;
-the only Python dependency is numpy. From a checkout of the repository:
+the only Python dependency is numpy. Straight from GitHub:
+
+```bash
+pip install 'git+https://github.com/colebrumley/pixelforge#subdirectory=crates/pixelforge-py'
+```
+
+or from a checkout of the repository:
 
 ```bash
 pip install ./crates/pixelforge-py

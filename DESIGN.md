@@ -1,7 +1,9 @@
 # pixelforge design notes
 
-Details behind the [README](README.md): how the three downscalers work, the determinism
-contract, and where the implementation deliberately deviates from [REQUIREMENTS.md](REQUIREMENTS.md).
+Details behind the [README](README.md): how the three downscalers work, how the Rust
+implementation is organised and keeps its numerics reproducible, the determinism contract,
+timings, and where the implementation deliberately deviates from
+[REQUIREMENTS.md](REQUIREMENTS.md).
 
 ## Methods
 
@@ -41,84 +43,140 @@ After downscaling, the image is quantized (optionally with selective ordered dit
 post-processed: hue-shifted palette ramps, saturation, orphan-pixel removal, jaggy cleanup
 and an outline for sprites; backgrounds can be cut into a de-duplicated tileset + tilemap.
 
-Timings on an Apple M1 Max, 1024×1024 → 64×64, before kopf's per-pixel loops moved into the
-native layer: kopf ≈ 36 s (50 iterations), gerstner ≈ 25 s, box well under a second. kopf is
-now much faster and also scales with the cores (timings: TODO, measure on
-an idle machine; `cargo xtask bench --compare bench/0edd462.json` gives the comparison against
-the pure-Python baseline). Gerstner at 256×256 output with 32 colors
-is the slow corner: 5 s to 2 minutes depending on how many annealing iterations the image
-needs. Without `-v` such runs print nothing until the result; `-v` logs per-stage timings and
-`-vv` each iteration (logging only reads values, it never changes an output).
+## Implementation
 
-On a shared 4-core Linux box (CPU time, a noisy 256² gradient resized up), kopf 512² → 64²
-went from 52 s (50 iterations × 1.04 s, peak 141 MiB traced) to 26 s (32 × 0.83 s, 67 MiB)
-once the per-slot offset arrays were dropped and the convergence test fixed; 1024² → 64²
-went from 204 s + 5 s preprocessing (50 × 4.1 s, 554 MiB) to 27 s + 1.6 s (31 × 0.88 s,
-67 MiB) with the 2× pre-reduction, at a mean ΔE of 1.1 from the old output.
+pixelforge is a Cargo workspace. `crates/pixelforge` is the library and, behind its default
+`cli` feature, the `pixelforge` program; `crates/pixelforge-py` is the optional Python
+binding (PyO3 + maturin) over the same library; `xtask/` is the developer tooling. The
+library has no Python and no numerical crates: images are plain slices with explicit
+`(height, width)` dimensions. Modules of `crates/pixelforge/src/`:
 
-## Native layer
+- `config` (`config.rs`, `config/`): the field table (name, type, default, help, choices,
+  bound per field; the presets) that the `Config`, its canonical JSON, its hash and the CLI
+  flags are all built from; validation and its messages; the palette file loaders.
+- `color`: sRGB ↔ CIELAB, ΔE, nearest palette entry (brute force, ties to the lowest index),
+  hex helpers.
+- `io`: input decoding (the six formats, EXIF orientation, 16-bit rescaling, the pixel
+  budget checked from the header, regular files only), the input hash, array inputs, and the
+  palette-indexed PNG writer with its `tEXt` chunks.
+- `preprocess`, with `mask`, `layout`, `filters` and `enhance`: alpha mask, background
+  keying and fringe unmixing, transparent filling (exact Euclidean distance transform), crop,
+  output size and `fit`, integer repeat, box pre-reduction, the `enhance`/`ink` pass,
+  bilateral or median denoise, seamless padding.
+- `boxfilter`: the box downscaler.
+- `kopf` + `kopf_run`: kopf's per-pixel E-step/M-step and C-step sums, and the control flow
+  around them (kernel algebra, shape constraints, ghost and starved kernels, convergence).
+- `gerstner` + `gerstner_run` + `annealer`: gerstner's SLIC assignment, superpixel bilateral
+  filter and statistics; the iteration loop; the palette annealer (MCDA), also used directly
+  for `palette_source="mcda"`.
+- `downscale`: the result type every downscaler returns and the grid helper kopf and
+  gerstner share.
+- `palette`: bundled palettes, median cut, hue ramps, the palette build and `.hex` text.
+- `quantize`: mapping to the palette with optional Bayer dithering.
+- `postprocess`: saturation, orphan removal, jaggy cleanup, outline.
+- `tiles`: tileset extraction with near-duplicate merging, the tilemap, Tiled `.tmj` and CSV.
+- `pipeline`: `run` / `run_loaded` (load → preprocess → downscale → palette and quantize →
+  post-process → tiles), `Output::save` and every output file, `environment()`.
+- `cli` (`cli/`, `main.rs`): `convert`, `batch`, `compare`, `palettes`, `--config` loading,
+  logging and exit codes; `sheet`: `compare`'s side-by-side and proof sheets and `--sweep`
+  parsing.
+- `npsum`: numpy's float64 summation orders, for the sums the Python version compared.
+- `pyjson`, `pyrepr`, `pyunicode`: Python's `json.dumps` layouts, `round(x, n)`, float and
+  string `repr` and the `str` behaviours the config parser needs, so the JSON files,
+  canonical config JSON (and with it every config hash) and error messages are byte-identical
+  to the Python version's.
+- `parallel`: the thread count and the fixed-partition band runner.
 
-The per-pixel hot loops live in Rust. The Cargo workspace at the repo root has two crates:
-`crates/pixelforge`, a plain Rust library with no Python dependency that holds the numerical
-code, and `crates/pixelforge-py`, the extension `pixelforge._native` (PyO3 + maturin, built on
-install) that checks arguments and calls the library:
+**Threads.** Work runs on `PIXELFORGE_THREADS` threads (default: the available
+parallelism) only where the result cannot depend on the thread count. The rule: the work is
+split into a fixed partition (bands of rows whose boundaries depend on the image size only),
+each band computes into its own buffer, and the buffers are merged in band order after all
+bands finish; threads pull band numbers from a counter, which decides when a band runs,
+never what it computes.
 
-- kopf (`crates/pixelforge/src/kopf.rs`): the fused E-step + M-step sums (`kopf_em_step`),
-  the C-step's directional and overlap sums (`kopf_c_step`), and the spatial-only recoloring
-  of starved kernels (`kopf_spatial_refill`). Everything per kernel stays in Python
-  (`downscale/kopf.py`): the M-step and C-step algebra on (ho, wo) arrays, the constraints,
-  convergence, logging and the DEVIATION notes.
-- gerstner (`crates/pixelforge/src/gerstner.rs`): the modified-SLIC assignment pass
-  (`slic_assign`), the superpixel bilateral filter (`bilateral_filter`) and the
-  per-iteration superpixel statistics (`superpixel_stats`: pixel count, mass, colour and
-  centre sums). The palette annealer, Laplacian smoothing, the means and centres
-  (sums / mass) and the control flow stay in Python (`downscale/gerstner.py`).
+- kopf's three per-pixel passes reduce across pixels into per-kernel sums, so their bands of
+  `BAND_ROWS` (32) input rows are part of the numerics: changing the band height would change
+  the rounding of the sums.
+- gerstner's SLIC assignment and superpixel bilateral filter (8-row bands) and the
+  preprocessing bilateral denoise (32-row bands) compute each output element from the inputs
+  alone, so their bands only split the work.
+- gerstner's superpixel statistics are single-threaded on purpose: they sum each
+  superpixel's pixels in row-major order, as `np.bincount` did, and per-band partial sums would
+  change the rounding. Everything else is single-threaded.
 
-The native code uses float64 only, `exp` from the pure-Rust `libm` crate (the platform `exp`
-can differ in the last bit between macOS and Linux), no fast-math or FMA contraction, and the
-thread-count-independent partition of contract item 2. Threading per kernel:
+**Numerics.** Every float routine was ported formula for formula from the last Python
+version (9f53516, which reported 0.1.0) and compared with it on the fixtures, the samples
+and a 48-case snapshot matrix before the Python code was removed
+(`docs/rust-migration-plan.md` has the per-stage record).
+The rules that make the results the same on every machine:
 
-- kopf's kernels reduce across pixels into per-kernel sums, so their bands of `BAND_ROWS`
-  (32) input-pixel rows (`crates/pixelforge/src/parallel.rs`) are part of the numerics: each
-  band sums into its own buffer, the buffers are merged in band order, and changing the band
-  height changes the rounding of the sums.
-- gerstner's `slic_assign` and `bilateral_filter` are per-pixel independent (each output
-  element is computed from the inputs alone, no reduction across pixels), so their bands of
-  8 rows only split the work between threads and are not part of the numerics.
-- gerstner's `superpixel_stats` is single-threaded on purpose. It sums each superpixel's
-  pixels in row-major order, exactly the order `np.bincount` uses, which makes it bitwise
-  equal to the numpy reference; a banded parallel version would sum per-band partial sums
-  instead, changing the rounding and thus the output pixels.
+- float64 throughout. Every transcendental function (`exp`, `expm1`, `log`, `pow`, `cbrt`,
+  `sin`, `cos`, `atan2`, `hypot`) comes from the pure-Rust `libm` crate, never from the
+  platform's C library, whose last bit differs between macOS and Linux; `f64::sqrt` is exact
+  and allowed. `crates/pixelforge/tests/determinism_guard.rs` fails the build on any platform
+  transcendental, `powi`, `mul_add` or `.round()` in the sources.
+- Rounding to integers is `f64::round_ties_even` (half to even, as `np.round` and Python's
+  `round()`), never `f64::round`.
+- No fast-math, no `target-cpu=native`, no compiler FMA contraction. An explicit `libm::fma`
+  (correctly rounded in software, identical everywhere) is used only where the reference
+  fused: kopf's 2×2 covariance eigendecomposition reproduces LAPACK's `dsteqr`/`dlaev2` path
+  with the two fused multiply-adds Accelerate performs, `np.hypot` is
+  `sqrt(fma(small, small, big²))`, and `1.1 ** n` is a table of correctly rounded powers.
+- Where the Python version summed with `np.sum`/`mean`/`cumsum` and then compared the sums
+  (median cut's box errors, the ramp bins' mean L, tile de-duplication means), `npsum`
+  reproduces numpy's pairwise summation bit for bit; `np.bincount` sums (box cells,
+  superpixel statistics) and the pre-reduction's block means keep numpy's order.
+- scipy's `distance_transform_edt` feature indices (which opaque pixel a transparent one
+  copies, ties included), `uniform_filter1d`, `gaussian_filter1d`, the 3×3 `median_filter`,
+  `np.percentile`, and scikit-image 0.26's `denoise_bilateral` and colour conversion are
+  reproduced as written, lookup tables and padding modes included.
+- The only random numbers are a SplitMix64 stream seeded with `config.seed`.
 
-`PIXELFORGE_THREADS` sets the thread count (default: the available parallelism); it is
-recorded in `*_meta.json` as `environment.threads` and never hashed.
+Where the output differs from that Python version:
 
-There is no pure-Python fallback at runtime: two implementations cannot be bit-identical
-(summation order, `exp`), and the contract is byte-identical PNGs. The numpy implementation
-the native code replaced is kept in `pixelforge/downscale/_reference/` for tests and
-benchmarks only; `tests/test_kopf_native.py` checks every kopf function against loops
-lifted from it to 1e-12 relative per quantity, and `tests/test_gerstner_native.py` checks
-`slic_assign` and `superpixel_stats` bitwise and `bilateral_filter` to 1e-9 against the
-numpy gerstner reference.
+- Colour conversion agrees with scikit-image to 5.7e-14 in LAB. That moved one case of the
+  48-case snapshot matrix: `noisy_gradient`, background preset, gerstner, 10 of 65,536
+  pixels (ΔE 4.03), which sit on a near-tie in the annealer that a one-ulp jitter of
+  scikit-image's own LAB moves the same way.
+- gerstner's covariance and mean products were BLAS matrix products, whose summation order
+  cannot be reproduced; they are sequential sums now, and the 3×3 eigenvectors come from a
+  Jacobi solver. Principal axes move by at most 2.8e-13 and palettes by at most 3.3e-11; no
+  index, mask cell or 8-bit value changed. Hue ramps move by up to 7e-14 (libm's
+  `hypot`/`atan2`/`cos`/`sin` differ from numpy's by one ulp on a few percent of arguments).
+- The Gaussian blur and the bilateral denoise match scipy and scikit-image built without FMA
+  to a few ulps (≤ 2.2e-16 and ≤ 7.8e-16); the macOS arm64 wheels fused multiply-adds, so
+  against those 4 pixels of a 1024² photo differ by up to 5.4e-6 where the colour distance
+  crosses a lookup bin. No 8-bit value changed.
+- JPEG is decoded by `zune-jpeg` (through the `image` crate) instead of Pillow's
+  libjpeg-turbo: within 7 levels on up to half the pixels at 4:2:0 chroma, 3 levels at
+  4:4:4, 1 for greyscale. PNG, BMP, TIFF, GIF and lossless WEBP decode to Pillow's pixels
+  bit for bit, and lossy WEBP matched libwebp on every file tested.
+- Seeded gerstner runs draw from SplitMix64 instead of numpy's PCG64: still deterministic,
+  still different from the unseeded run, but not the Python version's output for the same
+  seed.
+- PNGs are written as 8-bit indexed (Pillow wrote 1/2/4-bit for small palettes): the bytes
+  differ, the decoded pixels, palette, transparency and text do not. `compare`'s proof-sheet
+  labels use an embedded bitmap font, so the labels and the sheet size differ by a few pixels;
+  every cell is the same.
+- Every config hash changed with the version (0.2.0); `tests/golden.json`'s pixel hashes did
+  not.
 
 ## Determinism contract
 
-1. No unseeded randomness anywhere. `random`, `numpy.random` and `os.urandom` are not
-   called. The only RNG is `numpy.random.default_rng(config.seed)`, used in exactly one place
-   (the MCDA sub-cluster perturbation in `downscale/gerstner.py`) and only when `config.seed`
-   is set; the default perturbation is deterministic without an RNG.
-2. No dependence on dict/set iteration order of unordered inputs, thread scheduling or
-   wall-clock time. Numerical kernels may run on several threads only when the result does
-   not depend on the thread count: the work is split into a fixed partition (bands of 32
-   input-pixel rows, independent of how many threads there are), each part accumulates into
-   its own buffer, and the buffers are merged in partition order after all parts finish.
-   `PIXELFORGE_THREADS` (default: the available parallelism) sets the thread count and
-   affects speed only; `tests/test_kopf_native.py` and `tests/test_gerstner_native.py`
-   check bitwise equality across thread counts (1, 2, 3, 8). (Timings are recorded in `*_meta.json` only; they never influence a result.)
-3. All arrays are `float64` internally. A given quantity is always reduced by the same numpy
-   routine. Final color conversion rounds with `np.round(...).astype(np.uint8)` after
-   clipping to [0, 255], never truncation.
-4. `Config.hash()` is the SHA-256 of the canonical JSON of the config (sorted keys, no
+1. No unseeded randomness anywhere. The only random generator is a SplitMix64 stream seeded
+   with `config.seed`, used in exactly one place (the MCDA sub-cluster perturbation in
+   `annealer.rs`) and only when `config.seed` is set; the default perturbation is
+   deterministic without one.
+2. No dependence on hash-map iteration order, thread scheduling or wall-clock time.
+   Threads only run work split into a fixed partition merged in partition order
+   ([Implementation](#implementation)), so `PIXELFORGE_THREADS` affects speed only;
+   `crates/pixelforge/tests/determinism.rs` checks the threaded kernels bitwise at 1, 2, 3
+   and 8 threads, and `cli.rs` whole runs. (Timings are recorded in `*_meta.json` only; they
+   never influence a result.)
+3. All arithmetic is float64 under the numerics rules above: `libm` for every
+   transcendental function, no FMA except an explicit `libm::fma`, fixed summation orders.
+   Final color conversion clips to [0, 255] and rounds half to even, never truncates.
+4. `Config::hash()` is the SHA-256 of the canonical JSON of the config (sorted keys, no
    whitespace), the pixelforge version string and, when `palette_name` is set, the SHA-256
    of the resolved palette's `rrggbb` lines, so rewriting a palette file changes the hash.
    Every output PNG carries the `tEXt` chunks `pixelforge:config` (the canonical JSON) and
@@ -126,30 +184,63 @@ numpy gerstner reference.
    `pixelforge:palette_sha256` and `pixelforge:palette` (the lines, newline-joined).
    `batch` passes its shared palette as an inline `palette_name="hex:rrggbb,…"`, not as the
    path of `shared_palette.hex`, so frame metadata never depends on `--outdir`.
-5. Nothing in a config depends on the environment: `remove_bg` is `False` unless asked for,
-   whether or not rembg is installed. A `remove_bg=True` run depends on the rembg model,
-   which is outside this contract; `_meta.json` records the rembg and onnxruntime versions.
+5. Nothing in a config depends on the environment: `remove_bg` is `false` unless asked for,
+   whether or not rembg is installed. A `remove_bg=true` run depends on the external `rembg`
+   command and its model, which are outside this contract; `_meta.json` records
+   `rembg --version`.
 6. Running the CLI twice on the same input and config produces byte-identical PNGs;
-   `cargo test` (`crates/pixelforge/tests/determinism.rs`, `cli.rs`) enforces this for every method and preset, in-process
-   and across fresh interpreters with different `PYTHONHASHSEED` and BLAS/OpenMP thread
-   counts (every output file; `_meta.json` minus `stats.timings` and `environment`).
-   `crates/pixelforge/tests/golden.rs` pins the decoded pixels and `config_hash` per fixture,
-   method and preset to `tests/golden.json`; after an intentional output change, regenerate
-   it with `cargo xtask golden` and commit the diff with the change.
+   `cargo test` enforces this for every method and preset, in-process
+   (`crates/pixelforge/tests/determinism.rs`) and across fresh processes at different
+   `PIXELFORGE_THREADS` (`cli.rs`), comparing every output file (`_meta.json` minus
+   `stats.timings` and `environment`). `crates/pixelforge/tests/golden.rs` pins the decoded
+   pixels and `config_hash` per fixture, method and preset to `tests/golden.json`; after an
+   intentional output change, regenerate it with `cargo xtask golden` and commit the diff
+   with the change. CI runs the whole suite and `cargo xtask golden --check` on Linux x86-64
+   and macOS arm64 against the same file.
 
-Byte-identical output across *different machines* additionally assumes the same versions of
-numpy, scipy, scikit-image and Pillow, which only `git clone && uv sync --locked` (same Python
-minor version) guarantees; `_meta.json` records them under `environment`. Across CPU
-architectures it is best-effort: float64 results can differ at ~1e-12 between SIMD paths, which
-the 8-bit rounding absorbs in every case tested, and `_palette.json` rounds LAB to 6 decimals
-for the same reason.
+Byte-identical output across *different machines* needs only the same pixelforge version:
+the program is self-contained (its decoders and numerics are compiled in, and it calls no
+system library for either), so no installed library version takes part in a result.
+`_meta.json` records the platform, thread count and version under `environment`. Across CPU
+architectures it is best-effort: float64 results could differ in the last bits between
+instruction sets, which the 8-bit rounding absorbs in every case tested (the goldens agree on
+x86-64 and arm64), and `_palette.json` rounds LAB to 6 decimals for the same reason.
+
+## Timings
+
+Whole runs (`total_s`, load to post-processing) on an Apple M1 Max (10 cores, every core
+used), background preset, from `cargo xtask bench` and its Python predecessor; the first two
+columns are `bench/0edd462.json` and `bench/9f53516.json`:
+
+| case | pure Python (`0edd462`) | Python + Rust hot loops (`9f53516`) | Rust (0.2.0) |
+| --- | ---: | ---: | ---: |
+| portrait 1024² → 256², box | 1.64 s | 1.64 s | 0.32 s |
+| portrait 1024² → 256², kopf (24 iterations) | 33.9 s | 4.48 s | 1.78 s |
+| portrait 1024² → 256², gerstner (139 iterations) | 31.0 s | 6.76 s | 3.80 s |
+| `gradient6` 256² → 256², gerstner (299 iterations) | 28.4 s | 12.85 s | 8.10 s |
+
+The portrait is a 1024×1024 photo outside the repository; `gradient6` is a test fixture.
+All three columns were measured on a heavily loaded machine (load average 12–24 for the
+middle column, about 30 for the Rust one, not recorded for the first), so they are upper
+bounds, not idle-machine numbers. `cargo xtask bench --compare bench/9f53516.json` compares
+a new run with the fixture cases of that file (`--case PATH:background` adds a photo of your
+own).
+
+Gerstner at 256×256 output with 32 colors is the slow corner: from seconds to a minute or
+more depending on how many annealing iterations the image needs. Without `-v` such runs print
+nothing until the result; `-v` logs per-stage timings and `-vv` each iteration (logging only
+reads values, it never changes an output).
 
 ## Known deviations
 
-The algorithmic deviations are marked with `# DEVIATION:` comments in the code.
+The algorithmic deviations are marked with `// DEVIATION:` comments in the Rust modules
+(`crates/pixelforge/src/`): `kopf_run.rs`, `annealer.rs`, `gerstner_run.rs`,
+`postprocess.rs`, `tiles.rs`, `layout.rs`, `preprocess.rs`, `pipeline.rs` and
+`cli/commands/batch.rs`.
 
 **Kopf (Section 6).** Implemented as specified, the algorithm cannot pass
-`test_thin_line_stays_connected`, so the E-step and two constraints differ:
+`test_thin_line_stays_connected` (`crates/pixelforge/tests/downscalers.rs`), so the E-step
+and two constraints differ:
 
 - *No per-kernel normalization.* `w_k(i) /= Σ w_k(i)` rescales each kernel relative to its own
   best-fitting pixels. A kernel on a thin feature (less than half of its cell) then never
@@ -298,7 +389,7 @@ The R_k half-width stays at the specified 2 output units.
   spec behaviour (warns when the aspect changes by > 2 %), `"crop"` crops the input centered
   to the canvas aspect before downscaling, so the downscalers stay untouched. Seamless mode
   always stretches (padding or cropping would break the wrap). `tile_size` larger than the
-  longest derived edge is a `ValueError`. `stats.fit` and `stats.content_size` record it.
+  longest derived edge is a config error. `stats.fit` and `stats.content_size` record it.
 - Seamless padding is 2 output pixels per side, i.e. `2·rx` × `2·ry` input pixels per axis.
 - Preprocessing fills transparent pixels with the nearest opaque color before denoising,
   uses `mode="edge"` for the bilateral filter, and repeats inputs that are smaller than the
@@ -317,12 +408,14 @@ The R_k half-width stays at the specified 2 output units.
   installed"), so the same command gives the same config hash on every machine.
 - `scale` and `canvas` are not in the spec. Without them `batch` sizes each frame from its own
   crop box, so frames of one animation came out at different scales; it now sets one `scale`
-  from the union of the frames' crop boxes and a shared `canvas` (`cli.shared_scale`).
-- Input loading (not in the spec) only enables Pillow's PNG, JPEG, GIF, WEBP, BMP and TIFF
-  decoders, so content under a misleading name cannot reach other plugins (EPS would run
-  Ghostscript). It applies the EXIF orientation, rescales 16-bit grayscale to 8 bit instead
-  of clipping it, uses the first frame of animations (with a warning), refuses non-regular
-  files and enforces a pixel budget (`io.MAX_INPUT_PIXELS`) before decoding. A small input
+  from the union of the frames' crop boxes and a shared `canvas` (`shared_scale` in
+  `cli/commands/batch.rs`).
+- Input loading (not in the spec) only decodes PNG, JPEG, GIF, WEBP, BMP and TIFF, whatever
+  the file name says (the Python version restricted Pillow to these plugins so that content
+  under a misleading name could not reach others; EPS would run Ghostscript). It applies
+  the EXIF orientation, rescales 16-bit grayscale to 8 bit instead of clipping it, uses the
+  first frame of animations (with a warning), refuses non-regular files and enforces a pixel
+  budget (`io::MAX_INPUT_PIXELS`) before decoding. A small input
   whose integer repeat would exceed that budget is refused.
 - `Config` has three fields that are not in the spec, `key_bg`, `key_bg_tolerance` and
   `key_bg_fringe` (see Install), and the sprite preset sets `key_bg=True`. After keying, up to
@@ -332,7 +425,7 @@ The R_k half-width stays at the specified 2 output units.
   `key_bg=False` because they are test patterns, not sprites; images in `samples/` use the
   preset as-is.
 - `Config` has five more fields that are not in the spec, `enhance`, `enhance_black`,
-  `enhance_white`, `enhance_radius` and `ink` (`preprocess.enhance`), all off by default. The
+  `enhance_white`, `enhance_radius` and `ink` (`enhance.rs`), all off by default. The
   downscalers are faithful to the source, and on a photo that loses whatever is smaller than
   an output pixel: gerstner dropped an eye and the mouth of a 128-px portrait. The pre-pass
   runs after pre-reduction and before denoising, with every radius in output pixels:
@@ -360,15 +453,8 @@ The R_k half-width stays at the specified 2 output units.
 - The box baseline does not produce a *broken* line on `line_diag.png`; it produces an
   unbroken but gray one (L ≈ 66, nothing below L = 50). The test asserts exactly that, and
   that the Kopf line is dark (L < 50) and 8-connected along the whole diagonal.
-- `test_determinism.py` runs the background preset at 64×64 instead of 256×256. Its kopf cases
-  at preset size, and kopf on the 256-px golden fixtures, are marked `slow`; 32-px variants
-  with `kopf_max_iters=10` run in their place under `-m "not slow"`. CI runs everything.
+- `crates/pixelforge/tests/determinism.rs` runs the background preset at 64×64 instead of
+  256×256. Its kopf cases at preset size, and kopf on the 256-px golden fixtures, are
+  `#[ignore]`d as slow; 32-px variants with `kopf_max_iters=10` run in their place under a
+  plain `cargo test`. CI runs everything (`-- --include-ignored`).
 - `test_converges` uses an 8×8 output.
-
-## Troubleshooting
-
-On macOS, files inside a hidden `.venv` can end up with the `hidden` flag, and Python then
-ignores the `.pth` file an editable install relies on (`ModuleNotFoundError: No module named
-'pixelforge'` from the `pixelforge` command). Either install a regular copy with
-`uv sync --no-editable`, or run `python -m pixelforge …` from the repository root. The tests
-and scripts do not depend on the editable install.

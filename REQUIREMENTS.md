@@ -2,9 +2,10 @@
 
 > Historical specification. pixelforge was built from it in Python and has since been
 > ported to Rust (0.2.0; see `docs/rust-migration-plan.md`), which supersedes the "Python
-> 3.11+" requirement and the "No Rust" non-goal. The Python modules, `pytest` tests and
-> `scripts/` it names no longer exist; the behaviour they specify is kept and tested by
-> `cargo test` and `cargo xtask`.
+> 3.11+" requirement and the "No Rust" non-goal. The Python package layout, `pytest` tests
+> and `scripts/` below are the spec of the 0.1.0 Python prototype and no longer exist; the
+> behaviour they specify is kept and tested by `cargo test` and `cargo xtask` (README.md
+> and DESIGN.md describe the current program, DESIGN.md also every deliberate deviation).
 
 Deterministic conversion of arbitrary raster images (especially AI-generated ones) into
 16-bit-style pixel art: sprites and backgrounds/tiles.

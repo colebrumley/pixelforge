@@ -1,11 +1,13 @@
 # Moving the rest of pixelforge to Rust
 
-Status: planning. Branch `claude/app-rust-migration-plan-b00727`, based on `claude/rust-port`
-(918abef), which already holds the per-pixel hot loops in `rust/` (`pixelforge._native`).
-This document covers everything that is still Python: config, I/O, preprocessing, the
-downscalers' control flow, palette, quantization, post-processing, tiles, the pipeline, the
-CLI, the dev scripts and the test suite. [docs/rust-port-plan.md](rust-port-plan.md) is the
-plan this continues; its decisions stay in force unless amended below.
+Status: complete (0.2.0, 2026-10-11). Branch `claude/app-rust-migration-plan-b00727`,
+based on `claude/rust-port` (918abef), which held the per-pixel hot loops in `rust/`
+(`pixelforge._native`). This document covered everything that was still Python then:
+config, I/O, preprocessing, the downscalers' control flow, palette, quantization,
+post-processing, tiles, the pipeline, the CLI, the dev scripts and the test suite. Each
+phase ends with a "Done" note recording what was built and what moved numerically.
+[docs/rust-port-plan.md](rust-port-plan.md) is the plan this continued; its decisions stayed
+in force unless amended below.
 
 ## 1. Goal and end state
 
@@ -517,6 +519,32 @@ Acceptance: `cargo test` green on both CI platforms with identical goldens; a fr
 `cargo install --git <repo>@<branch>` on a machine with only rustup works and converts the
 samples; the README commands run as written.
 
+Done 2026-10-11 (merges 1fff901 tests, 6be453d xtask, f368d29 retirement; docs after it).
+Part A ported the behavioural Python tests to Rust integration tests, one file per area
+(`config`, `color`, `palette`, `postprocess`, `quantize`, `tiles`, `io`, `preprocess`,
+`downscalers`, `pipeline`, `determinism`, `golden`, `parallel`, `version`), with the slow
+marker as `#[ignore]`; `crates/pixelforge/tests/README.md` maps every Python file to its Rust
+file and lists what was deliberately not ported (the parity tests against the Python code
+and numpy/PIL-only checks), with reasons. The Rust suite went from 213 to 434 tests (3
+ignored as slow), xtask's included. Part B: `cargo xtask fixtures|golden|bench|snapshot|
+gallery` (Decision 9), with `--check` modes for fixtures and goldens, the bench JSON schema
+kept so `--compare` reads the Python baselines, snapshots as JSON; `help-record` replaced the
+`--help` recorder in part C. Part C removed the Python package, `tests/*.py`, `scripts/*.py`,
+`pyproject.toml` and `uv.lock`; the bundled palettes moved into the crate (`include_str!`,
+so `cargo install --git` packages them), and the two oracle/Unicode recorders stay next to
+their outputs as documentation. Decision 2 confirmed: `crates/pixelforge-py` is kept as an
+optional binding with its own `pyproject.toml` (maturin, numpy only), the package `Config`,
+`run`, `run_loaded`, `load`, `from_image`, `Result.save`, and smoke tests. CI: rustfmt and
+clippy, `cargo test --workspace --all-features -- --include-ignored` plus `xtask golden
+--check` and `fixtures --check` and a smoke `convert` on ubuntu-latest and macos-latest
+(arm64), and the binding job (the only one with Python) on Linux. Version 0.2.0 (Decision
+12): `cargo xtask golden` changed all 18 `config_hash` entries of `tests/golden.json` and no
+`pixels_sha256`; the 48-case snapshot matrix stayed identical. Part D rewrote README.md,
+DESIGN.md (implementation, numerics, timings table) and CHANGELOG.md (`[0.2.0]`).
+`cargo install --path crates/pixelforge` stood in for `cargo install --git`, the binding
+was installed through a `git+file` URL with `#subdirectory=crates/pixelforge-py`, and the
+README's commands were run as written.
+
 ## 6. Risks
 
 - **Pixel drift from float replacements.** Every phase that touches floats reports the
@@ -542,9 +570,11 @@ samples; the README commands run as written.
 - **Python binding bit-rot.** If Decision 2 keeps it, its tests run in CI on one platform;
   if nobody uses it within a release, drop it.
 
-## 7. Open questions
+## 7. Open questions (resolved)
 
-1. Decision 5: external `rembg` command, `ort` port, or drop `--remove-bg`?
-2. Decision 2: keep the Python binding after Phase 8?
-3. Windows: nothing today targets it (no CI, `O_NONBLOCK`). Add a Windows CI entry with
-   the port, or state "unsupported" in the README?
+1. Decision 5: `--remove-bg` runs the external `rembg` command (`rembg i IN OUT`, on `PATH`;
+   the README suggests `pipx install 'rembg[cli]'`). No `ort` port; the flag stays.
+2. Decision 2: the Python binding is kept as an optional crate (`crates/pixelforge-py`),
+   built and smoke-tested in CI on Linux; the CLI does not need it.
+3. Windows: unsupported, and the README says so. Nothing builds or tests there (no CI entry;
+   the input open uses `O_NONBLOCK`).

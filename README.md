@@ -45,25 +45,26 @@ The source photo is AI-generated.
 
 ## Install
 
-Python 3.11+ and a stable Rust toolchain: pixelforge includes a compiled extension
-(`pixelforge._native`) that is built from source on install. Get Rust with
+pixelforge is a single program written in Rust. It needs a stable Rust toolchain and nothing
+else (no Python). Get Rust with
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # or: brew install rustup
 ```
 
-The compiled kernels use every core by default; set `PIXELFORGE_THREADS=N` to limit them
-(it changes speed only, never the output).
-
-Not published to PyPI; install straight from GitHub:
+Not published to crates.io; install straight from GitHub:
 
 ```bash
 cargo install --git https://github.com/colebrumley/pixelforge pixelforge
 ```
 
-The first install compiles the program, which takes a minute or two.
+The first install compiles the program, which takes a minute or two. Linux and macOS are
+supported; Windows is not (nothing is built or tested there).
 
-Optional AI background removal via the external `rembg` command:
+pixelforge uses every core by default; set `PIXELFORGE_THREADS=N` to limit it (it changes
+speed only, never the output).
+
+Optional AI background removal runs the external `rembg` command, which must be on `PATH`:
 
 ```bash
 pipx install 'rembg[cli]'
@@ -71,25 +72,22 @@ pipx install 'rembg[cli]'
 
 AI matting is opt-in with `--remove-bg` (no preset enables it, installed or not). rembg
 downloads its model on first use, the model is outside the determinism guarantee, and its
-license is the model's own; `_meta.json` records the rembg and onnxruntime versions.
+license is the model's own; `_meta.json` records `rembg --version`.
 
 The sprite preset keys out flat opaque backdrops without it (`--no-key-bg` to disable),
 including the anti-aliased fringe where the subject blends into them (`key_bg_fringe`).
 Pixels at or above `alpha_threshold` are opaque, but each counts in the downscaled colors in
 proportion to its alpha, so a semi-transparent fringe pulls its neighbors less.
 
-To work on it, or to reproduce outputs exactly:
+An optional Python binding calls the same library from Python (`Config`, `run`, `Result`,
+numpy arrays in and out). The CLI does not need it; building it needs the Rust toolchain
+too:
 
 ```bash
-git clone https://github.com/colebrumley/pixelforge && cd pixelforge
-cargo test --workspace --all-features -- --include-ignored   # full suite, as CI runs it
-cargo test --workspace                                       # skip the slow kopf cases
+pip install 'git+https://github.com/colebrumley/pixelforge#subdirectory=crates/pixelforge-py'
 ```
 
-`cargo xtask bench` times every method and preset on a few fixtures, prints the
-per-stage timings and writes `bench/<git sha>.json` (`--compare bench/OLD.json` for speedups).
-`cargo xtask snapshot save`, then `cargo xtask snapshot compare` after a change, reports per
-case whether the output is identical, how many pixels differ and their ΔE (exit 1 if any differ).
+See [Library](#library) and [crates/pixelforge-py/README.md](crates/pixelforge-py/README.md).
 
 ## CLI
 
@@ -103,11 +101,12 @@ pixelforge compare hero.png --sweep palette-size=8,12,16    # proof sheet: metho
 pixelforge palettes                                         # list bundled palettes
 ```
 
-Every `Config` field is a `--kebab-case` flag (`--flag/--no-flag` for booleans; `--g-t-final`
+Every config field is a `--kebab-case` flag (`--flag/--no-flag` for booleans; `--g-t-final`
 for `g_T_final`, the old `--g-T-final` still works); `pixelforge convert --help` lists each with
 its description, per-preset default and allowed values. `--config file.json` loads a config.
 Precedence: defaults ← preset ← JSON ← flags.
-`Config.replace(preset=...)` re-applies the new preset to every field not set explicitly.
+In the library, `Config::replace` with a new `preset` re-applies it to every field not set
+explicitly.
 
 `convert`, `batch` and `compare` refuse (exit 2) to write an output over an input file, and `batch`
 refuses inputs that share a name (`a.png`, `a.bmp`); `--force` overrides both. `batch` skips
@@ -115,12 +114,13 @@ refuses inputs that share a name (`a.png`, `a.bmp`); `--force` overrides both. `
 
 Errors print one line and exit 2 for configuration problems (bad flags, unknown palette,
 `--remove-bg` without rembg) or 1 for anything else; `pixelforge --debug ...` or
-`PIXELFORGE_DEBUG=1` prints the full traceback instead.
+`PIXELFORGE_DEBUG=1` prints the full error chain instead.
 
 Runs take from under a second (box) to a minute or more (kopf and gerstner at large sizes) and
 are silent until the JSON result unless asked: `pixelforge -v convert ...` logs each stage with
 its duration to stderr, `-vv` every downscaler iteration, `-q` only errors. stdout carries only
-the JSON results. Library callers get the same messages from the `pixelforge` logger.
+the JSON results. Library callers get the same messages through the `log` crate (targets
+under `pixelforge`).
 
 `--scale N` fixes the downscale ratio (output = cropped input / N per axis); `--canvas WxH` fits
 the subject inside a fixed canvas, centered, outline included. Neither combines with
@@ -193,7 +193,7 @@ Inputs much larger than the output are box-reduced to 8–16× the output size b
 | `NAME.png` | native-resolution result (palette-indexed PNG) |
 | `NAME_preview.png` | nearest-neighbor upscale |
 | `NAME_palette.json`, `NAME_palette.hex` | the palette (LAB rounded to 6 decimals); `.hex` is reusable via `--palette-name`; `.json` entries carry `"used"` (unused entries are kept, so named palettes stay complete) |
-| `NAME_meta.json` | stats, timings, config, config hash, input hash, palette, environment (Python, numpy, scipy, scikit-image, Pillow, platform; not hashed) |
+| `NAME_meta.json` | stats, timings, config, config hash, input hash, palette, environment (`platform`, `threads`, and `native`, the pixelforge version; not hashed) |
 | `NAME_tileset.png`, `NAME_tilemap.json` | background preset only; tiles merge when mean ΔE < `tile_dedupe_tolerance` and every pixel's ΔE < 10 (flips included) |
 | `NAME.tmj` | background preset only: Tiled JSON map (one `background` layer, flips in the GID high bits, tileset embedded and pointing at `NAME_tileset.png`) |
 | `NAME_tilemap.csv` | background preset only: one line per tile row of GIDs (1-based, 0 = empty, no flip bits) |
@@ -202,74 +202,140 @@ Inputs much larger than the output are box-reduced to 8–16× the output size b
 palette puts transparency after the colors (`--transparent-index last`, the default) or at index
 0 with every color shifted by one (`--transparent-index first`, as Aseprite and console tools
 expect); `first` also adds a leading `{"hex": null, "transparent": true}` entry to
-`_palette.json` and a `; transparent` comment line to `_palette.hex`. `Result.indices` always
-uses −1 for transparent.
+`_palette.json` and a `; transparent` comment line to `_palette.hex`. The library's `indices`
+always use −1 for transparent.
 
 ### Limits
 
 Inputs larger than 24 million pixels (`width × height`) are refused before decoding; raise or
-lower the budget with `--max-input-pixels N` (`max_pixels=` in `pipeline.run`). Only PNG, JPEG,
-GIF, WEBP, BMP and TIFF are read, and only regular files. Numeric config fields have upper
-bounds (e.g. output edges ≤ 4096, `--scale-preview` ≤ 64), and non-finite numbers are rejected.
+lower the budget with `--max-input-pixels N` (the `max_pixels` argument of the library's
+`run`). Only PNG, JPEG, GIF, WEBP, BMP and TIFF are read, and only regular files. Numeric
+config fields have upper bounds (e.g. output edges ≤ 4096, `--scale-preview` ≤ 64), and
+non-finite numbers are rejected.
 
 ## Library
+
+The `pixelforge` crate is also a Rust library. Depend on it without the CLI:
+
+```toml
+[dependencies]
+pixelforge = { git = "https://github.com/colebrumley/pixelforge", default-features = false }
+```
+
+```rust
+use std::path::Path;
+
+use pixelforge::config::{Config, Value};
+use pixelforge::io::ArrayData;
+use pixelforge::pipeline::{self, Input};
+
+fn main() -> Result<(), pipeline::Error> {
+    let cfg = Config::new(&[
+        ("preset".into(), Value::str("sprite")),
+        ("method".into(), Value::str("gerstner")),
+        ("palette_size".into(), Value::Int(12)),
+        ("out_height".into(), Value::Int(48)),
+    ])?;
+    let out = pipeline::run(Input::Path(Path::new("hero.png")), &cfg, None)?;
+    out.save(Path::new("out/hero"))?; // out/hero.png, hero_preview.png, hero_palette.json, ...
+    // out.image: RGBA8 (h * w * 4); out.palette: [u8; 3] per entry;
+    // out.indices: palette index per pixel, -1 = transparent; out.stats: the stats JSON
+
+    let photo = cfg.replace(&[("enhance".into(), Value::Float(0.5))])?; // ink 0.6 adds lines
+    let rgba: Vec<u8> = (0..64 * 64 * 4).map(|i| (i % 251) as u8).collect();
+    let array = Input::Array { shape: &[64, 64, 4], data: ArrayData::U8(&rgba) };
+    pipeline::run(array, &photo, None)?; // (H, W, 3|4): u8, or f64 in [0, 1]
+    Ok(())
+}
+```
+
+`pipeline::run(input, &config, max_pixels)` applies the same pixel budget (`None`: 24
+million) to every input kind. `input_sha256` hashes the file bytes for a path, and the shape
+plus RGBA bytes for in-memory images. `Config::new` applies the field defaults, then the
+preset, then the given fields; `config::PRESETS` lists the presets.
+
+Errors: `pipeline::Error::Config` for invalid configs, returned by `Config::new`, or for an
+unreadable `palette_name` file at the start of `run` (the CLI exits 2); `Error::Pixelforge`
+and `Error::Io` for everything else pixelforge reports, such as undecodable, oversized or
+fully transparent input (exit 1).
+
+The optional Python binding ([Install](#install)) wraps the same pipeline:
 
 ```python
 from pixelforge import Config, run
 
 cfg = Config(preset="sprite", method="gerstner", palette_size=12, out_height=48)
-res = run("hero.png", cfg)
-res.save("out/hero")   # out/hero.png, hero_preview.png, hero_palette.json, ...
-res.image              # numpy RGBA (H, W, 4) uint8
-res.palette            # numpy (K, 3) uint8
-res.indices            # (H, W) palette index, -1 = transparent
-
-run("photo.png", cfg.replace(enhance=0.5))   # the photo pre-pass; ink=0.6 adds lines
-
-run(Image.open("hero.png"), cfg)   # a PIL image
-run(rgba, cfg)                     # (H, W, 3|4) numpy array: uint8, or float in [0, 1]
+res = run("hero.png", cfg)   # or a numpy (H, W, 3|4) array, or a PIL image with Pillow
+res.save("out/hero")         # the files `pixelforge convert` writes, byte for byte
+res.image                    # numpy RGBA (H, W, 4) uint8; res.palette (K, 3); res.indices (H, W)
 ```
 
-`run(image, config, max_pixels=None)` applies the same pixel budget to every input kind.
-`input_sha256` hashes the file bytes for a path, and the shape plus RGBA bytes for in-memory
-images. `pixelforge.PRESETS` is read-only.
-
-Errors: `ConfigError` (also a `ValueError`) for invalid configs, raised by `Config(...)`, or for
-an unreadable `palette_name` file at the start of `run`; `PixelforgeError` (its base class) for
-everything else pixelforge reports, such as undecodable, oversized or fully transparent input.
+Its errors are `ConfigError` (also a `ValueError`) and `PixelforgeError` (its base class).
 
 ## Determinism
 
 No unseeded randomness, no thread scheduling or wall-clock dependence, float64 throughout.
-`tests/test_determinism.py` enforces identical output bytes for every method and preset.
+`cargo test` (`crates/pixelforge/tests/determinism.rs` and `cli.rs`) enforces identical
+output bytes for every method and preset, in-process and across fresh processes with
+different thread counts.
 
-- Byte identity across machines requires `git clone && uv sync --locked`: installing from git
-  resolves the ranged dependencies, and the lock itself pins different numpy/scipy for
-  Python 3.11 than for 3.12+, so use the same Python minor version too.
-- Across CPU architectures (x86-64 vs arm64, different SIMD paths) identity is best-effort:
-  float64 results can differ in the last bits, which rounding to 8-bit colors usually absorbs.
+- The program is self-contained, so byte identity across machines no longer depends on the
+  versions of any installed library. Every transcendental function comes from the pure-Rust
+  `libm` crate, rounding is half to even, and threads split the work into a fixed partition
+  merged in a fixed order, so `PIXELFORGE_THREADS` changes speed only. CI checks
+  `tests/golden.json` (pixel hashes per fixture, method and preset) on Linux x86-64 and
+  macOS arm64.
+- Across CPU architectures identity is still best-effort at the last bits of a float64, which
+  rounding to 8-bit colors has absorbed in every case tested.
 - `--remove-bg` (rembg) is outside the guarantee and is never on by default.
 - Each output PNG carries `tEXt` chunks: `pixelforge:config` (canonical config JSON),
   `pixelforge:input_sha256` (input file bytes) and, when a palette is given,
-  `pixelforge:palette_sha256` and `pixelforge:palette` (its `rrggbb` colors). `Config.hash()`
+  `pixelforge:palette_sha256` and `pixelforge:palette` (its `rrggbb` colors). The config hash
   covers the config, the version and the palette's colors, so editing a palette file changes it.
-- `_meta.json` also records the Python, numpy, scipy, scikit-image and Pillow versions and the
-  platform (not hashed), to tell which of these differ when two outputs do.
+- `_meta.json` also records the platform, the thread count and the pixelforge version (not
+  hashed), to tell which of these differ when two outputs do.
+- Against the last Python version (which still reported 0.1.0): outputs from PNG, BMP, TIFF,
+  GIF and WEBP inputs are pixel-identical, except one gerstner case that sits on a near-tie
+  (10 pixels of one 256×256 test output). JPEG inputs decode within a few levels of Pillow's
+  libjpeg, so outputs from JPEG sources differ. Seeded gerstner runs (`--seed`) draw from a
+  different random stream. Every config hash changed with the version.
+  [DESIGN.md](DESIGN.md#implementation) has the details.
 
-## Gallery
+## Development
 
 ```bash
-cargo xtask gallery            # → gallery/index.html
-cargo xtask gallery --quick
+git clone https://github.com/colebrumley/pixelforge && cd pixelforge
+cargo test --workspace -- --include-ignored   # full suite, including the slow kopf cases
+cargo test --workspace                        # without them
 ```
 
-Renders every method × preset on the test fixtures plus any PNGs in `samples/`.
+The `xtask` crate holds the developer tooling (`cargo xtask <command> --help` lists the
+options):
+
+- `cargo xtask fixtures --check`: compare the committed `tests/fixtures/` with the synthetic
+  test images drawn from code (`cargo xtask fixtures DIR` writes them).
+- `cargo xtask golden`: regenerate `tests/golden.json` after an intentional output change,
+  and commit the diff with the change; `--check` only reports whether it is up to date.
+- `cargo xtask bench`: time every method and preset on a few fixtures, print the per-stage
+  timings and write `bench/<git sha>.json` (`--compare bench/OLD.json` for speedups).
+- `cargo xtask snapshot save`, then `cargo xtask snapshot compare` after a change: per case,
+  whether the output is identical, how many pixels differ and their ΔE (exit 1 if any differ).
+- `cargo xtask gallery` (`--quick` for smaller backgrounds): render every method × preset on
+  the fixtures plus any PNGs in `samples/` into `gallery/index.html`.
+- `cargo xtask help-record`: record each command's `--help` in `tests/cli_help/`, which the
+  CLI tests compare with the live output.
 
 ## More
 
-- [DESIGN.md](DESIGN.md) — how each method works, the full determinism contract, timings,
-  and every deliberate deviation from the spec.
-- [REQUIREMENTS.md](REQUIREMENTS.md) — the specification the prototype was built from.
+- [DESIGN.md](DESIGN.md) — how each method works, the implementation and its numerics, the
+  full determinism contract, timings, and every deliberate deviation from the spec.
+- [REQUIREMENTS.md](REQUIREMENTS.md) — the specification the original Python prototype was
+  built from (historical).
+- [docs/rust-port-plan.md](docs/rust-port-plan.md) and
+  [docs/rust-migration-plan.md](docs/rust-migration-plan.md) — how the hot loops, then the
+  whole program, were ported from Python to Rust.
+- [crates/pixelforge/README.md](crates/pixelforge/README.md) — the crate layout and the
+  numerical rules for contributors.
 
 ## License
 
