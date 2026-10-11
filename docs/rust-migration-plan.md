@@ -264,6 +264,14 @@ CHANGELOG entry and, where outputs moved, the snapshot report pasted into the PR
   is the reference for every later `compare`.
 - Record the current test runtime (`pytest -q`, `-m "not slow"`) for the parity target.
 
+Done 2026-10-10 on 9f53516: `bench/snapshots/` holds 48 cases (4 fixtures × 2 presets × 3
+methods, the knight and portrait inputs of the old baseline, and the six `samples/*.png` with
+their natural preset); `bench/9f53516.json` is the bench (`--compare bench/0edd462.json`:
+portrait kopf 33.9 → 4.5 s, gerstner 31.0 → 6.8 s, knight kopf 8.1 → 0.7 s) taken with a load
+average of 12–24 on the 10-core M1 Max, so it is an upper bound, not the idle-machine
+number DESIGN.md still owes. Test suite: 576 passed in 54 s; `-m "not slow"` 566 in 54 s
+(the same machine, same load).
+
 ### Phase 1 — Workspace and oracles
 
 - Workspace layout of Section 4.4. The PyO3 wrappers in `kopf.rs`/`gerstner.rs` split from
