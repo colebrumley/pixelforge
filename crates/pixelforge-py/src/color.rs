@@ -12,12 +12,12 @@ use pyo3::prelude::*;
 
 use pixelforge::color;
 
-fn value_error(func: &str, msg: String) -> PyErr {
+pub(crate) fn value_error(func: &str, msg: String) -> PyErr {
     PyValueError::new_err(format!("{func}: {msg}"))
 }
 
 /// A shape as numpy prints it: `(2, 4)`, `(5,)`, `()`.
-fn py_shape(shape: &[usize]) -> String {
+pub(crate) fn py_shape(shape: &[usize]) -> String {
     match shape {
         [n] => format!("({n},)"),
         _ => {
@@ -29,7 +29,7 @@ fn py_shape(shape: &[usize]) -> String {
 
 /// The argument as a C-contiguous `T` array whose last axis has length 3 (and, with
 /// `ndim`, exactly that many dimensions): its shape and a copy-free readonly view.
-fn triples<'py, T: numpy::Element>(
+pub(crate) fn triples<'py, T: numpy::Element>(
     func: &str,
     name: &str,
     dtype: &str,
@@ -69,7 +69,7 @@ fn triples<'py, T: numpy::Element>(
     Ok((shape, ro))
 }
 
-fn slice<'a, T: numpy::Element>(
+pub(crate) fn slice<'a, T: numpy::Element>(
     func: &str,
     name: &str,
     arr: &'a numpy::PyReadonlyArrayDyn<'_, T>,
@@ -78,7 +78,7 @@ fn slice<'a, T: numpy::Element>(
         .map_err(|e| value_error(func, format!("{name}: {e}")))
 }
 
-fn shaped<'py, T: numpy::Element>(
+pub(crate) fn shaped<'py, T: numpy::Element>(
     py: Python<'py>,
     shape: &[usize],
     data: Vec<T>,

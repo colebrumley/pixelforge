@@ -79,6 +79,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Quantization and palette building are native (`crates/pixelforge/src/quantize.rs` and
+  `palette.rs`, migration plan Phase 3): `quantize.bayer`, `local_std`, `dither_offsets` and
+  `run`, and `palette.median_cut`, `regularize_ramps`, `build` (except the mcda source, still
+  Python) and the text of `write_hex` call `pixelforge._native`; `quantize.py` no longer uses
+  `scipy.ndimage` (scipy's `uniform_filter(size=3, mode="nearest")` is reproduced with its
+  running-sum update). Median cut, the Bayer matrices, `local_std`, the dither offsets and
+  the quantized indices are bitwise identical to the numpy version
+  (`tests/test_quantize_native.py`, `tests/test_palette_native.py`). `regularize_ramps` uses
+  `libm`'s `hypot`/`atan2`/`cos`/`sin`, which differ from numpy's by at most one ulp on a few
+  percent of arguments: moved colours' a and b can differ by up to 7e-14 (bitwise equal with
+  the libm values substituted into the numpy formula). Snapshot matrix: 48 of 48 cases
+  identical; goldens unchanged. `write_hex` now raises ValueError for a palette with values
+  outside 0..255 instead of writing a malformed line.
 - Colour conversion is native (`crates/pixelforge/src/color.rs`, migration plan Phase 2):
   `pixelforge.color`'s `rgb_to_lab`, `lab_to_rgb`, `rgb8_to_lab`, `lab_to_rgb8` and
   `nearest_index` call `pixelforge._native` instead of scikit-image and scipy's `cKDTree`.
