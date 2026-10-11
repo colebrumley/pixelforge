@@ -2024,6 +2024,36 @@ pub fn save_png(
     std::fs::write(path, bytes).map_err(|e| IoError::os(e, path))
 }
 
+/// The PNG file of an RGBA8 image (`h * w * 4` bytes, row-major), 8-bit RGBA without text
+/// chunks: the pixels Pillow's `Image.fromarray(a, mode="RGBA").save(path)` writes.
+pub fn encode_rgba_png(rgba: &[u8], h: usize, w: usize) -> Result<Vec<u8>, String> {
+    assert_eq!(
+        rgba.len(),
+        h * w * 4,
+        "encode_rgba_png: data must be h * w * 4"
+    );
+    let width = u32::try_from(w).map_err(|_| "image too wide for PNG".to_string())?;
+    let height = u32::try_from(h).map_err(|_| "image too tall for PNG".to_string())?;
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_color(png::ColorType::Rgba);
+        let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+        writer.write_image_data(rgba).map_err(|e| e.to_string())?;
+        writer.finish().map_err(|e| e.to_string())?;
+    }
+    Ok(out)
+}
+
+/// Write an RGBA8 image as a plain RGBA PNG ([`encode_rgba_png`]). Unlike [`save_png`] the
+/// parent directory must exist (as for Pillow's `Image.save`). Errors: `IoError::Os` for
+/// the file, `PixelforgeError` when the image cannot be encoded (e.g. an empty one).
+pub fn save_rgba_png(path: &Path, rgba: &[u8], h: usize, w: usize) -> Result<(), IoError> {
+    let bytes = encode_rgba_png(rgba, h, w).map_err(|e| IoError::Pixelforge(pf(e)))?;
+    std::fs::write(path, bytes).map_err(|e| IoError::os(e, path))
+}
+
 /// `io.read_png_text`: a PNG file's text chunks (tEXt, zTXt, iTXt) as Pillow's `im.text`
 /// has them, in file order (a repeated key appears once per chunk; the last one wins in a
 /// dict). Any other content has no text (Pillow had none for the other formats). Errors:
@@ -2061,6 +2091,26 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pixelforge-io-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join(name)
+    }
+
+    #[test]
+    fn rgba_png_round_trip_without_text() {
+        let path = tmp("rgba.png");
+        let rgba: Vec<u8> = (0..2 * 3 * 4).map(|i| (i * 11) as u8).collect();
+        save_rgba_png(&path, &rgba, 2, 3).unwrap();
+        let decoder = png::Decoder::new(std::io::BufReader::new(File::open(&path).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let mut buf = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        assert_eq!((info.width, info.height), (3, 2));
+        assert_eq!(info.color_type, png::ColorType::Rgba);
+        assert_eq!(&buf[..info.buffer_size()], &rgba[..]);
+        assert!(read_png_text(&path).unwrap().is_empty());
+        // An empty image cannot be written (Pillow refuses it too).
+        assert!(matches!(
+            save_rgba_png(&tmp("empty.png"), &[], 0, 3),
+            Err(IoError::Pixelforge(_))
+        ));
     }
 
     #[test]

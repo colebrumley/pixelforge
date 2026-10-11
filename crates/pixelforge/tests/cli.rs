@@ -1,4 +1,4 @@
-//! The `pixelforge` program end to end: the cases of tests/test_cli.py (without `compare`),
+//! The `pixelforge` program end to end: the cases of tests/test_cli.py,
 //! the CLI cases of tests/test_pipeline.py and the subprocess cases of
 //! tests/test_determinism.py, run on the built binary with `assert_cmd`.
 
@@ -1424,14 +1424,328 @@ fn stdout_is_only_json_and_stderr_only_prefixed_lines() {
     assert!(!r.stderr.is_empty() && r.stderr.lines().all(|l| l.starts_with("pixelforge: ")));
 }
 
+// ---------------------------------------------------------------------------------------
+// compare (tests/test_cli.py, tests/test_pipeline.py)
+
+/// The files of a directory, sorted.
+fn listing(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+/// The PNG's colour type (the sheets are plain RGBA, without text chunks).
+fn png_color_type(path: &Path) -> png::ColorType {
+    let decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).unwrap()));
+    decoder.read_info().unwrap().info().color_type
+}
+
 #[test]
-fn compare_is_a_stub_for_now() {
-    let r = invoke!("compare", &fixture("two_color"));
-    assert_eq!(r.code, 1);
-    assert_eq!(r.stderr.trim(), "error: compare is not available yet");
+fn cli_compare() {
+    let tmp = TempDir::new("compare");
+    let r = invoke!(
+        "compare",
+        &fixture("two_color"),
+        "-o",
+        tmp.path(),
+        &[
+            "--out-height",
+            "8",
+            "--palette-size",
+            "2",
+            "--method",
+            "kopf"
+        ][..]
+    );
+    assert_eq!(r.code, 0, "{}", r.output());
+    let payload = r.last_json();
+    let sheet = tmp.join("two_color_compare.png");
+    assert_eq!(payload["compare"], sheet.display().to_string());
+    let methods = payload["methods"].as_object().unwrap();
+    let keys: Vec<&String> = methods.keys().collect();
+    assert_eq!(keys, ["box", "gerstner", "kopf"]);
+    let mut widths = 0;
+    let mut height = 0;
+    for (method, entry) in methods {
+        // --method is ignored: every method runs with its own name in the config.
+        assert_eq!(entry["stats"]["config_hash"].as_str().unwrap().len(), 64);
+        let image = tmp.join(&format!("two_color_{method}.png"));
+        assert_eq!(entry["outputs"]["image"], image.display().to_string());
+        for (_, path) in entry["outputs"].as_object().unwrap() {
+            assert!(Path::new(path.as_str().unwrap()).is_file(), "{path}");
+        }
+        let meta = read_json(&tmp.join(&format!("two_color_{method}_meta.json")));
+        assert_eq!(meta["config"]["method"], method.as_str());
+        let (w, h) = size(&tmp.join(&format!("two_color_{method}_preview.png")));
+        widths += w;
+        height = height.max(h);
+    }
+    // The previews in a row, scale_preview (8) pixels apart, as plain RGBA.
+    assert_eq!(size(&sheet), (widths + 2 * 8, height));
+    assert_eq!(png_color_type(&sheet), png::ColorType::Rgba);
+    assert!(pixelforge::io::read_png_text(&sheet).unwrap().is_empty());
+    let (px, w, _) = rgba(&sheet);
+    let (box_w, _) = size(&tmp.join("two_color_box_preview.png"));
+    let (box_px, _, _) = rgba(&tmp.join("two_color_box_preview.png"));
+    assert_eq!(&px[..box_w as usize * 4], &box_px[..box_w as usize * 4]);
+    // The gap after the first preview is transparent.
+    assert!(px[box_w as usize * 4..(box_w as usize + 8) * 4]
+        .chunks(4)
+        .all(|p| p[3] == 0));
+    assert!(w > box_w);
+}
+
+#[test]
+fn compare_prepass_writes_only_a_proof_sheet() {
+    let tmp = TempDir::new("prepass");
+    let r = invoke!(
+        "-v",
+        "compare",
+        &fixture("noisy_gradient"),
+        "-o",
+        tmp.path(),
+        "--prepass",
+        &[
+            "--out-height",
+            "8",
+            "--preset",
+            "background",
+            "--no-tileset"
+        ][..]
+    );
+    assert_eq!(r.code, 0, "{}", r.output());
+    assert_eq!(listing(tmp.path()), ["noisy_gradient_compare.png"]);
+    let payload = r.last_json();
+    let cells = payload["cells"].as_array().unwrap();
+    assert_eq!(cells.len(), 3 * 4);
+    let methods: Vec<&str> = cells
+        .iter()
+        .step_by(4)
+        .map(|c| c["method"].as_str().unwrap())
+        .collect();
+    assert_eq!(methods, ["box", "kopf", "gerstner"]);
+    let columns: Vec<&str> = cells[..4]
+        .iter()
+        .map(|c| c["column"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        columns,
+        [
+            "enhance=0 ink=0",
+            "enhance=0.5 ink=0",
+            "enhance=1 ink=0",
+            "enhance=1 ink=0.6"
+        ]
+    );
+    let last = cells.last().unwrap();
+    assert_eq!(last["flags"], "--method gerstner --enhance 1 --ink 0.6");
+    assert_eq!(last["column"], "enhance=1 ink=0.6");
+    assert_eq!(last["config"]["method"], "gerstner");
+    assert_eq!(last["config"]["ink"], 0.6);
+    assert_eq!(last["config"]["preset"], "background");
+    let hashes: std::collections::BTreeSet<&str> = cells
+        .iter()
+        .map(|c| c["stats"]["config_hash"].as_str().unwrap())
+        .collect();
+    assert_eq!(hashes.len(), cells.len());
+    // One progress line per cell.
+    let progress: Vec<&str> = r
+        .stderr
+        .lines()
+        .filter(|l| l.starts_with("pixelforge: cell "))
+        .collect();
+    assert_eq!(progress.len(), cells.len());
+    assert_eq!(progress[0], "pixelforge: cell box / enhance=0 ink=0");
+    let sheet = tmp.join("noisy_gradient_compare.png");
+    assert_eq!(png_color_type(&sheet), png::ColorType::Rgba);
+    assert!(pixelforge::io::read_png_text(&sheet).unwrap().is_empty());
+    let (w, h) = size(&sheet);
+    assert!(w > 4 * 8 * 8 && h > 3 * 8 * 8, "{w}x{h}");
+}
+
+#[test]
+fn compare_cell_flags_reproduce_the_cell() {
+    let tmp = TempDir::new("cellflags");
+    let base = [
+        "--out-height",
+        "8",
+        "--preset",
+        "background",
+        "--no-tileset",
+        "--enhance",
+        "1",
+    ];
+    let r = invoke!(
+        "compare",
+        &fixture("noisy_gradient"),
+        "-o",
+        &tmp.join("sheet"),
+        &["--sweep", "palette-size=4,8", "--method", "box"][..],
+        &base[..]
+    );
+    assert_eq!(r.code, 0, "{}", r.output());
+    let cells = r.last_json()["cells"].as_array().unwrap().clone();
+    let summary: Vec<(&str, &str, &str)> = cells
+        .iter()
+        .map(|c| {
+            (
+                c["method"].as_str().unwrap(),
+                c["column"].as_str().unwrap(),
+                c["flags"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("box", "palette_size=4", "--method box --palette-size 4"),
+            ("box", "palette_size=8", "--method box --palette-size 8")
+        ]
+    );
+    assert_eq!(listing(&tmp.join("sheet")), ["noisy_gradient_compare.png"]);
+    let flags: Vec<&str> = cells[1]["flags"].as_str().unwrap().split(' ').collect();
+    let again = invoke!(
+        "convert",
+        &fixture("noisy_gradient"),
+        "-o",
+        &tmp.join("one"),
+        &base[..],
+        &flags[..]
+    );
+    assert_eq!(again.code, 0, "{}", again.output());
+    assert_eq!(
+        again.last_json()["stats"]["config_hash"],
+        cells[1]["stats"]["config_hash"]
+    );
+}
+
+#[test]
+fn compare_cell_config_reproduces_an_unset_value() {
+    let tmp = TempDir::new("cellconfig");
+    let base = tmp.join("base.json");
+    std::fs::write(
+        &base,
+        r#"{"preset": "background", "tileset": false, "out_width": 16, "method": "box"}"#,
+    )
+    .unwrap();
+    let r = invoke!(
+        "compare",
+        &fixture("noisy_gradient"),
+        "-o",
+        &tmp.join("sheet"),
+        "--config",
+        &base,
+        &["--method", "box", "--sweep", "out-width=none,8"][..]
+    );
+    assert_eq!(r.code, 0, "{}", r.output());
+    let cell = r.last_json()["cells"][0].clone();
+    assert_eq!(cell["column"], "out_width=none");
+    assert_eq!(cell["flags"], "--method box");
+    assert!(cell["config"]["out_width"].is_null());
+    let replay = tmp.join("cell.json");
+    std::fs::write(&replay, cell["config"].to_string()).unwrap();
+    let again = invoke!(
+        "convert",
+        &fixture("noisy_gradient"),
+        "-o",
+        &tmp.join("one"),
+        "--config",
+        &replay
+    );
+    assert_eq!(again.code, 0, "{}", again.output());
+    assert_eq!(
+        again.last_json()["stats"]["config_hash"],
+        cell["stats"]["config_hash"]
+    );
+}
+
+#[test]
+fn compare_sweep_errors() {
+    let cases: &[(&[&str], &str)] = &[
+        (&["--sweep", "nope=1"], "FIELD=VALUE"),
+        (&["--sweep", "palette-size"], "FIELD=VALUE"),
+        (&["--sweep", "method=box,kopf"], "rows of the sheet"),
+        (&["--sweep", "palette-size=4,,8"], "non-empty"),
+        (&["--sweep", "palette-size=four"], "is not int"),
+        (&["--sweep", "key-bg=maybe"], "on/off"),
+        (
+            &["--sweep", "palette-size=4,999"],
+            "palette_size must be in",
+        ),
+        (
+            &["--sweep", "palette-size=4", "--prepass"],
+            "config error: --prepass and --sweep cannot be combined",
+        ),
+        (
+            &["--sweep", "palette-size=4", "--sweep", "dither=none"],
+            "config error: --sweep can be given once: a sheet has one row per method and one \
+             column per value",
+        ),
+        (
+            &["--sweep", "palette-name=pico8,missing_palette.hex"],
+            "missing_palette.hex",
+        ),
+    ];
+    for (args, message) in cases {
+        let tmp = TempDir::new("sweeperr");
+        let out = tmp.join("out");
+        let r = invoke!("compare", &fixture("two_color"), "-o", &out, *args);
+        assert_eq!(r.code, 2, "{args:?}: {}", r.output());
+        assert!(
+            r.stderr.starts_with("config error: "),
+            "{args:?}: {}",
+            r.stderr
+        );
+        assert!(r.stderr.contains(message), "{args:?}: {}", r.stderr);
+        assert!(!out.exists(), "{args:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn compare_refuses_to_overwrite_its_input() {
+    // An output that resolves to the input (here through a symlink) is refused, in both
+    // modes, before anything runs.
+    let tmp = TempDir::new("comparecollide");
+    let src = tmp.join("two_color.png");
+    std::fs::copy(fixture("two_color"), &src).unwrap();
+    let before = std::fs::read(&src).unwrap();
+    let out = tmp.join("out");
+    std::fs::create_dir(&out).unwrap();
+    for (link, extra) in [
+        ("two_color_kopf_preview.png", &[][..]),
+        (
+            "two_color_compare.png",
+            &["--prepass", "--method", "box"][..],
+        ),
+    ] {
+        let alias = out.join(link);
+        std::os::unix::fs::symlink(&src, &alias).unwrap();
+        let r = invoke!("compare", &src, "-o", &out, FAST, extra);
+        assert_eq!(r.code, 2, "{}", r.output());
+        assert_eq!(
+            r.stderr.trim(),
+            format!(
+                "config error: {} would overwrite input {} (use another --outdir, or --force)",
+                alias.display(),
+                src.display()
+            )
+        );
+        assert_eq!(listing(&out), [link]);
+        std::fs::remove_file(&alias).unwrap();
+    }
+    assert_eq!(std::fs::read(&src).unwrap(), before);
+}
+
+#[test]
+fn compare_help_lists_its_options() {
     let r = invoke!("compare", "--help");
     assert_eq!(r.code, 0);
-    assert!(r.stdout.contains("--sweep") && r.stdout.contains("--prepass"));
+    assert!(r.stdout.contains("--sweep <FIELD=V1,V2,...>"));
+    assert!(r.stdout.contains("--prepass") && r.stdout.contains("INPUT_compare.png"));
 }
 
 #[test]

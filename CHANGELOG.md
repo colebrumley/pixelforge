@@ -8,6 +8,23 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The `compare` command in Rust and the CLI parity sweep (Phase 7, part C of
+  `docs/rust-migration-plan.md`): `pixelforge compare` writes the side-by-side sheet and each
+  method's outputs, or with `--prepass` / `--sweep` only the labelled proof sheet, with the
+  Python command's checks and messages, cell order, per-cell `flags` and `config`, `-v`
+  progress (`cell {method} / {label}`) and preview-scale cap; the sheets are plain RGBA PNGs
+  without text chunks (`io::save_rgba_png`). `tests/cli.rs` ports the `compare` cases of
+  `test_cli.py` and `test_pipeline.py`. `tests/test_cli_parity.py` adds plain `compare`
+  (every output and the sheet decode equal), `--prepass` and `--sweep` (equal JSON and `-v`
+  lines; the sheets differ only in their label font and size, so their cells are located and
+  compared pixel for pixel) and the `compare` config errors. `scripts/cli_help.py` records
+  both CLIs' `--help` in `tests/cli_help/`, and a parity test requires the same option names
+  and `[default: …]` texts. The layouts differ by design: click wraps at 80 columns with the
+  help in an aligned column, shows `--flag / --no-flag`, `[choice|choice]`, `INTEGER RANGE`
+  and `[x>=1]`, and rewraps the docstrings; clap puts each option's help on the next line
+  unwrapped, writes values as `<VALUE>`, lists the `Arguments:`, hides the `--no-` halves
+  behind one note, shows `-v, --verbose...`, lists the group's commands before its options,
+  and in `compare` shows `--force` before `--prepass` / `--sweep`.
 - The `compare` command's library pieces in Rust (Phase 7, part B of
   `docs/rust-migration-plan.md`): `crates/pixelforge/src/sheet.rs` ports `side_by_side`,
   `PREPASS_COLUMNS`, `parse_sweep` (Python's `int()`/`float()` grammar and messages, the
@@ -21,8 +38,8 @@ All notable changes to this project are documented here. The format follows
 - The `pixelforge` command line in Rust (Phase 7, part A of `docs/rust-migration-plan.md`):
   `crates/pixelforge/src/main.rs` and `src/cli/` (feature `cli`, on by default; the Python
   binding builds the library without it, so clap never reaches the extension) port
-  `convert`, `batch` and `palettes` from `pixelforge/cli.py`, with `compare` present as a
-  stub until its proof sheet is ported. The options are generated from the field table with
+  `convert`, `batch` and `palettes` from `pixelforge/cli.py` (`compare` followed in part C).
+  The options are generated from the field table with
   clap 4.5 (`--flag`/`--no-flag` pairs where the last one wins, the hidden `--g-T-final`,
   per-preset defaults in `--help`, click's `int()`/`float()` conversions and `click.Path`
   checks, usage errors exit 2, `--version` prints `pixelforge, version 0.1.0`); `--config`
