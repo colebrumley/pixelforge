@@ -8,6 +8,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The `xtask` developer tooling (Phase 8, part B of `docs/rust-migration-plan.md`,
+  Decision 9): `cargo xtask fixtures|golden|bench|snapshot|gallery` (alias in
+  `.cargo/config.toml`, built with the release profile so the pipeline runs at full speed)
+  ports `scripts/make_fixtures.py`, `update_golden.py`, `bench.py`, `snapshot_outputs.py`
+  and `gallery.py` with their options, tables, messages and exit codes. `fixtures` draws all
+  seven fixtures pixel-identical to the committed PNGs (`libm` for `np.sin`/`np.cos`/
+  `np.hypot`, half-to-even rounding; the PNG bytes differ from Pillow's) and `--check`
+  decodes the committed files against them; `golden` reproduces `tests/golden.json` byte for
+  byte; `bench` writes the Python schema with `python`/`numpy`/`scipy` as `null` plus
+  `rustc` and `pixelforge`, measures `package_tree`/`package_dirty` on `crates/pixelforge`,
+  and `--compare` reads the Python-written `bench/*.json`; `snapshot` stores each case as
+  JSON (`shape`, `indices`, `palette`, `palette_lab`) instead of `.npz`, so snapshot
+  directories saved by `scripts/snapshot_outputs.py` are not readable by `xtask snapshot`
+  and must be re-saved; `gallery` writes the same page. `cargo test -p xtask` covers each
+  command (the full-fixture gallery run is an ignored slow test).
 - The `compare` command in Rust and the CLI parity sweep (Phase 7, part C of
   `docs/rust-migration-plan.md`): `pixelforge compare` writes the side-by-side sheet and each
   method's outputs, or with `--prepass` / `--sweep` only the labelled proof sheet, with the
