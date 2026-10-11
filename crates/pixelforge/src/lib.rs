@@ -20,6 +20,7 @@ pub mod enhance;
 pub mod filters;
 pub mod gerstner;
 pub mod gerstner_run;
+pub mod io;
 pub mod kopf;
 pub mod kopf_run;
 pub mod layout;

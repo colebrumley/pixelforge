@@ -165,15 +165,7 @@ pub(crate) fn pathlib_suffix(name: &str) -> &str {
 
 /// `str(OSError)` for a failed call on `path`: `[Errno N] strerror: 'path'`.
 fn os_error(err: &std::io::Error, path: &str) -> PaletteError {
-    match err.raw_os_error() {
-        Some(code) => {
-            let text = std::io::Error::from_raw_os_error(code).to_string();
-            let suffix = format!(" (os error {code})");
-            let strerror = text.strip_suffix(&suffix).unwrap_or(&text);
-            PaletteError(format!("[Errno {code}] {strerror}: {}", str_repr(path)))
-        }
-        None => PaletteError(err.to_string()),
-    }
+    PaletteError(crate::io::os_error_message(err, path))
 }
 
 #[cfg(unix)]
@@ -184,10 +176,6 @@ mod errno {
     pub const ELOOP: i32 = 40;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub const ELOOP: i32 = 62;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub const O_NONBLOCK: i32 = 0o4000;
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    pub const O_NONBLOCK: i32 = 0x0004;
 }
 
 /// `Path(path).exists()` (Python 3.11): false for a missing file, ENOTDIR, EBADF, ELOOP and
@@ -210,28 +198,12 @@ fn path_exists(path: &str) -> Result<bool, PaletteError> {
     }
 }
 
-/// `io.open_regular`: open for reading, refusing FIFOs, devices and directories (checked on
-/// the opened descriptor; `O_NONBLOCK` so opening a FIFO cannot hang).
+/// `io.open_regular` (see `crate::io::open_regular`) with this module's error type.
 fn open_regular(path: &str) -> Result<std::fs::File, PaletteError> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(errno::O_NONBLOCK);
-    }
-    let not_regular = || PaletteError(format!("{path} is not a regular file"));
-    let file = match options.open(path) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::IsADirectory => return Err(not_regular()),
-        Err(e) => return Err(os_error(&e, path)),
-    };
-    let meta = file.metadata().map_err(|e| os_error(&e, path))?;
-    if !meta.is_file() {
-        return Err(not_regular());
-    }
-    // O_NONBLOCK has no effect on reads from a regular file, so it is left set.
-    Ok(file)
+    crate::io::open_regular(std::path::Path::new(path)).map_err(|e| match e {
+        crate::io::IoError::Os { error, .. } => os_error(&error, path),
+        crate::io::IoError::Pixelforge(e) => PaletteError(e.0),
+    })
 }
 
 /// `_read_palette_text`: a regular file of at most 64 KiB of UTF-8 text.
