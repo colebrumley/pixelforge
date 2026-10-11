@@ -13,6 +13,7 @@
 
 pub mod color;
 pub mod config;
+pub mod downscale;
 pub mod enhance;
 pub mod filters;
 pub mod gerstner;

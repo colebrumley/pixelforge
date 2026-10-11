@@ -6,6 +6,7 @@
 
 mod color;
 mod config;
+mod downscale;
 mod filters;
 mod gerstner;
 mod kopf;
@@ -13,6 +14,7 @@ mod mask;
 mod npsum;
 mod postprocess;
 mod preprocess;
+mod pylog;
 mod quantize;
 
 use numpy::PyReadonlyArray1;
@@ -48,6 +50,7 @@ fn thread_count() -> usize {
 
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    pylog::init(m.py());
     m.add_function(wrap_pyfunction!(native_version, m)?)?;
     m.add_function(wrap_pyfunction!(sum_f64, m)?)?;
     m.add_function(wrap_pyfunction!(thread_count, m)?)?;
@@ -59,6 +62,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     filters::register(m)?;
     color::register(m)?;
     npsum::register(m)?;
+    downscale::register(m)?;
+    pylog::register(m)?;
     postprocess::register(m)?;
     quantize::register(m)?;
     mask::register(m)?;

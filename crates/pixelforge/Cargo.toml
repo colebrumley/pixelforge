@@ -9,6 +9,8 @@ publish = false
 [dependencies]
 # Pure-Rust exp: bit-identical on every platform, unlike f64::exp (platform libm).
 libm = "0.2.16"
+# Progress lines (kopf/gerstner iterations); the binding forwards them to Python's logging.
+log = "0.4"
 # Config.hash() and palette_sha256 (SHA-256).
 sha2 = "0.10.9"
 

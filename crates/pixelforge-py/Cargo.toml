@@ -14,3 +14,5 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.29.3", features = ["extension-module", "abi3-py311"] }
 numpy = "0.29.0"
 pixelforge = { path = "../pixelforge" }
+# The library's progress records, forwarded to Python's logging (src/pylog.rs).
+log = "0.4"
