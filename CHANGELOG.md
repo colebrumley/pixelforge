@@ -96,6 +96,17 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- gerstner: the SLIC assignment pass and the superpixel bilateral filter run in the native
+  extension (`_native.slic_assign`, `_native.bilateral_filter`, `rust/src/gerstner.rs`) on
+  `PIXELFORGE_THREADS` threads (default: available parallelism; the thread count never
+  changes the output). The palette annealer, superpixel statistics, Laplacian smoothing and
+  control flow stay in Python; the numpy kernels are kept in
+  `pixelforge/downscale/_reference/gerstner.py` for tests and benchmarks. The assignment is
+  bitwise identical to numpy; the bilateral filter uses `libm::exp`, which differs from
+  numpy's `exp` at rounding level, so a few output pixels can change (10 of 65,536 on
+  noisy_gradient at the background size, none on the other fixtures). The goldens were
+  regenerated and are unchanged. Timings: TODO, measure on an idle machine.
+
 - Inputs much larger than the output are box-reduced by an integer factor to at most
   `prereduce_max_ratio` (8) times the output size before denoising and downscaling (nearly
   lossless at these ratios); kopf drops its per-slot offset arrays and reuses buffers. Kopf

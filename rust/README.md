@@ -4,6 +4,14 @@ The Rust extension module `pixelforge._native` (PyO3 + the `numpy` crate). It wi
 per-pixel hot loops of the downscalers; orchestration, config and I/O stay in Python. See
 `docs/rust-port-plan.md`.
 
+Functions:
+
+- `src/gerstner.rs`: `slic_assign` (one modified-SLIC assignment pass, bitwise equal to the
+  numpy `_assign`) and `bilateral_filter` (the superpixel bilateral filter, `libm::exp`).
+  Both run over fixed row bands on `PIXELFORGE_THREADS` threads (default: available
+  parallelism); the thread count never changes the output. The numpy versions they replace
+  are kept in `pixelforge/downscale/_reference/gerstner.py` for tests and benchmarks.
+
 Build: maturin is the package's build backend, so `uv sync --locked` (or any `pip install`)
 compiles it and places `_native.abi3.so` inside `pixelforge/`. Needs a stable Rust
 toolchain. Lint with `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings`.
