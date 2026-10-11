@@ -482,6 +482,24 @@ produce byte-identical PNG pixels, JSON files and stdout JSON to the Phase 6 Pyt
 (stderr messages compared by a fixture of expected lines); `--help` for each command
 diffed against the click output with only the usage header differing.
 
+Done 2026-10-11 (merges 2ce46ab sheets, 384fc2c CLI core, 62f509a compare). The binary is a
+`cli` default feature of the `pixelforge` crate (`clap` 4.5.61 builder API; the binding crate
+turns the feature off and pulls in no clap). Flags, help text with per-preset defaults, the
+`--g-T-final` alias, bool `--x/--no-x` pairs, `--version`, `-v/-vv/-q`, `--debug` and the exit
+codes follow click; `--config` is read by a port of CPython's JSON scanner so its error
+messages match Python's (482-input differential test, no mismatch). `convert`, `batch` and
+`palettes`, then `compare` in all three modes over `sheet.rs` (side-by-side sheets bitwise;
+proof-sheet labels in a self-authored CC0 5×9 bitmap font, so those sheets differ from
+Pillow's in label pixels and a few pixels of width, with every cell pixel-identical).
+`tests/test_cli_parity.py` runs both CLIs and compares outputs, stdout JSON, `-v` stderr and
+exit codes; `tests/cli_help/` records both `--help` texts with a test that option names and
+defaults agree (layouts differ: clap does not wrap or align, writes `<VALUE>` and an
+`Arguments:` section). `cargo install --path` stand-in: 36 s, then the sprite and background
+presets convert in well under a second. 213 Rust tests, 1883 Python tests. Two deliberate
+deviations from click: library warnings print as `pixelforge: warning: …` through the logger
+(hidden by `-q`, once per text), and clap's usage-error wording is kept. `cli.py` stays until
+Phase 8 removes the Python package; the plan's "deleted in Phase 7" is superseded.
+
 ### Phase 8 — Tests, tooling, docs, retirement
 
 - Remaining Python tests ported to Rust unit tests (config, color, palette, postprocess,
