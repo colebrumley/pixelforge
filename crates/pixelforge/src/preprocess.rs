@@ -10,12 +10,14 @@
 //! bitwise identical, the float ones (enhance's Gaussian, the bilateral, LAB) are within the
 //! last bits (see `filters`).
 //!
-//! `remove_bg` is not applied here: `run` takes the alpha as given and the caller replaces it
-//! first (the Python wrapper runs rembg).
-// TODO(Phase 6): with PNG I/O in the library, run the external `rembg` command here when
-// `config.remove_bg` is set (docs/rust-migration-plan.md, Decision 5).
+//! `remove_bg` is not applied by `run`: it takes the alpha as given and the caller mats it
+//! first. `pipeline::run_loaded` does so with [`remove_background_external`] (the `rembg`
+//! command, docs/rust-migration-plan.md Decision 5) unless its caller says the alpha is
+//! already matted (the Python wrapper runs the `rembg` package itself and passes the result).
 
 use std::fmt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use crate::color;
 use crate::config::{Config, ConfigError};
@@ -214,8 +216,154 @@ pub fn denoise(rgb: Vec<f64>, h: usize, w: usize, config: &Config) -> Vec<f64> {
     }
 }
 
+/// The message of the `ConfigError` raised when `remove_bg` is set and no matting is
+/// available (Python's, unchanged).
+pub const REMBG_MISSING: &str = "--remove-bg requires the optional 'rembg' dependency; \
+                                 install it with: pip install 'pixelforge[bg]'";
+
+/// The external matting command `remove_bg` runs: `rembg i INPUT OUTPUT`, found on `PATH`.
+pub const REMBG_COMMAND: &str = "rembg";
+
+/// A private temporary directory, removed on drop.
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new() -> std::io::Result<TempDir> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let base = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        loop {
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let dir = base.join(format!(
+                "pixelforge-rembg-{}-{nanos}-{n}",
+                std::process::id()
+            ));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return Ok(TempDir(dir)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// An `h * w * 4` RGBA8 image as PNG bytes (8-bit RGBA, no text chunks).
+fn encode_rgba_png(rgba: &[u8], h: usize, w: usize) -> Result<Vec<u8>, String> {
+    let width = u32::try_from(w).map_err(|_| "image too wide for PNG".to_string())?;
+    let height = u32::try_from(h).map_err(|_| "image too tall for PNG".to_string())?;
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+        writer.write_image_data(rgba).map_err(|e| e.to_string())?;
+        writer.finish().map_err(|e| e.to_string())?;
+    }
+    Ok(out)
+}
+
+/// `preprocess.remove_background` through the external `rembg` command (Decision 5): the
+/// image (`rgb` `h * w * 3` in `[0, 1]`, rounded half to even to 8 bits as Python's
+/// `np.round`, with `alpha`) is written to a temporary RGBA PNG, `rembg i IN OUT` runs on it,
+/// and the alpha channel of its output is returned (`h * w`). A missing `rembg` executable is
+/// a `ConfigError` with Python's message; a failing command (its stderr is reported), an
+/// unreadable output or one of another size is a `PixelforgeError`. AI matting is outside
+/// the determinism contract.
+pub fn remove_background_external(
+    rgb: &[f64],
+    alpha: &[u8],
+    h: usize,
+    w: usize,
+) -> Result<Vec<u8>, Error> {
+    assert_eq!(
+        rgb.len(),
+        h * w * 3,
+        "remove_background_external: rgb length"
+    );
+    assert_eq!(
+        alpha.len(),
+        h * w,
+        "remove_background_external: alpha length"
+    );
+    let fail = |msg: String| Error::Pixelforge(PixelforgeError(format!("--remove-bg: {msg}")));
+    let mut rgba = Vec::with_capacity(h * w * 4);
+    for (px, &a) in rgb.chunks_exact(3).zip(alpha) {
+        rgba.extend(px.iter().map(|&v| (v * 255.0).round_ties_even() as u8));
+        rgba.push(a);
+    }
+    let png = encode_rgba_png(&rgba, h, w).map_err(fail)?;
+    let dir = TempDir::new().map_err(|e| fail(format!("temporary directory: {e}")))?;
+    let (input, output) = (dir.path().join("input.png"), dir.path().join("output.png"));
+    std::fs::write(&input, png).map_err(|e| fail(e.to_string()))?;
+    let done = match Command::new(REMBG_COMMAND)
+        .arg("i")
+        .arg(&input)
+        .arg(&output)
+        .stdin(Stdio::null())
+        .output()
+    {
+        Ok(done) => done,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ConfigError(REMBG_MISSING.to_string()).into());
+        }
+        Err(e) => return Err(fail(format!("could not run {REMBG_COMMAND}: {e}"))),
+    };
+    if !done.status.success() {
+        let stderr = String::from_utf8_lossy(&done.stderr);
+        return Err(fail(format!(
+            "{REMBG_COMMAND} failed ({}): {}",
+            done.status,
+            stderr.trim()
+        )));
+    }
+    let bytes = std::fs::read(&output)
+        .map_err(|e| fail(format!("{REMBG_COMMAND} wrote no output: {e}")))?;
+    let name = output.display().to_string();
+    let matted = crate::io::decode_bytes(&name, &bytes, u64::MAX).map_err(|e| fail(e.0))?;
+    if (matted.h, matted.w) != (h, w) {
+        return Err(fail(format!(
+            "{REMBG_COMMAND} returned a {}x{} image for a {w}x{h} input",
+            matted.w, matted.h
+        )));
+    }
+    Ok(matted.rgba.chunks_exact(4).map(|px| px[3]).collect())
+}
+
+/// What `_meta.json` records as `remove_bg_versions` for the external command: `rembg` is the
+/// trimmed standard output of `rembg --version` (`None` when the command is missing, fails
+/// or prints nothing); `onnxruntime` is always `None`, since the runtime inside the command
+/// is not visible from outside. (The Python binding records the installed package versions
+/// instead.)
+pub fn rembg_versions() -> Vec<(&'static str, Option<String>)> {
+    let rembg = Command::new(REMBG_COMMAND)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+    vec![("rembg", rembg), ("onnxruntime", None)]
+}
+
 /// `preprocess.run(rgb, alpha, config)` with the alpha as given (`remove_bg` already
-/// applied by the caller): the subject cropped, sized and filtered for the downscalers.
+/// applied by the caller, e.g. with [`remove_background_external`]): the subject cropped,
+/// sized and filtered for the downscalers.
 pub fn run(
     rgb: &[f64],
     alpha: &[u8],

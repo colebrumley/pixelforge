@@ -28,6 +28,7 @@ pub mod mask;
 pub mod npsum;
 pub mod palette;
 pub mod parallel;
+pub mod pipeline;
 pub mod postprocess;
 pub mod preprocess;
 pub mod pyjson;
