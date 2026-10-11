@@ -14,6 +14,7 @@ mod io;
 mod kopf;
 mod mask;
 mod npsum;
+mod pipeline;
 mod postprocess;
 mod preprocess;
 mod pyjson;
@@ -77,5 +78,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     mask::register(m)?;
     preprocess::register(m)?;
     io::register(m)?;
+    pipeline::register(m)?;
     Ok(())
 }

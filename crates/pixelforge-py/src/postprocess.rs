@@ -194,7 +194,7 @@ fn add_outline<'py>(
 
 // ------------------------------------------------------------------------------- tiles
 
-fn tilemap_from_py(func: &str, obj: &Bound<'_, PyAny>) -> PyResult<Tilemap> {
+pub(crate) fn tilemap_from_py(func: &str, obj: &Bound<'_, PyAny>) -> PyResult<Tilemap> {
     let get = |key: &str| -> PyResult<i64> {
         obj.get_item(key)
             .and_then(|v| v.extract::<i64>())

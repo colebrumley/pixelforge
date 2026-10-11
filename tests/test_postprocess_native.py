@@ -9,8 +9,9 @@ import numpy as np
 import pytest
 from scipy import ndimage
 
-from pixelforge import Config, color, pipeline, postprocess
+from pixelforge import Config, color, postprocess
 from pixelforge.errors import PixelforgeError
+from tests import pipeline_reference
 from pixelforge.palette import regularize_ramps
 
 # ------------------------------------------------------------------ reference (numpy)
@@ -354,10 +355,11 @@ def test_pipeline_inputs(fixture_path, monkeypatch, name, preset, method):
         captured.append((np.array(indices), np.array(palette_lab), config, dict(kw)))
         return real(indices, palette_lab, config, **kw)
 
-    monkeypatch.setattr(pipeline.postprocess, "run", spy)
+    monkeypatch.setattr(pipeline_reference.postprocess, "run", spy)
     size = {"out_width": 32, "out_height": 32} if preset == "background" else {"out_width": 32}
     try:
-        pipeline.run(fixture_path(name), Config(preset=preset, method=method, **size))
+        pipeline_reference.run(fixture_path(name),
+                               Config(preset=preset, method=method, **size))
     except PixelforgeError as exc:      # e.g. a 1-px line keyed out entirely at 32 px
         pytest.skip(str(exc))
     assert len(captured) == 1
