@@ -20,6 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -79,7 +80,10 @@ def _stdout(text: str, outdir: Path) -> list[dict]:
     lines = []
     for line in text.replace(str(outdir), "OUT").splitlines():
         payload = json.loads(line)
-        payload.get("stats", {}).pop("timings", None)
+        # convert / batch: "stats"; compare: per method, or per proof-sheet cell.
+        nested = [*payload.get("methods", {}).values(), *payload.get("cells", [])]
+        for entry in (payload, *nested):
+            entry.get("stats", {}).pop("timings", None)
         lines.append(payload)
     return lines
 
@@ -184,3 +188,92 @@ def test_config_errors_match_python(rust, tmp_path):
             outputs.append((done.returncode, done.stderr))
         assert outputs[0] == outputs[1], name
         assert outputs[0][0] == 2 and outputs[0][1].startswith("config error: ")
+
+
+def test_compare_matches_python(rust, tmp_path):
+    """Plain compare: every method's outputs and the side-by-side sheet (no labels) decode
+    equal, and so do the JSON line and the -v lines."""
+    names = _assert_same(rust, ["compare", str(FIXTURES / "two_color.png"), "--out-width", "16",
+                                "--out-height", "16"], tmp_path)
+    assert "two_color_compare.png" in names
+    assert {f"two_color_{m}.png" for m in ("box", "kopf", "gerstner")} <= set(names)
+
+
+def _cell_blocks(path: Path) -> list[tuple[int, int, bytes]]:
+    """The cells of a proof sheet, row by row, each cropped to its opaque pixels: the runs of
+    opaque rows and columns right of the row-label bar and below the column-label bar (the
+    gaps between cells are transparent; each cell's subject must be one piece). The bars are
+    measured on the sheet, so the label font does not matter.
+    """
+    with Image.open(path) as im:
+        assert im.mode == "RGBA"
+        sheet = np.asarray(im)
+    bar = np.array([40, 40, 40, 255], dtype=np.uint8)
+    # The column-label bar spans the full width; its last column is never under text.
+    top = int(np.argmin((sheet[:, -1] == bar).all(axis=1)))
+    # The row-label bar spans the full height; its last row is never under text.
+    left = int(np.argmin((sheet[-1] == bar).all(axis=1)))
+    assert top > 0 and left > 0
+    opaque = sheet[top:, left:, 3] > 0
+
+    def runs(mask: np.ndarray) -> list[tuple[int, int]]:
+        edges = np.diff(np.concatenate([[0], mask.astype(np.int8), [0]]))
+        return list(zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)))
+
+    blocks = []
+    for y0, y1 in runs(opaque.any(axis=1)):
+        for x0, x1 in runs(opaque[y0:y1].any(axis=0)):
+            cell = sheet[top + y0:top + y1, left + x0:left + x1]
+            blocks.append((int(y1 - y0), int(x1 - x0), cell.tobytes()))
+    return blocks
+
+
+@pytest.mark.parametrize("extra", [["--prepass"], ["--sweep", "palette-size=4,8"]],
+                         ids=["prepass", "sweep"])
+def test_compare_proof_sheet_matches_python(rust, tmp_path, extra):
+    """Proof sheets: the same JSON line (cells with flags, configs and stats without timings)
+    and -v lines. The label fonts differ (Pillow's default font, a bitmap font in Rust), so the
+    sheets differ in size, but their cells must be the same pixels in the same order."""
+    args = ["compare", str(FIXTURES / "two_color.png"), "--method", "box", "--out-width", "16",
+            "--out-height", "16", *extra]
+    py_out, rs_out = tmp_path / "py", tmp_path / "rs"
+    py = _run([sys.executable, "-m", "pixelforge"], args, py_out)
+    rs = _run(rust, args, rs_out)
+    assert py.returncode == rs.returncode == 0, py.stderr + rs.stderr
+    assert sorted(p.name for p in py_out.iterdir()) == ["two_color_compare.png"]
+    assert sorted(p.name for p in rs_out.iterdir()) == ["two_color_compare.png"]
+
+    [py_json], [rs_json] = _stdout(py.stdout, py_out), _stdout(rs.stdout, rs_out)
+    assert py_json == rs_json
+    assert py_json["compare"] == "OUT/two_color_compare.png"
+    assert py_json["cells"][0]["flags"].startswith("--method box ")
+    py_err, rs_err = _stderr(py.stderr, py_out), _stderr(rs.stderr, rs_out)
+    assert py_err == rs_err
+    assert any(line.startswith("pixelforge: cell box / ") for line in rs_err)
+    py_cells = _cell_blocks(py_out / "two_color_compare.png")
+    rs_cells = _cell_blocks(rs_out / "two_color_compare.png")
+    assert len(py_cells) == len(rs_cells) == len(py_json["cells"])
+    for i, (a, b) in enumerate(zip(py_cells, rs_cells)):
+        assert a == b, f"cell {i} ({py_json['cells'][i]['column']})"
+
+
+@pytest.mark.parametrize("args", [
+    ["--sweep", "nope=1"], ["--sweep", "method=box,kopf"], ["--sweep", "palette-size=4,,8"],
+    ["--sweep", "palette-size=four"], ["--sweep", "key-bg=maybe"],
+    ["--sweep", "palette-size=4,999"], ["--sweep", "palette-size=4", "--prepass"],
+    ["--sweep", "palette-size=4", "--sweep", "dither=none"],
+    ["--sweep", "palette-name=pico8,missing_palette.hex"],
+], ids=lambda a: " ".join(a))
+def test_compare_errors_match_python(rust, tmp_path, args):
+    """compare's config errors: the same message and exit code 2, and nothing written."""
+    outputs = []
+    for name, command in (("py", [sys.executable, "-m", "pixelforge"]), ("rs", rust)):
+        outdir = tmp_path / name
+        done = subprocess.run(command + ["compare", str(FIXTURES / "two_color.png"), "-o",
+                                         str(outdir), *args],
+                              capture_output=True, text=True,
+                              env={**os.environ, "PYTHONPATH": str(ROOT)})
+        outputs.append((done.returncode, done.stderr.replace(str(outdir), "OUT")))
+        assert not outdir.exists()
+    assert outputs[0] == outputs[1]
+    assert outputs[0][0] == 2 and outputs[0][1].startswith("config error: ")
