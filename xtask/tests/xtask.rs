@@ -401,6 +401,49 @@ fn gallery_quick_writes_one_row_per_input_and_preset() {
     check_gallery(&index, &stems);
 }
 
+#[test]
+fn gallery_same_stem_inputs_get_distinct_image_sets() {
+    let dir = TempDir::new("gallery-stems");
+    let fixture = fixtures::default_dir().join("two_color.png");
+    let sample = dir.0.join("samples/two_color.png");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    // A different image under the same stem, so an overwrite would be visible.
+    std::fs::copy(fixtures::default_dir().join("line_diag.png"), &sample).unwrap();
+    let inputs = vec![fixture.clone(), sample.clone()];
+    let index = xtask::gallery::run(&dir.0.join("out"), &inputs, true).unwrap();
+    let labels: Vec<String> = bench::input_labels(inputs.iter().map(PathBuf::as_path))
+        .into_iter()
+        .map(|(_, l)| l)
+        .collect();
+    assert_eq!(labels.len(), 2);
+    assert_ne!(labels[0], labels[1]);
+    assert!(labels.iter().all(|l| l.starts_with("two_color-")));
+    let html = std::fs::read_to_string(&index).unwrap();
+    // Both rows keep the stem as their caption.
+    assert_eq!(
+        html.matches("<tr><td class=\"name\">two_color<small>")
+            .count(),
+        4
+    );
+    let img = index.parent().unwrap().join("img");
+    for (label, source) in labels.iter().zip([&fixture, &sample]) {
+        let copy = img.join(format!("{label}_input.png"));
+        assert_eq!(
+            std::fs::read(&copy).unwrap(),
+            std::fs::read(source).unwrap()
+        );
+        assert!(html.contains(&format!("img/{label}_input.png")));
+        for preset in ["sprite", "background"] {
+            for method in ["box", "kopf", "gerstner"] {
+                let preview = format!("{label}_{preset}_{method}_preview.png");
+                assert!(img.join(&preview).is_file(), "{preview}");
+                assert!(html.contains(&format!("img/{preview}")), "{preview}");
+            }
+        }
+    }
+    assert!(!img.join("two_color_input.png").exists());
+}
+
 /// Every fixture (42 pipeline runs; about 100 s in a debug build).
 #[test]
 #[ignore = "slow: run with --ignored"]

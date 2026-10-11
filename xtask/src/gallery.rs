@@ -13,9 +13,10 @@ use clap::{Arg, ArgAction, ArgMatches};
 use pixelforge::config::{Config, Value, METHODS, PRESET_NAMES};
 use pixelforge::pipeline::{self, Input};
 
+use crate::bench;
 use crate::fixtures::{self, FIXTURES};
 use crate::json::{as_i64, get};
-use crate::{fail, root, stem, Fail};
+use crate::{fail, resolve, root, stem, Fail};
 
 const STYLE: &str = "
 :root { color-scheme: light dark; --bg: #f4f1ea; --fg: #23201c; --muted: #6d665c;
@@ -126,11 +127,20 @@ pub fn run(out_dir: &Path, inputs: &[PathBuf], quick: bool) -> Result<PathBuf, F
     std::fs::create_dir_all(&image_dir)
         .map_err(|e| fail(1, format!("{}: {e}", image_dir.display())))?;
 
+    // Files are named by `bench::input_labels` (the stem, with a hash suffix when two
+    // inputs share it) so same-stem inputs do not overwrite each other; captions keep the
+    // stem.
+    let labels = bench::input_labels(inputs.iter().map(PathBuf::as_path));
     let mut rows: Vec<Row> = Vec::new();
     for path in inputs {
         let path = path.as_path();
         let name = stem(path);
-        let input_name = format!("{name}_input.png");
+        let resolved = resolve(path);
+        let label = labels
+            .iter()
+            .find(|(p, _)| *p == resolved)
+            .map_or_else(|| name.clone(), |(_, l)| l.clone());
+        let input_name = format!("{label}_input.png");
         let input_copy = image_dir.join(&input_name);
         std::fs::copy(path, &input_copy)
             .map_err(|e| fail(1, format!("{}: {e}", path.display())))?;
@@ -160,7 +170,7 @@ pub fn run(out_dir: &Path, inputs: &[PathBuf], quick: bool) -> Result<PathBuf, F
                     .map_err(|e| fail(1, format!("{}: {e}", path.display())))?;
                 let seconds = start.elapsed().as_secs_f64();
                 let outputs = result
-                    .save(&image_dir.join(format!("{name}_{preset}_{method}")))
+                    .save(&image_dir.join(format!("{label}_{preset}_{method}")))
                     .map_err(|e| fail(1, e.to_string()))?;
                 let preview = outputs
                     .iter()
@@ -176,7 +186,7 @@ pub fn run(out_dir: &Path, inputs: &[PathBuf], quick: bool) -> Result<PathBuf, F
                     stat("colors_used"),
                     stat("iterations")
                 );
-                println!("{name:>16} {preset:>10} {method:>8}  {caption}");
+                println!("{label:>16} {preset:>10} {method:>8}  {caption}");
                 cells.push((preview, caption));
             }
             rows.push((name.clone(), preset.to_string(), input_name.clone(), cells));
