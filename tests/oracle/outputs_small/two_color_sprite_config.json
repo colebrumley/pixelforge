@@ -1,0 +1,4 @@
+{
+ "fixture": "tests/fixtures/two_color.png",
+ "kwargs": {"denoise": "none", "key_bg": false, "method": "box", "out_height": 16, "out_width": 16, "preset": "sprite"}
+}

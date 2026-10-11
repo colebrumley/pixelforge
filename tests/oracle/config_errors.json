@@ -1,0 +1,540 @@
+{
+ "cases": [
+  {
+   "kwargs": {"nonsense": 1},
+   "message": "unknown config field(s): nonsense",
+   "python": "Config(nonsense=1)"
+  },
+  {
+   "kwargs": {"alpha": 2, "method": "box", "zeta": 1},
+   "message": "unknown config field(s): alpha, zeta",
+   "python": "Config(zeta=1, alpha=2, method='box')"
+  },
+  {
+   "kwargs": {"preset": "tiles"},
+   "message": "preset must be one of ['background', 'sprite'], got 'tiles'",
+   "python": "Config(preset='tiles')"
+  },
+  {
+   "kwargs": {"preset": null},
+   "message": "preset must be one of ['background', 'sprite'], got None",
+   "python": "Config(preset=None)"
+  },
+  {
+   "kwargs": {"method": null},
+   "message": "method must not be None",
+   "python": "Config(method=None)"
+  },
+  {
+   "kwargs": {"palette_size": null},
+   "message": "palette_size must not be None",
+   "python": "Config(palette_size=None)"
+  },
+  {
+   "kwargs": {"key_bg": null},
+   "message": "key_bg must not be None",
+   "python": "Config(key_bg=None)"
+  },
+  {
+   "kwargs": {"palette_size": true},
+   "message": "palette_size must be of type int, got True",
+   "python": "Config(palette_size=True)"
+  },
+  {
+   "kwargs": {"palette_size": 1.5},
+   "message": "palette_size must be of type int, got 1.5",
+   "python": "Config(palette_size=1.5)"
+  },
+  {
+   "kwargs": {"palette_size": "16"},
+   "message": "palette_size must be of type int, got '16'",
+   "python": "Config(palette_size='16')"
+  },
+  {
+   "kwargs": {"key_bg": 1},
+   "message": "key_bg must be of type bool, got 1",
+   "python": "Config(key_bg=1)"
+  },
+  {
+   "kwargs": {"key_bg": "yes"},
+   "message": "key_bg must be of type bool, got 'yes'",
+   "python": "Config(key_bg='yes')"
+  },
+  {
+   "kwargs": {"scale": true},
+   "message": "scale must be of type float | None, got True",
+   "python": "Config(scale=True)"
+  },
+  {
+   "kwargs": {"saturation_beta": "abc"},
+   "message": "saturation_beta must be of type float, got 'abc'",
+   "python": "Config(saturation_beta='abc')"
+  },
+  {
+   "kwargs": {
+    "saturation_beta": [1.0]
+   },
+   "message": "saturation_beta must be of type float, got [1.0]",
+   "python": "Config(saturation_beta=[1.0])"
+  },
+  {
+   "kwargs": {
+    "saturation_beta": {"$int": "10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}
+   },
+   "message": "saturation_beta must be of type float, got 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "python": "Config(saturation_beta=10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)"
+  },
+  {
+   "kwargs": {"method": 1},
+   "message": "method must be of type str, got 1",
+   "python": "Config(method=1)"
+  },
+  {
+   "kwargs": {"outline": null},
+   "message": "outline must not be None",
+   "python": "Config(outline=None)"
+  },
+  {
+   "kwargs": {"seed": 9223372036854775808},
+   "message": "seed must fit in a signed 64-bit integer, got 9223372036854775808",
+   "python": "Config(seed=9223372036854775808)"
+  },
+  {
+   "kwargs": {
+    "seed": {"$int": "18446744073709551616"}
+   },
+   "message": "seed must fit in a signed 64-bit integer, got 18446744073709551616",
+   "python": "Config(seed=18446744073709551616)"
+  },
+  {
+   "kwargs": {
+    "seed": {"$int": "-9223372036854775809"}
+   },
+   "message": "seed must fit in a signed 64-bit integer, got -9223372036854775809",
+   "python": "Config(seed=-9223372036854775809)"
+  },
+  {
+   "kwargs": {"out_width": 9223372036854775808},
+   "message": "out_width must fit in a signed 64-bit integer, got 9223372036854775808",
+   "python": "Config(out_width=9223372036854775808)"
+  },
+  {
+   "kwargs": {
+    "kopf_tol": {"$float": "nan"}
+   },
+   "message": "kopf_tol must be a finite number, got nan",
+   "python": "Config(kopf_tol=nan)"
+  },
+  {
+   "kwargs": {
+    "g_m": {"$float": "inf"}
+   },
+   "message": "g_m must be a finite number, got inf",
+   "python": "Config(g_m=inf)"
+  },
+  {
+   "kwargs": {
+    "orphan_max_delta": {"$float": "-inf"}
+   },
+   "message": "orphan_max_delta must be a finite number, got -inf",
+   "python": "Config(orphan_max_delta=-inf)"
+  },
+  {
+   "kwargs": {
+    "scale": {"$float": "nan"}
+   },
+   "message": "scale must be a finite number, got nan",
+   "python": "Config(scale=nan)"
+  },
+  {
+   "kwargs": {"palette_name": "nonexistent"},
+   "message": "unknown palette 'nonexistent': not one of ['gameboy', 'genesis', 'nes', 'pico8', 'snes15'], not a path to a .hex or .gpl file and not 'hex:rrggbb,...'",
+   "python": "Config(palette_name='nonexistent')"
+  },
+  {
+   "kwargs": {"palette_name": "palette.png"},
+   "message": "unknown palette 'palette.png': not one of ['gameboy', 'genesis', 'nes', 'pico8', 'snes15'], not a path to a .hex or .gpl file and not 'hex:rrggbb,...'",
+   "python": "Config(palette_name='palette.png')"
+  },
+  {
+   "kwargs": {"out_width": 7},
+   "message": "out_width must be >= 8, got 7",
+   "python": "Config(out_width=7)"
+  },
+  {
+   "kwargs": {"out_height": 4},
+   "message": "out_height must be >= 8, got 4",
+   "python": "Config(out_height=4)"
+  },
+  {
+   "kwargs": {"scale": 0.0},
+   "message": "scale must be > 0, got 0.0",
+   "python": "Config(scale=0.0)"
+  },
+  {
+   "kwargs": {"scale": -1.0},
+   "message": "scale must be > 0, got -1.0",
+   "python": "Config(scale=-1.0)"
+  },
+  {
+   "kwargs": {"canvas": "64*48"},
+   "message": "canvas must be \"WxH\" with W, H in [8, 4096], got '64*48'",
+   "python": "Config(canvas='64*48')"
+  },
+  {
+   "kwargs": {"canvas": "7x64"},
+   "message": "canvas must be \"WxH\" with W, H in [8, 4096], got '7x64'",
+   "python": "Config(canvas='7x64')"
+  },
+  {
+   "kwargs": {"canvas": "64x4097"},
+   "message": "canvas must be \"WxH\" with W, H in [8, 4096], got '64x4097'",
+   "python": "Config(canvas='64x4097')"
+  },
+  {
+   "kwargs": {"canvas": ""},
+   "message": "canvas must be \"WxH\" with W, H in [8, 4096], got ''",
+   "python": "Config(canvas='')"
+  },
+  {
+   "kwargs": {"canvas": "64x48 "},
+   "message": "canvas must be \"WxH\" with W, H in [8, 4096], got '64x48 '",
+   "python": "Config(canvas='64x48 ')"
+  },
+  {
+   "kwargs": {"out_width": 64, "scale": 2.0},
+   "message": "scale and canvas cannot be combined with out_width/out_height",
+   "python": "Config(scale=2.0, out_width=64)"
+  },
+  {
+   "kwargs": {"canvas": "64x48", "out_height": 64},
+   "message": "scale and canvas cannot be combined with out_width/out_height",
+   "python": "Config(canvas='64x48', out_height=64)"
+  },
+  {
+   "kwargs": {"palette_size": 1},
+   "message": "palette_size must be in [2, 256], got 1",
+   "python": "Config(palette_size=1)"
+  },
+  {
+   "kwargs": {"palette_size": 257},
+   "message": "palette_size must be in [2, 256], got 257",
+   "python": "Config(palette_size=257)"
+  },
+  {
+   "kwargs": {"method": "nearest"},
+   "message": "method must be one of ['box', 'kopf', 'gerstner'], got 'nearest'",
+   "python": "Config(method='nearest')"
+  },
+  {
+   "kwargs": {"denoise": "gaussian"},
+   "message": "denoise must be one of ['none', 'bilateral', 'median'], got 'gaussian'",
+   "python": "Config(denoise='gaussian')"
+  },
+  {
+   "kwargs": {"dither": "floyd"},
+   "message": "dither must be one of ['none', 'bayer4', 'bayer8', 'auto'], got 'floyd'",
+   "python": "Config(dither='floyd')"
+  },
+  {
+   "kwargs": {"palette_source": "kmeans"},
+   "message": "palette_source must be one of ['auto', 'median_cut', 'mcda'], got 'kmeans'",
+   "python": "Config(palette_source='kmeans')"
+  },
+  {
+   "kwargs": {"transparent_index": "middle"},
+   "message": "transparent_index must be one of ['last', 'first'], got 'middle'",
+   "python": "Config(transparent_index='middle')"
+  },
+  {
+   "kwargs": {"fit": "cover"},
+   "message": "fit must be one of ['pad', 'stretch', 'crop'], got 'cover'",
+   "python": "Config(fit='cover')"
+  },
+  {
+   "kwargs": {"outline": "red"},
+   "message": "outline must be \"none\", \"auto\" or \"#rrggbb\", got 'red'",
+   "python": "Config(outline='red')"
+  },
+  {
+   "kwargs": {"outline": "#abc"},
+   "message": "outline must be \"none\", \"auto\" or \"#rrggbb\", got '#abc'",
+   "python": "Config(outline='#abc')"
+  },
+  {
+   "kwargs": {"outline": "#gggggg"},
+   "message": "outline must be \"none\", \"auto\" or \"#rrggbb\", got '#gggggg'",
+   "python": "Config(outline='#gggggg')"
+  },
+  {
+   "kwargs": {"g_alpha": 0.0},
+   "message": "g_alpha must be in (0, 1), got 0.0",
+   "python": "Config(g_alpha=0.0)"
+  },
+  {
+   "kwargs": {"g_alpha": 1.0},
+   "message": "g_alpha must be in (0, 1), got 1.0",
+   "python": "Config(g_alpha=1.0)"
+  },
+  {
+   "kwargs": {"alpha_threshold": -1},
+   "message": "alpha_threshold must be in [0, 255], got -1",
+   "python": "Config(alpha_threshold=-1)"
+  },
+  {
+   "kwargs": {"alpha_threshold": 256},
+   "message": "alpha_threshold must be in [0, 255], got 256",
+   "python": "Config(alpha_threshold=256)"
+  },
+  {
+   "kwargs": {"dither_strength": -0.1},
+   "message": "dither_strength must be in [0, 1], got -0.1",
+   "python": "Config(dither_strength=-0.1)"
+  },
+  {
+   "kwargs": {"dither_strength": 1.5},
+   "message": "dither_strength must be in [0, 1], got 1.5",
+   "python": "Config(dither_strength=1.5)"
+  },
+  {
+   "kwargs": {"key_bg_tolerance": -0.01},
+   "message": "key_bg_tolerance must be in [0, 1], got -0.01",
+   "python": "Config(key_bg_tolerance=-0.01)"
+  },
+  {
+   "kwargs": {"key_bg_tolerance": 1.01},
+   "message": "key_bg_tolerance must be in [0, 1], got 1.01",
+   "python": "Config(key_bg_tolerance=1.01)"
+  },
+  {
+   "kwargs": {"orphan_max_delta": -1.0},
+   "message": "orphan_max_delta must be finite and >= 0, got -1.0",
+   "python": "Config(orphan_max_delta=-1.0)"
+  },
+  {
+   "kwargs": {"key_bg_fringe": -1},
+   "message": "key_bg_fringe must be in [0, 8], got -1",
+   "python": "Config(key_bg_fringe=-1)"
+  },
+  {
+   "kwargs": {"key_bg_fringe": 9},
+   "message": "key_bg_fringe must be in [0, 8], got 9",
+   "python": "Config(key_bg_fringe=9)"
+  },
+  {
+   "kwargs": {"enhance_black": -0.5},
+   "message": "enhance_black must be in [0, 1], got -0.5",
+   "python": "Config(enhance_black=-0.5)"
+  },
+  {
+   "kwargs": {"enhance_white": 1.5},
+   "message": "enhance_white must be in [0, 1], got 1.5",
+   "python": "Config(enhance_white=1.5)"
+  },
+  {
+   "kwargs": {"enhance_black": 0.5, "enhance_white": 0.5},
+   "message": "enhance_black (0.5) must be below enhance_white (0.5)",
+   "python": "Config(enhance_black=0.5, enhance_white=0.5)"
+  },
+  {
+   "kwargs": {"enhance_black": 0.8, "enhance_white": 0.2},
+   "message": "enhance_black (0.8) must be below enhance_white (0.2)",
+   "python": "Config(enhance_black=0.8, enhance_white=0.2)"
+  },
+  {
+   "kwargs": {"prereduce_max_ratio": -1},
+   "message": "prereduce_max_ratio must be >= 0, got -1",
+   "python": "Config(prereduce_max_ratio=-1)"
+  },
+  {
+   "kwargs": {"outline_darken": 1.5},
+   "message": "outline_darken must be in [0, 1], got 1.5",
+   "python": "Config(outline_darken=1.5)"
+  },
+  {
+   "kwargs": {"outline_darken": -0.5},
+   "message": "outline_darken must be in [0, 1], got -0.5",
+   "python": "Config(outline_darken=-0.5)"
+  },
+  {
+   "kwargs": {"kopf_max_iters": 0},
+   "message": "kopf_max_iters must be >= 1, got 0",
+   "python": "Config(kopf_max_iters=0)"
+  },
+  {
+   "kwargs": {"g_max_iters": 0},
+   "message": "g_max_iters must be >= 1, got 0",
+   "python": "Config(g_max_iters=0)"
+  },
+  {
+   "kwargs": {"tile_size": 0},
+   "message": "tile_size must be >= 1, got 0",
+   "python": "Config(tile_size=0)"
+  },
+  {
+   "kwargs": {"scale_preview": 0},
+   "message": "scale_preview must be >= 1, got 0",
+   "python": "Config(scale_preview=0)"
+  },
+  {
+   "kwargs": {"orphan_min_region": 0},
+   "message": "orphan_min_region must be >= 1, got 0",
+   "python": "Config(orphan_min_region=0)"
+  },
+  {
+   "kwargs": {"g_T_final": 0.0},
+   "message": "g_T_final must be > 0, got 0.0",
+   "python": "Config(g_T_final=0.0)"
+  },
+  {
+   "kwargs": {"g_m": -1.0},
+   "message": "g_m must be > 0, got -1.0",
+   "python": "Config(g_m=-1.0)"
+  },
+  {
+   "kwargs": {"kopf_tol": 0.0},
+   "message": "kopf_tol must be > 0, got 0.0",
+   "python": "Config(kopf_tol=0.0)"
+  },
+  {
+   "kwargs": {"saturation_beta": 0.0},
+   "message": "saturation_beta must be > 0, got 0.0",
+   "python": "Config(saturation_beta=0.0)"
+  },
+  {
+   "kwargs": {"denoise_sigma_color": 0.0},
+   "message": "denoise_sigma_color must be > 0, got 0.0",
+   "python": "Config(denoise_sigma_color=0.0)"
+  },
+  {
+   "kwargs": {"denoise_sigma_spatial": 0.0},
+   "message": "denoise_sigma_spatial must be > 0, got 0.0",
+   "python": "Config(denoise_sigma_spatial=0.0)"
+  },
+  {
+   "kwargs": {"g_bilateral_sigma_color": 0.0},
+   "message": "g_bilateral_sigma_color must be > 0, got 0.0",
+   "python": "Config(g_bilateral_sigma_color=0.0)"
+  },
+  {
+   "kwargs": {"g_bilateral_sigma_spatial": -0.5},
+   "message": "g_bilateral_sigma_spatial must be > 0, got -0.5",
+   "python": "Config(g_bilateral_sigma_spatial=-0.5)"
+  },
+  {
+   "kwargs": {"enhance_radius": 0.0},
+   "message": "enhance_radius must be > 0, got 0.0",
+   "python": "Config(enhance_radius=0.0)"
+  },
+  {
+   "kwargs": {"dither_variance_threshold": -1.0},
+   "message": "dither_variance_threshold must be >= 0, got -1.0",
+   "python": "Config(dither_variance_threshold=-1.0)"
+  },
+  {
+   "kwargs": {"tile_dedupe_tolerance": -0.5},
+   "message": "tile_dedupe_tolerance must be >= 0, got -0.5",
+   "python": "Config(tile_dedupe_tolerance=-0.5)"
+  },
+  {
+   "kwargs": {"enhance": -1.0},
+   "message": "enhance must be >= 0, got -1.0",
+   "python": "Config(enhance=-1.0)"
+  },
+  {
+   "kwargs": {"ink": -0.1},
+   "message": "ink must be >= 0, got -0.1",
+   "python": "Config(ink=-0.1)"
+  },
+  {
+   "kwargs": {"tileset_columns": 257},
+   "message": "tileset_columns must be 0 (automatic) or in [1, 256], got 257",
+   "python": "Config(tileset_columns=257)"
+  },
+  {
+   "kwargs": {"tileset_columns": -1},
+   "message": "tileset_columns must be 0 (automatic) or in [1, 256], got -1",
+   "python": "Config(tileset_columns=-1)"
+  },
+  {
+   "kwargs": {"seed": -1},
+   "message": "seed must be >= 0, got -1",
+   "python": "Config(seed=-1)"
+  },
+  {
+   "kwargs": {"out_width": 4097},
+   "message": "out_width must be <= 4096, got 4097",
+   "python": "Config(out_width=4097)"
+  },
+  {
+   "kwargs": {"out_height": 4097},
+   "message": "out_height must be <= 4096, got 4097",
+   "python": "Config(out_height=4097)"
+  },
+  {
+   "kwargs": {"scale": 4096.5},
+   "message": "scale must be <= 4096, got 4096.5",
+   "python": "Config(scale=4096.5)"
+  },
+  {
+   "kwargs": {"scale_preview": 65},
+   "message": "scale_preview must be <= 64, got 65",
+   "python": "Config(scale_preview=65)"
+  },
+  {
+   "kwargs": {"denoise_sigma_spatial": 16.5},
+   "message": "denoise_sigma_spatial must be <= 16, got 16.5",
+   "python": "Config(denoise_sigma_spatial=16.5)"
+  },
+  {
+   "kwargs": {"kopf_max_iters": 1001},
+   "message": "kopf_max_iters must be <= 1000, got 1001",
+   "python": "Config(kopf_max_iters=1001)"
+  },
+  {
+   "kwargs": {"g_max_iters": 10001},
+   "message": "g_max_iters must be <= 10000, got 10001",
+   "python": "Config(g_max_iters=10001)"
+  },
+  {
+   "kwargs": {"saturation_beta": 5.000000000000001},
+   "message": "saturation_beta must be <= 5, got 5.000000000000001",
+   "python": "Config(saturation_beta=5.000000000000001)"
+  },
+  {
+   "kwargs": {"tile_size": 513},
+   "message": "tile_size must be <= 512, got 513",
+   "python": "Config(tile_size=513)"
+  },
+  {
+   "kwargs": {"enhance": 4.25},
+   "message": "enhance must be <= 4, got 4.25",
+   "python": "Config(enhance=4.25)"
+  },
+  {
+   "kwargs": {"enhance_radius": 17.0},
+   "message": "enhance_radius must be <= 16, got 17.0",
+   "python": "Config(enhance_radius=17.0)"
+  },
+  {
+   "kwargs": {"ink": 1.5},
+   "message": "ink must be <= 1, got 1.5",
+   "python": "Config(ink=1.5)"
+  },
+  {
+   "kwargs": {"out_height": 32, "out_width": 40, "preset": "background"},
+   "message": "tile_size (16) must divide out_width (40) when tileset=True",
+   "python": "Config(preset='background', out_width=40, out_height=32)"
+  },
+  {
+   "kwargs": {"out_height": 40, "out_width": 32, "preset": "background"},
+   "message": "tile_size (16) must divide out_height (40) when tileset=True",
+   "python": "Config(preset='background', out_width=32, out_height=40)"
+  },
+  {
+   "kwargs": {"canvas": "40x32", "preset": "background"},
+   "message": "tile_size (16) must divide canvas (40x32) when tileset=True",
+   "python": "Config(preset='background', canvas='40x32')"
+  }
+ ]
+}

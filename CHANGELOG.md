@@ -15,6 +15,12 @@ All notable changes to this project are documented here. The format follows
   environment, `--compare OLD.json`) and `scripts/snapshot_outputs.py` (`save`/`compare` of
   output pixels and palettes with differing-pixel counts and ΔE). `bench/0edd462.json` is the
   pure-Python baseline on an Apple M1 Max for the Rust port (`docs/rust-port-plan.md`).
+- `tests/oracle/`, recorded by `scripts/record_oracles.py`: Python reference outputs, as
+  plain JSON, for the Rust migration (`docs/rust-migration-plan.md`): config canonical JSON,
+  hashes and error messages, sRGB↔LAB, `distance_transform_edt` indices, skimage's
+  bilateral denoise, scipy's 1-D filters, percentiles, the `repr` of 10,000 floats and two
+  small pipeline runs' text outputs. `tests/test_oracle.py` re-records it and requires
+  byte-identical files.
 - `--enhance` (with `--enhance-radius`, `--enhance-black`, `--enhance-white`) and `--ink`: an
   opt-in pre-pass before downscaling for photos. `enhance` stretches the subject's brightness
   and adds local contrast at about two output pixels, so eyes, mouths and other sub-pixel
