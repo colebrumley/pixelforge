@@ -374,6 +374,27 @@ Acceptance: masks, crops, layouts and pre-reduced images bitwise identical; EDT 
 bitwise identical on the oracle masks; bilateral within 1e-6 of skimage on the oracle
 cases; snapshot report; goldens regenerated (#2). Bench: preprocess time on the portrait.
 
+Done 2026-10-11 (merges 3235039 filters, 5a35744 masking and layout, cdae0c7 integration).
+`mask.rs` reproduces scipy's `distance_transform_edt` indices bit for bit (dimension-by-
+dimension Maurer passes; a site leaves the envelope only on scipy's strict inequality, so
+the lower index along the pass wins ties), plus keying, fringe unmixing, 4-connected
+labelling and dilation; `layout.rs` the sizes, `fit`, pre-reduction (whose numpy block
+means turned out to be sequential for RGB and row-wise pairwise for weights, probed
+empirically), repeat and wrap padding; `filters.rs` scipy's `uniform_filter1d` (bitwise,
+any size and mode), `gaussian_filter1d` (2.2e-16), `median_filter` (bitwise) and skimage
+0.26's bilateral as written, including its oversized spatial table and integer `dist_scale`
+(3.3e-16 on the oracle; 4 pixels at 5.4e-6 on the full portrait); `enhance.rs` the whole
+pass with `np.percentile` bitwise (4.2e-15 overall). The macOS scipy and skimage wheels fuse
+multiply-adds in the Gaussian correlation and the bilateral accumulation and colour
+distance; this port does not (Decision 6), so it matches FMA-free builds instead of this
+Mac's wheels. `preprocess.rs::run` composes the stages; `pixelforge.preprocess` delegates,
+with rembg still applied from Python (the external command waits for PNG I/O in Phase 6).
+Snapshot matrix 48 of 48 identical to the Phase 4 start, goldens unchanged (so golden
+regeneration #2 was not needed either). Preprocess on the portrait: 2.37 → 0.26 s
+(background preset), 2.54 → 0.56 s with enhance 1.0 and ink 0.6, under load. 1325 tests
+pass; no production module imports scipy or scikit-image any more (both stay installed for
+the test references and the oracle recorder until Phase 8).
+
 ### Phase 5 — Downscalers' control flow
 
 - `box::run`; `kopf::run` (initialisation, window and truncation bookkeeping, ghost cells,
