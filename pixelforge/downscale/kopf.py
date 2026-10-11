@@ -1,11 +1,14 @@
 """Content-adaptive downscaling (Kopf, Shamir, Peers 2013), REQUIREMENTS.md Section 6.
 
 A constrained EM over one anisotropic Gaussian kernel per output pixel. All spatial quantities
-are in output-pixel units. Arrays are laid out "pixel-major": every input pixel is covered by
-at most n_slots × n_slots kernels (those whose R_k window contains it), so per-kernel/per-pixel
-weights live in arrays of shape (slots, hi, wi). Per-pixel normalization is then a reduction
-over the slot axis, and per-kernel sums are block sums (np.add.reduceat) because the pixels
-that see a given kernel in a given slot form a contiguous block.
+are in output-pixel units. Every input pixel is covered by at most 4 × 4 kernels (those whose
+R_k window contains it); the per-pixel loops over those slots (E-step responsibilities γ,
+M-step sums, the C-step's directional and overlap sums, and the final spatial-only refill)
+run natively in `pixelforge._native` (rust/src/kopf.rs). Everything per kernel, i.e. the
+M-step and C-step algebra on (ho, wo) arrays, the constraints, convergence and logging, is
+here. γ is kept in a (hi, wi, 16) array, slot s = jy·4 + jx, between the E-step and the C-step.
+The numpy implementation the native code replaced is kept as a test reference in
+`pixelforge/downscale/_reference/kopf.py`.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import math
 
 import numpy as np
 
+from .. import _native
 from . import Downscaled, neighbor_mean4
 from .box import cell_index
 
@@ -58,87 +62,21 @@ def from_unit_cube(cube: np.ndarray) -> np.ndarray:
     return out
 
 
-def _contiguous(idx: np.ndarray) -> bool:
-    """True iff `idx` is an ascending run of consecutive integers (or empty)."""
-    return idx.size == 0 or bool(np.all(np.diff(idx) == 1))
+def _window(n_in: int, n_out: int) -> np.ndarray:
+    """(n_out, n_in) bool: kernel k's R_k window contains pixel i along one axis.
 
-
-def _as_slices(runs: np.ndarray, kernels: np.ndarray):
-    """(runs, kernels) as slices when both are contiguous ascending ranges, else as arrays.
-
-    `runs` is contiguous because it selects an interval of the ascending run kernels, and
-    `kernels` is too whenever `base` advances by at most one kernel per pixel (any
-    downscale). Slices let reduce() use views instead of np.ix_ gathers and scatters.
+    Kernel k (center k + 0.5) covers a pixel iff |pos − (k + 0.5)| < RK_HALF_WIDTH, with pixel
+    positions in output units. The native kernels apply the same test per slot.
     """
-    if _contiguous(runs) and _contiguous(kernels):
-        if runs.size == 0:
-            return slice(0, 0), slice(0, 0)
-        return (slice(int(runs[0]), int(runs[-1]) + 1),
-                slice(int(kernels[0]), int(kernels[-1]) + 1))
-    return runs, kernels
+    pos = (np.arange(n_in) + 0.5) * (n_out / n_in)
+    return np.abs(pos[None, :] - (np.arange(n_out)[:, None] + 0.5)) < RK_HALF_WIDTH
 
 
-class _Axis:
-    """Window bookkeeping along one image axis."""
-
-    def __init__(self, n_in: int, n_out: int):
-        self.n_in, self.n_out = n_in, n_out
-        self.pos = (np.arange(n_in) + 0.5) * (n_out / n_in)   # pixel positions, output units
-        self.n_slots = int(math.ceil(2 * RK_HALF_WIDTH))
-        # Kernel k (center k + 0.5) covers a pixel iff |pos − (k + 0.5)| < half-width; `base`
-        # is the first such k, and slot j refers to kernel base + j.
-        self.base = np.floor(self.pos - 0.5 - RK_HALF_WIDTH).astype(np.int64) + 1
-        kern = self.base[None, :] + np.arange(self.n_slots)[:, None]
-        self.valid = ((kern >= 0) & (kern < n_out)
-                      & (np.abs(self.pos[None, :] - (kern + 0.5)) < RK_HALF_WIDTH))
-        self.kern = np.clip(kern, 0, n_out - 1)
-        # Pixels each kernel's window would span on an unbounded pixel lattice.
-        lattice = (np.arange(-n_in, 2 * n_in) + 0.5) * (n_out / n_in)
-        self.window = np.count_nonzero(
-            np.abs(lattice[None, :] - (np.arange(n_out)[:, None] + 0.5)) < RK_HALF_WIDTH, axis=1)
-        self.repeats = [np.bincount(k, minlength=n_out) for k in self.kern]
-        # Runs of equal `base`: within a slot, each run is the block of one kernel.
-        self.starts = np.concatenate([[0], np.nonzero(np.diff(self.base))[0] + 1])
-        run_kernel = self.base[self.starts][None, :] + np.arange(self.n_slots)[:, None]
-        # sel[j] maps slot j's runs onto kernels: (runs, kernels) as either a pair of slices
-        # or, should either range ever not be contiguous, a pair of index arrays.
-        self.sel = []
-        for j in range(self.n_slots):
-            runs = np.nonzero((run_kernel[j] >= 0) & (run_kernel[j] < n_out))[0]
-            self.sel.append(_as_slices(runs, run_kernel[j][runs]))
-
-
-class _Layout:
-    def __init__(self, hi: int, wi: int, ho: int, wo: int):
-        self.y, self.x = _Axis(hi, ho), _Axis(wi, wo)
-        self.ns = self.y.n_slots
-        self.slots = [(jy, jx) for jy in range(self.ns) for jx in range(self.ns)]
-
-    def expand(self, per_kernel: np.ndarray, jy: int, jx: int) -> np.ndarray:
-        """(ho, wo) per-kernel values → (hi, wi): the value of each pixel's slot kernel."""
-        # kern[jx] is non-decreasing, so repeating each column by its run length is the same
-        # as np.take along axis 1, only several times faster.
-        return np.repeat(np.take(per_kernel, self.y.kern[jy], axis=0), self.x.repeats[jx], axis=1)
-
-    def reduce(self, per_pixel: np.ndarray, jy: int, jx: int, out: np.ndarray,
-               ufunc=np.add) -> None:
-        """Fold a slot's (hi, wi) values into per-kernel `out` (ho, wo) with `ufunc`."""
-        blocks = ufunc.reduceat(ufunc.reduceat(per_pixel, self.x.starts, axis=1),
-                                self.y.starts, axis=0)
-        rows, ky = self.y.sel[jy]
-        cols, kx = self.x.sel[jx]
-        if isinstance(ky, slice) and isinstance(kx, slice):
-            # Same elementwise ufunc on the same operands as the np.ix_ form below, applied
-            # in place through views: bitwise-identical results, ~20 % faster reduce().
-            target = out[ky, kx]
-            ufunc(target, blocks[rows, cols], out=target)
-        else:
-            target = np.ix_(ky, kx)
-            out[target] = ufunc(out[target], blocks[np.ix_(rows, cols)])
-
-    def slot_valid(self, jy: int, jx: int, mask: np.ndarray | None) -> np.ndarray:
-        valid = self.y.valid[jy][:, None] & self.x.valid[jx][None, :]
-        return valid if mask is None else valid & mask
+def _window_span(n_in: int, n_out: int) -> np.ndarray:
+    """Pixels each kernel's window would span on an unbounded pixel lattice, per kernel."""
+    lattice = (np.arange(-n_in, 2 * n_in) + 0.5) * (n_out / n_in)
+    return np.count_nonzero(
+        np.abs(lattice[None, :] - (np.arange(n_out)[:, None] + 0.5)) < RK_HALF_WIDTH, axis=1)
 
 
 def _inverse_cov(cov: np.ndarray):
@@ -178,17 +116,14 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         weight: np.ndarray | None = None) -> Downscaled:
     hi, wi = mask.shape
     wo, ho = int(out_width), int(out_height)
-    layout = _Layout(hi, wi, ho, wo)
-    slots, ns = layout.slots, layout.ns
-    pos_x, pos_y = layout.x.pos[None, :], layout.y.pos[:, None]
     cube = to_unit_cube(lab)
-    channels = [np.ascontiguousarray(cube[..., c]) for c in range(3)]
-    pixel_mask = None if mask.all() else mask
+    channels = np.ascontiguousarray(np.moveaxis(cube, -1, 0))   # (3, hi, wi)
+    mask_u8 = np.ascontiguousarray(mask, dtype=np.uint8)
     # Per-pixel weight (alpha) multiplied into γ after the E-step, so semi-transparent pixels
     # pull the kernels less. Skipped when it is 1 on every opaque pixel (γ is 0 elsewhere).
     pixel_weight = None
     if weight is not None and not np.all(weight[mask] == 1.0):
-        pixel_weight = np.where(mask, weight, 0.0)
+        pixel_weight = np.ascontiguousarray(np.where(mask, weight, 0.0), dtype=np.float64)
 
     # INITIALIZE
     grid_x, grid_y = np.meshgrid(np.arange(wo) + 0.5, np.arange(ho) + 0.5)
@@ -198,24 +133,24 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
     nu = np.full((ho, wo, 3), 0.5)
     sigma = np.full((ho, wo), SIGMA_INIT)
 
-    gamma = np.empty((len(slots), hi, wi))
-    # Per-slot work buffers, reused across slots and iterations. The offsets p_i − μ_k are
-    # recomputed where they are needed instead of being stored for every slot.
-    dx, dy, quad, work, work2 = (np.empty((hi, wi)) for _ in range(5))
-    positive = np.empty((hi, wi), dtype=bool)
+    gamma = np.empty((hi, wi, 16))      # γ per slot, written by the E-step, read by the C-step
+    sums = np.empty((ho, wo, 9))        # M-step sums w, x, y, xx, xy, yy, c0, c1, c2
+    plus, both, overlap_sums = (np.empty((4, ho, wo)) for _ in range(3))
     weight_sum = np.zeros((ho, wo))
     iterations = 0
     converged = False
     cos_limit = math.cos(math.radians(ORIENTATION_MAX_DEGREES))
     starve_below = STARVED_FRACTION * (hi / ho) * (wi / wo)
-    has_pixels = np.zeros((ho, wo))
-    in_image = np.zeros((ho, wo))
-    for jy, jx in slots:
-        layout.reduce(layout.slot_valid(jy, jx, pixel_mask).astype(np.float64), jy, jx, has_pixels)
-        layout.reduce(layout.slot_valid(jy, jx, None).astype(np.float64), jy, jx, in_image)
+    # Pixels in each kernel's R_k window: opaque ones, and all in-image ones. The window is
+    # separable, so the counts are products of 0/1 matrices (exact integers in float64).
+    win_y = _window(hi, ho).astype(np.float64)
+    win_x = _window(wi, wo).astype(np.float64)
+    has_pixels = win_y @ mask.astype(np.float64) @ win_x.T
+    in_image = np.outer(win_y.sum(axis=1), win_x.sum(axis=1))
     # A kernel is truncated when its R_k window holds transparent pixels or reaches past the
     # image border (fewer in-image pixels than the window spans); see the shape constraints.
-    truncated = (has_pixels < in_image) | (in_image < np.outer(layout.y.window, layout.x.window))
+    truncated = (has_pixels < in_image) | (in_image < np.outer(_window_span(hi, ho),
+                                                               _window_span(wi, wo)))
     has_pixels = has_pixels > 0
     # DEVIATION: Section 6 — a kernel whose own output cell is less than half opaque (the box
     # filter's rule) is a "ghost": it takes no part in the E-step, the shape constraints or
@@ -228,49 +163,16 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
     cell_total = np.bincount(cell, minlength=ho * wo).reshape(ho, wo)
     cell_opaque = np.bincount(cell[mask.ravel()], minlength=ho * wo).reshape(ho, wo)
     ghost = cell_opaque * 2 < cell_total
-    any_ghost = bool(ghost.any())
-
-    def offsets(cx: np.ndarray, cy: np.ndarray, jy: int, jx: int) -> None:
-        """dx, dy ← p_i − c_k for each pixel's slot kernel."""
-        np.subtract(pos_x, layout.expand(cx, jy, jx), out=dx)
-        np.subtract(pos_y, layout.expand(cy, jy, jx), out=dy)
-
-    def spatial_quad(ia, ib, ic, jy: int, jx: int) -> None:
-        """quad ← (p_i − μ_k)ᵀ Σ_k⁻¹ (p_i − μ_k), from dx, dy."""
-        np.multiply(layout.expand(ia, jy, jx), dx, out=quad)
-        np.multiply(quad, dx, out=quad)
-        np.multiply(layout.expand(ib, jy, jx), 2.0, out=work)
-        np.multiply(work, dx, out=work)
-        np.multiply(work, dy, out=work)
-        np.add(quad, work, out=quad)
-        np.multiply(layout.expand(ic, jy, jx), dy, out=work)
-        np.multiply(work, dy, out=work)
-        np.add(quad, work, out=quad)
+    ghost_u8 = ghost.astype(np.uint8)
 
     for _ in range(config.kopf_max_iters):
         iterations += 1
-        # ------------------------------------------------------------------ E-STEP
-        inv_a, inv_b, inv_c = _inverse_cov(cov)
-        inv_color = 1.0 / (2.0 * sigma * sigma)
-        for s, (jy, jx) in enumerate(slots):
-            offsets(mu_x, mu_y, jy, jx)
-            spatial_quad(inv_a, inv_b, inv_c, jy, jx)
-            dist = work2
-            for c in range(3):
-                np.subtract(channels[c], layout.expand(nu[..., c], jy, jx), out=work)
-                work *= work
-                if c == 0:
-                    dist[...] = work
-                else:
-                    dist += work
-            logw = gamma[s]
-            np.multiply(quad, -0.5, out=logw)
-            dist *= layout.expand(inv_color, jy, jx)
-            logw -= dist
-            logw[~layout.slot_valid(jy, jx, pixel_mask)] = -np.inf
-            if any_ghost:
-                logw[layout.expand(ghost, jy, jx)] = -np.inf
-
+        # ------------------------------------------------------- E-STEP + M-STEP SUMS
+        # Native, per pixel: log-weights −½ (p_i − μ_k)ᵀ Σ_k⁻¹ (p_i − μ_k) − |c_i − ν_k|² / 2σ_k²
+        # over the pixel's slot kernels (−∞ for slots outside R_k, ghost kernels and
+        # transparent pixels), normalized per pixel into γ, times the pixel weight; then the
+        # γ-weighted sums with offsets from the current μ_k.
+        #
         # DEVIATION: Section 6 — the per-kernel normalization w_k(i) /= Σ_{i∈R_k} w_k(i) is
         # skipped. It rescales every kernel relative to its own best-fitting pixels, so a
         # kernel sitting on a thin feature (which covers < 50% of its cell) can never become
@@ -281,45 +183,26 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         # stay in log space so the tiny initial σ cannot underflow; the spec's "sum == 0 →
         # uniform over R_k" guard is replaced by the re-seeding of starved kernels below.
         # Normalize per pixel: γ_k(i) = w_k(i) / Σ_n w_n(i), from the log-weights.
-        pixel_peak = gamma.max(axis=0)
-        pixel_peak[~np.isfinite(pixel_peak)] = 0.0
-        gamma -= pixel_peak
-        np.exp(gamma, out=gamma)
-        pixel_sum = gamma.sum(axis=0)
-        pixel_sum[pixel_sum == 0] = 1.0    # guard div-by-0 → γ = 0
-        gamma /= pixel_sum
-        if pixel_weight is not None:
-            gamma *= pixel_weight
+        inv_a, inv_b, inv_c = _inverse_cov(cov)
+        inv_color = 1.0 / (2.0 * sigma * sigma)
+        _native.kopf_em_step(channels, mask_u8, pixel_weight, mu_x, mu_y, inv_a, inv_b, inv_c,
+                             nu, inv_color, ghost_u8, gamma, sums)
 
         # ------------------------------------------------------------------ M-STEP
-        sums = {name: np.zeros((ho, wo)) for name in
-                ("w", "x", "y", "xx", "xy", "yy", "c0", "c1", "c2")}
-        for s, (jy, jx) in enumerate(slots):
-            g = gamma[s]
-            offsets(mu_x, mu_y, jy, jx)
-            gx, gy = np.multiply(g, dx, out=quad), np.multiply(g, dy, out=work)
-            layout.reduce(g, jy, jx, sums["w"])
-            layout.reduce(gx, jy, jx, sums["x"])
-            layout.reduce(gy, jy, jx, sums["y"])
-            layout.reduce(np.multiply(gx, dx, out=work2), jy, jx, sums["xx"])
-            layout.reduce(np.multiply(gx, dy, out=work2), jy, jx, sums["xy"])
-            layout.reduce(np.multiply(gy, dy, out=work2), jy, jx, sums["yy"])
-            for c in range(3):
-                layout.reduce(np.multiply(g, channels[c], out=work2), jy, jx, sums[f"c{c}"])
-        weight_sum = sums["w"]
+        weight_sum = sums[..., 0].copy()
         fed = weight_sum > 1e-12        # starved kernels keep their previous parameters
         wsafe = np.where(fed, weight_sum, 1.0)
         old_mu_x, old_mu_y, old_nu, old_sigma = mu_x, mu_y, nu, sigma
-        # Σ_k uses the OLD μ_k: dx, dy above are offsets from it.
+        # Σ_k uses the OLD μ_k: the sums' offsets are from it.
         new_cov = np.empty_like(cov)
-        new_cov[..., 0, 0] = sums["xx"] / wsafe
-        new_cov[..., 0, 1] = new_cov[..., 1, 0] = sums["xy"] / wsafe
-        new_cov[..., 1, 1] = sums["yy"] / wsafe
+        new_cov[..., 0, 0] = sums[..., 3] / wsafe
+        new_cov[..., 0, 1] = new_cov[..., 1, 0] = sums[..., 4] / wsafe
+        new_cov[..., 1, 1] = sums[..., 5] / wsafe
         cov = np.where(fed[..., None, None], new_cov, cov)
-        m_mu_x = np.where(fed, mu_x + sums["x"] / wsafe, mu_x)
-        m_mu_y = np.where(fed, mu_y + sums["y"] / wsafe, mu_y)
+        m_mu_x = np.where(fed, mu_x + sums[..., 1] / wsafe, mu_x)
+        m_mu_y = np.where(fed, mu_y + sums[..., 2] / wsafe, mu_y)
         nu = np.where(fed[..., None],
-                      np.stack([sums[f"c{c}"] / wsafe for c in range(3)], axis=-1), nu)
+                      np.stack([sums[..., 6 + c] / wsafe for c in range(3)], axis=-1), nu)
 
         # ------------------------------------------------------------------ C-STEP
         # Spatial: Laplacian smoothing, then clamp to a box around the grid position.
@@ -333,40 +216,22 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         mu_y = grid_y + np.clip(0.5 * off_y + 0.5 * neighbor_mean4(off_y), -CLAMP_BOX, CLAMP_BOX)
         cov = _clamp_singular_values(cov)
 
-        # Shape constraints, with (p_i − μ_k) relative to the constrained μ_k.
+        # Shape constraints, with (p_i − μ_k) relative to the constrained μ_k. Native, per
+        # pixel and slot: (dx, dy) = (p_i − old μ_k) − (μ_k − old μ_k), in this order so that
+        # the result does not depend on whether the offsets were stored or are recomputed;
+        # u = (dx, dy)·e for each axis e below; both = Σ γ u², plus = Σ_{u > 0} γ u²; and for
+        # each neighbor direction (0, 1), (1, 0), (1, 1), (1, −1), Σ_i γ_k(i) γ_n(i).
         move_x, move_y = mu_x - old_mu_x, mu_y - old_mu_y
-        r = math.sqrt(0.5)
-        axes = {(0, 1): (1.0, 0.0), (1, 0): (0.0, 1.0), (1, 1): (r, r), (-1, 1): (r, -r)}
-        plus = {axis: np.zeros((ho, wo)) for axis in axes}
-        both = {axis: np.zeros((ho, wo)) for axis in axes}
-        for s, (jy, jx) in enumerate(slots):
-            # (p_i − old μ_k) − (μ_k − old μ_k), in this order so that the result does not
-            # depend on whether the offsets were stored or are recomputed.
-            offsets(old_mu_x, old_mu_y, jy, jx)
-            dx -= layout.expand(move_x, jy, jx)
-            dy -= layout.expand(move_y, jy, jx)
-            for axis, (ex, ey) in axes.items():
-                u, t = np.multiply(dx, ex, out=quad), work
-                u += np.multiply(dy, ey, out=work2)
-                np.multiply(gamma[s], u, out=t)
-                t *= u
-                layout.reduce(t, jy, jx, both[axis])
-                np.greater(u, 0, out=positive)
-                np.logical_not(positive, out=positive)
-                t[positive] = 0.0
-                layout.reduce(t, jy, jx, plus[axis])
+        _native.kopf_c_step(gamma, old_mu_x, old_mu_y, move_x, move_y, plus, both, overlap_sums)
+        axes = ((0, 1), (1, 0), (1, 1), (-1, 1))   # e = (1, 0), (0, 1), (√½, √½), (√½, −√½)
         toward = {}
-        for (ndy, ndx) in axes:
-            toward[(ndy, ndx)] = plus[(ndy, ndx)]
-            toward[(-ndy, -ndx)] = both[(ndy, ndx)] - plus[(ndy, ndx)]
+        for a, (ndy, ndx) in enumerate(axes):
+            toward[(ndy, ndx)] = plus[a]
+            toward[(-ndy, -ndx)] = both[a] - plus[a]
 
         overlap = {}
-        for ndy, ndx in ((0, 1), (1, 0), (1, 1), (1, -1)):
-            f = np.zeros((ho, wo))
-            for s, (jy, jx) in enumerate(slots):
-                ny, nx = jy + ndy, jx + ndx
-                if 0 <= ny < ns and 0 <= nx < ns:
-                    layout.reduce(gamma[s] * gamma[ny * ns + nx], jy, jx, f)
+        for d, (ndy, ndx) in enumerate(((0, 1), (1, 0), (1, 1), (1, -1))):
+            f = overlap_sums[d]
             overlap[(ndy, ndx)] = f
             overlap[(-ndy, -ndx)] = _shift(f, -ndy, -ndx)   # f is symmetric in (k, n)
 
@@ -465,31 +330,17 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
     starved = (weight_sum < starve_below) & small_mask
     if starved.any():
         inv_a, inv_b, inv_c = _inverse_cov(cov)
-        for s, (jy, jx) in enumerate(slots):
-            offsets(mu_x, mu_y, jy, jx)
-            spatial_quad(inv_a, inv_b, inv_c, jy, jx)
-            logw = gamma[s]
-            np.multiply(quad, -0.5, out=logw)
-            logw[~layout.slot_valid(jy, jx, None)] = -np.inf
-        pixel_peak = gamma.max(axis=0)
-        pixel_peak[~np.isfinite(pixel_peak)] = 0.0
-        gamma -= pixel_peak
-        np.exp(gamma, out=gamma)
-        pixel_sum = gamma.sum(axis=0)
-        pixel_sum[pixel_sum == 0] = 1.0
-        gamma /= pixel_sum
-        # Colors are weighted by alpha (by the binary mask when there is no weight).
+        # Native: γ from the spatial term alone over every in-image slot (no pixel mask, no
+        # ghost test), normalized per pixel; colors are then weighted by alpha (by the binary
+        # mask when there is no weight).
         pixel_mass = mask.astype(np.float64) if pixel_weight is None else pixel_weight
-        mass_w = np.zeros((ho, wo))
-        color_w = [np.zeros((ho, wo)) for _ in range(3)]
-        for s, (jy, jx) in enumerate(slots):
-            g = gamma[s] * pixel_mass
-            layout.reduce(g, jy, jx, mass_w)
-            for c in range(3):
-                layout.reduce(g * channels[c], jy, jx, color_w[c])
+        mass_w = np.empty((ho, wo))
+        color_w = np.empty((ho, wo, 3))
+        _native.kopf_spatial_refill(channels, pixel_mass, mu_x, mu_y, inv_a, inv_b, inv_c,
+                                    mass_w, color_w)
         refill = starved & (mass_w > 0)
         for c in range(3):
-            nu[refill, c] = color_w[c][refill] / mass_w[refill]
+            nu[refill, c] = color_w[refill, c] / mass_w[refill]
 
     return Downscaled(small_lab=from_unit_cube(nu), small_mask=small_mask,
                       stats={"iterations": iterations, "converged": converged,
