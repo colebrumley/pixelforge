@@ -1,12 +1,12 @@
-//! Native extension for pixelforge, imported as `pixelforge._native`.
+//! Python binding of the pixelforge library, imported as `pixelforge._native`.
 //!
-//! Determinism rules (see docs/rust-port-plan.md, Decision 3): float64 only, no fast-math,
-//! no `target-cpu=native`, no `mul_add` unless used unconditionally, `exp` from the `libm`
-//! crate, and reductions in a fixed order that does not depend on the thread count.
+//! The numerical code lives in the `pixelforge` crate (crates/pixelforge); this crate only
+//! converts and checks arguments, releases the GIL and calls it. Determinism rules: see
+//! crates/pixelforge/README.md.
 
+mod config;
 mod gerstner;
 mod kopf;
-mod parallel;
 
 use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
@@ -36,7 +36,7 @@ fn sum_f64(arr: PyReadonlyArray1<'_, f64>) -> f64 {
 /// else the available parallelism. Affects speed only; recorded in `_meta.json`.
 #[pyfunction]
 fn thread_count() -> usize {
-    parallel::thread_count()
+    pixelforge::parallel::thread_count()
 }
 
 #[pymodule]
@@ -48,5 +48,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(kopf::kopf_em_step, m)?)?;
     m.add_function(wrap_pyfunction!(kopf::kopf_c_step, m)?)?;
     m.add_function(wrap_pyfunction!(kopf::kopf_spatial_refill, m)?)?;
+    config::register(m)?;
     Ok(())
 }

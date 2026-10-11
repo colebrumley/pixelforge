@@ -1,0 +1,11 @@
+[package]
+name = "pixelforge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Deterministic conversion of raster images into 16-bit-style pixel art (library)"
+publish = false
+
+[dependencies]
+# Pure-Rust exp: bit-identical on every platform, unlike f64::exp (platform libm).
+libm = "0.2.16"

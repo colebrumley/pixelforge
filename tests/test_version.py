@@ -16,14 +16,14 @@ def test_version_is_single_sourced():
 
 
 def test_version_matches_pyproject_and_cargo():
-    """pyproject.toml and rust/Cargo.toml carry static copies of pixelforge/version.py."""
+    """pyproject.toml and the root Cargo.toml carry static copies of pixelforge/version.py."""
     root = Path(__file__).resolve().parent.parent
     source = re.search(r'^__version__ = "([^"]+)"$',
                        (root / "pixelforge" / "version.py").read_text(), re.M)
     project = re.search(r'^\[project\]$.*?^version = "([^"]+)"$',
                         (root / "pyproject.toml").read_text(), re.M | re.S)
-    cargo = re.search(r'^\[package\]$.*?^version = "([^"]+)"$',
-                      (root / "rust" / "Cargo.toml").read_text(), re.M | re.S)
+    cargo = re.search(r'^\[workspace\.package\]$.*?^version = "([^"]+)"$',
+                      (root / "Cargo.toml").read_text(), re.M | re.S)
     assert source and project and cargo
     assert source.group(1) == pixelforge.__version__
     assert project.group(1) == source.group(1)

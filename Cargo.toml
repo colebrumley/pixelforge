@@ -1,0 +1,17 @@
+[workspace]
+members = ["crates/pixelforge", "crates/pixelforge-py"]
+resolver = "2"
+
+[workspace.package]
+# Keep equal to pixelforge/version.py and pyproject.toml (tests/test_version.py checks).
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+# Profiles are read from the workspace root only (Cargo ignores them in members).
+# Determinism: no fast-math and no target-cpu=native, here or in any .cargo/config.toml.
+# Results must not depend on the machine that compiled them.
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "fat"

@@ -85,7 +85,7 @@ To work on it, or to reproduce outputs exactly:
 
 ```bash
 git clone https://github.com/colebrumley/pixelforge && cd pixelforge
-uv sync --locked                    # also builds the Rust extension (rebuilt when rust/ changes)
+uv sync --locked                    # also builds the Rust extension (rebuilt when crates/ changes)
 uv run pytest -q                    # full suite, as CI runs it
 uv run pytest -q -m "not slow"      # skip the full-size kopf cases while iterating
 ```

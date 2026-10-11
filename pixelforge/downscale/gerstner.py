@@ -5,9 +5,9 @@ palette is grown by mass-constrained deterministic annealing (MCDA). `PaletteAnn
 palette half on its own; `palette.mcda` reuses it directly on pixel colors.
 
 The per-pixel hot loops, the SLIC assignment pass, the bilateral filter and the per-iteration
-superpixel statistics, run in the native extension (`pixelforge._native`,
-rust/src/gerstner.rs); the numpy versions they replace are kept in `_reference/gerstner.py`
-for tests and benchmarks.
+superpixel statistics, run in the native extension (`pixelforge._native`, from
+crates/pixelforge/src/gerstner.rs); the numpy versions they replace are kept in
+`_reference/gerstner.py` for tests and benchmarks.
 """
 
 from __future__ import annotations
