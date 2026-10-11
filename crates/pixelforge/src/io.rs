@@ -1740,15 +1740,21 @@ fn jpeg_meta(bytes: &[u8]) -> (Meta, u64) {
         }
         pos = end;
     }
-    // MPO: the MP index's NumberOfImages (with a full entry table), unless Ultra HDR.
+    // MPO: the MP index's NumberOfImages (with a full entry table), unless Ultra HDR. A
+    // BigTIFF header is not an MP index (Pillow's MPO reader refuses it too), and the
+    // count can be any 64-bit value, so the table-size test must not overflow.
     let frames = mp
         .and_then(|data| {
             let (view, ifd0) = TiffView::new(data)?;
+            if view.big {
+                return None;
+            }
             let n = view.tag_uint(ifd0, 0xb001)?;
             let (entries, _) = view.ifd(ifd0);
             let table = entries.iter().rev().find(|e| e.tag == 0xb002)?;
             let table_len = view.value_bytes(table)?.len() as i64;
-            (n > 1 && table_len >= 16 * n && !hdr).then_some(n as u64)
+            let needed = n.checked_mul(16)?;
+            (n > 1 && table_len >= needed && !hdr).then_some(n as u64)
         })
         .unwrap_or(1);
     (meta, frames)
@@ -2272,5 +2278,95 @@ mod tests {
         );
         let err = from_image_array(&shape, ArrayData::Other("int64"), 100).unwrap_err();
         assert_eq!(err.0, "image array must be uint8 or float, got int64");
+    }
+
+    /// A small baseline JPEG with an APP2 `MPF` segment (`index`, the TIFF-structured MP
+    /// index) spliced in after SOI.
+    fn jpeg_with_mpf(index: &[u8]) -> Vec<u8> {
+        let mut jpeg = Vec::new();
+        let rgb = vec![128u8; 4 * 4 * 3];
+        image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+            .encode(&rgb, 4, 4, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let mut seg = b"MPF\x00".to_vec();
+        seg.extend_from_slice(index);
+        let len = u16::try_from(seg.len() + 2).unwrap();
+        let mut out = jpeg[..2].to_vec();
+        out.extend_from_slice(&[0xff, 0xe2]);
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(&seg);
+        out.extend_from_slice(&jpeg[2..]);
+        out
+    }
+
+    /// A classic little-endian MP index: NumberOfImages as `count_type` (LONG or LONG8)
+    /// holding `n`, and an MP entry table of `table_len` bytes.
+    fn classic_mp_index(count_type: u16, n: u64, table_len: u32) -> Vec<u8> {
+        let mut t = b"II\x2a\x00".to_vec();
+        t.extend_from_slice(&8u32.to_le_bytes());
+        // IFD at 8: 2 entries (2 + 2 * 12 bytes) and the next offset (4 bytes) end at 38;
+        // a LONG8 count lives at 38, the table after it.
+        let count_at = 38u32;
+        let table_at = count_at + 8;
+        t.extend_from_slice(&2u16.to_le_bytes());
+        t.extend_from_slice(&0xb001u16.to_le_bytes());
+        t.extend_from_slice(&count_type.to_le_bytes());
+        t.extend_from_slice(&1u32.to_le_bytes());
+        if count_type == 16 {
+            t.extend_from_slice(&count_at.to_le_bytes());
+        } else {
+            t.extend_from_slice(&u32::try_from(n).unwrap().to_le_bytes());
+        }
+        t.extend_from_slice(&0xb002u16.to_le_bytes());
+        t.extend_from_slice(&7u16.to_le_bytes());
+        t.extend_from_slice(&table_len.to_le_bytes());
+        t.extend_from_slice(&table_at.to_le_bytes());
+        t.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(t.len(), count_at as usize);
+        t.extend_from_slice(&n.to_le_bytes());
+        t.resize(t.len() + table_len as usize, 0);
+        t
+    }
+
+    fn frame_warnings(bytes: &[u8]) -> Vec<String> {
+        decode_bytes("mpf.jpg", bytes, MAX_INPUT_PIXELS)
+            .unwrap()
+            .warnings
+    }
+
+    #[test]
+    fn mpf_frame_count_is_read_and_never_overflows() {
+        // Control: two images with a full table.
+        assert_eq!(
+            frame_warnings(&jpeg_with_mpf(&classic_mp_index(4, 2, 32))),
+            ["mpf.jpg has 2 frames; using the first"]
+        );
+        // A LONG8 count of i64::MAX: 16 * n overflows, so one frame.
+        let huge = classic_mp_index(16, i64::MAX as u64, 32);
+        assert!(frame_warnings(&jpeg_with_mpf(&huge)).is_empty());
+
+        // A BigTIFF header is not an MP index: one frame, whatever the count says.
+        let mut big = b"II\x2b\x00".to_vec();
+        big.extend_from_slice(&8u16.to_le_bytes());
+        big.extend_from_slice(&0u16.to_le_bytes());
+        big.extend_from_slice(&16u64.to_le_bytes());
+        // IFD at 16: count (8), 2 entries of 20 bytes, next offset (8): the table at 72.
+        big.extend_from_slice(&2u64.to_le_bytes());
+        big.extend_from_slice(&0xb001u16.to_le_bytes());
+        big.extend_from_slice(&16u16.to_le_bytes());
+        big.extend_from_slice(&1u64.to_le_bytes());
+        big.extend_from_slice(&(i64::MAX as u64).to_le_bytes());
+        big.extend_from_slice(&0xb002u16.to_le_bytes());
+        big.extend_from_slice(&7u16.to_le_bytes());
+        big.extend_from_slice(&32u64.to_le_bytes());
+        big.extend_from_slice(&72u64.to_le_bytes());
+        big.extend_from_slice(&0u64.to_le_bytes());
+        assert_eq!(big.len(), 72);
+        big.resize(72 + 32, 0);
+        assert!(frame_warnings(&jpeg_with_mpf(&big)).is_empty());
+        // The same index with a small count would also be one frame.
+        let mut big_two = big.clone();
+        big_two[36..44].copy_from_slice(&2u64.to_le_bytes());
+        assert!(frame_warnings(&jpeg_with_mpf(&big_two)).is_empty());
     }
 }

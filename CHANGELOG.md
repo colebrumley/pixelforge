@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A JPEG whose MPF index holds a huge image count, or a BigTIFF header, no longer
+  overflows the frame-count check (a panic in debug builds); it reads as one frame.
+
 ## [0.2.0] - 2026-10-11
 
 pixelforge is now a single Rust program, installed with `cargo install --git`, with no
