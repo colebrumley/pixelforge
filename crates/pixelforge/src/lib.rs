@@ -13,6 +13,8 @@
 
 pub mod color;
 pub mod config;
+pub mod enhance;
+pub mod filters;
 pub mod gerstner;
 pub mod kopf;
 pub mod npsum;
