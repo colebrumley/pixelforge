@@ -6,6 +6,17 @@ license.workspace = true
 description = "Deterministic conversion of raster images into 16-bit-style pixel art (library)"
 publish = false
 
+[features]
+# The command-line program (src/main.rs, src/cli/). The Python binding builds the library
+# without it (default-features = false), so clap never reaches the extension module.
+default = ["cli"]
+cli = ["dep:clap"]
+
+[[bin]]
+name = "pixelforge"
+path = "src/main.rs"
+required-features = ["cli"]
+
 [dependencies]
 # Pure-Rust exp: bit-identical on every platform, unlike f64::exp (platform libm).
 libm = "0.2.16"
@@ -24,7 +35,12 @@ gif = "=0.14.2"
 tiff = "=0.11.3"
 # zTXt/iTXt values with Pillow's 1 MiB limit (io::read_png_text, EXIF in text chunks).
 miniz_oxide = "=0.8.9"
+# The CLI's argument parser (builder API: the flags are generated from the field table).
+clap = { version = "=4.5.61", features = ["string"], optional = true }
 
 [dev-dependencies]
 # Reads the oracle files in tests/oracle (float_roundtrip: exact float parsing).
 serde_json = { version = "1.0.152", features = ["float_roundtrip"] }
+# CLI integration tests (tests/cli.rs).
+assert_cmd = "=2.2.2"
+predicates = "=3.1.4"

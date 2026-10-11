@@ -13,6 +13,8 @@
 
 pub mod annealer;
 pub mod boxfilter;
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod color;
 pub mod config;
 pub mod downscale;
