@@ -10,6 +10,8 @@ All notable changes to this project are documented here. The format follows
 
 - A JPEG whose MPF index holds a huge image count, or a BigTIFF header, no longer
   overflows the frame-count check (a panic in debug builds); it reads as one frame.
+- `--remove-bg` creates its temporary directory owner-only (`0o700`) on Unix, so other local
+  users cannot read the image handed to `rembg` or its output.
 
 ## [0.2.0] - 2026-10-11
 

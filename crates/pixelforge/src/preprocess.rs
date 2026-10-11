@@ -242,7 +242,11 @@ impl TempDir {
                 "pixelforge-rembg-{}-{nanos}-{n}",
                 std::process::id()
             ));
-            match std::fs::create_dir(&dir) {
+            let mut builder = std::fs::DirBuilder::new();
+            // Owner-only on Unix: the directory holds the user's image and its matte.
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            match builder.create(&dir) {
                 Ok(()) => return Ok(TempDir(dir)),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(e) => return Err(e),
@@ -646,5 +650,17 @@ mod tests {
         let value = subject_brightness(&rgb, &alpha, 96, 96, &c).unwrap();
         assert_eq!(value.len(), 56 * 36);
         assert!(value.iter().all(|&v| v == 0.8));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rembg_temp_dir_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let mode = std::fs::metadata(dir.path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+        let path = dir.path().to_path_buf();
+        drop(dir);
+        assert!(!path.exists());
     }
 }
