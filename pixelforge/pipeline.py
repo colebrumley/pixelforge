@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import color, downscale, io, palette, postprocess, preprocess, quantize, tiles
+from . import _native, color, downscale, io, palette, postprocess, preprocess, quantize, tiles
 from .config import Config
 from .version import __version__
 
@@ -96,11 +96,13 @@ class Result:
 
 
 def environment() -> dict:
-    """Interpreter, numerical library versions and platform; recorded, never hashed."""
+    """Interpreter, numerical library versions, platform and native thread count (which
+    affects speed only); recorded, never hashed."""
     return {"python": platform.python_version(), "numpy": package_version("numpy"),
             "scipy": package_version("scipy"), "scikit_image": package_version("scikit-image"),
             "pillow": package_version("Pillow"),
-            "platform": f"{sys.platform} {platform.machine()}"}
+            "platform": f"{sys.platform} {platform.machine()}",
+            "threads": _native.thread_count()}
 
 
 def package_version(name: str) -> str | None:

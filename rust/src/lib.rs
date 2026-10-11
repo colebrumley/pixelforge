@@ -32,10 +32,18 @@ fn sum_f64(arr: PyReadonlyArray1<'_, f64>) -> f64 {
     total
 }
 
+/// Worker threads the native kernels use: `PIXELFORGE_THREADS` if it is an integer >= 1,
+/// else the available parallelism. Affects speed only; recorded in `_meta.json`.
+#[pyfunction]
+fn thread_count() -> usize {
+    parallel::thread_count()
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(native_version, m)?)?;
     m.add_function(wrap_pyfunction!(sum_f64, m)?)?;
+    m.add_function(wrap_pyfunction!(thread_count, m)?)?;
     gerstner::register(m)?;
     m.add_function(wrap_pyfunction!(kopf::kopf_em_step, m)?)?;
     m.add_function(wrap_pyfunction!(kopf::kopf_c_step, m)?)?;

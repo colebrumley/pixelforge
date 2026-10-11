@@ -11,6 +11,21 @@ def test_native_version_matches_package():
     assert _native.native_version() == pixelforge.__version__
 
 
+@pytest.mark.parametrize("value, expected", [("1", 1), ("7", 7), (" 4 ", 4)])
+def test_thread_count_reads_env(monkeypatch, value, expected):
+    monkeypatch.setenv("PIXELFORGE_THREADS", value)
+    assert _native.thread_count() == expected
+
+
+@pytest.mark.parametrize("value", ["0", "-2", "junk", ""])
+def test_thread_count_falls_back_to_available_parallelism(monkeypatch, value):
+    monkeypatch.delenv("PIXELFORGE_THREADS", raising=False)
+    default = _native.thread_count()
+    assert isinstance(default, int) and default >= 1
+    monkeypatch.setenv("PIXELFORGE_THREADS", value)
+    assert _native.thread_count() == default
+
+
 def _sequential_sum(values):
     total = 0.0
     for v in values:
