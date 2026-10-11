@@ -29,6 +29,7 @@ pub mod palette;
 pub mod parallel;
 pub mod postprocess;
 pub mod preprocess;
+pub mod pyjson;
 pub mod pyrepr;
 pub mod pyunicode;
 pub mod quantize;

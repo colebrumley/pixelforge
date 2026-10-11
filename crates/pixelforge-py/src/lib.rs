@@ -15,6 +15,7 @@ mod mask;
 mod npsum;
 mod postprocess;
 mod preprocess;
+mod pyjson;
 mod pylog;
 mod quantize;
 
@@ -69,6 +70,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     npsum::register(m)?;
     downscale::register(m)?;
     pylog::register(m)?;
+    pyjson::register(m)?;
     postprocess::register(m)?;
     quantize::register(m)?;
     mask::register(m)?;
