@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The package now builds a Rust extension, `pixelforge._native`, with maturin (crate in
+  `rust/`), so installing from the repo requires a stable Rust toolchain alongside Python
+  3.11+. The extension carries no numerics yet; outputs are unchanged.
 - `--enhance` (with `--enhance-radius`, `--enhance-black`, `--enhance-white`) and `--ink`: an
   opt-in pre-pass before downscaling for photos. `enhance` stretches the subject's brightness
   and adds local contrast at about two output pixels, so eyes, mouths and other sub-pixel
