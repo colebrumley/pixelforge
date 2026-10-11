@@ -311,6 +311,22 @@ Acceptance: oracle tests pass; snapshot compare lists the pixels moved by the LA
 conversion (expected: isolated 8-bit rounding flips, mean ΔE under 0.5); goldens
 regenerated (#1).
 
+Done 2026-10-10 (merges of the colour branch and a5e361b Config). Colour: `crates/pixelforge/src/color.rs`
+reproduces skimage 0.26 to 5.7e-14 in LAB (scipy's inverse matrix copied bit for bit),
+`lab_to_rgb8` exact on the oracle, `nearest_index` brute force with lowest-index ties;
+`pixelforge.color` now calls the binding. Snapshot compare against Phase 0: 47 of 48 cases
+identical; `noisy_gradient/background/gerstner` moved 10 of 65,536 pixels (ΔE 4.03), traced to
+a near-tie in the annealer that a one-ulp jitter of skimage's own LAB reproduces. Goldens did
+not change, so no regeneration was needed (#1 is still available for a later phase). A guard
+test (`crates/pixelforge/tests/determinism_guard.rs`) fails the build on any platform
+transcendental or `.round()` in the Rust sources. Config: `config/model.rs`, `palette.rs`,
+`pyrepr.rs` (Python float and str `repr`), `pyunicode.rs` (generated tables, Unicode 14);
+all 103 corpus cases, 104 error messages and 10,000 float reprs match byte for byte;
+`_native.config_*` compared with the live Python `Config` in `tests/test_config_native.py`.
+Two Python-only behaviours are documented as not reproduced: a list given as `preset`
+raises `TypeError` in Python, and numpy scalar values are accepted only by Python. 917
+tests pass; `cargo tree -e normal` shows `libm` and `sha2`.
+
 ### Phase 3 — Quantize, palette, post-processing, tiles
 
 - `quantize` (bayer, local_std with and without mask, dither_offsets, run), `palette`
