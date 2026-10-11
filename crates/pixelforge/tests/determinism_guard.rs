@@ -5,20 +5,23 @@
 
 use std::path::{Path, PathBuf};
 
+/// Float methods whose results are platform- or libm-version-dependent (`round` is
+/// banned for its half-away-from-zero rule, `powi` and `mul_add` for codegen differences).
+/// Each is caught as a method call (`.name(`) and in its associated forms (`f64::name(`,
+/// `f32::name(`); `libm::name(` matches neither.
 const FORBIDDEN: &[&str] = &[
-    ".round()",
-    "f64::exp(",
-    ".exp()",
-    ".powf(",
-    ".powi(",
-    ".cbrt()",
-    ".ln(",
-    ".log(",
-    ".sin(",
-    ".cos(",
-    ".atan2(",
-    ".mul_add(",
+    "round", "exp", "exp2", "exp_m1", "powf", "powi", "cbrt", "ln", "ln_1p", "log", "log2",
+    "log10", "sin", "cos", "tan", "sin_cos", "asin", "acos", "atan", "atan2", "hypot", "sinh",
+    "cosh", "tanh", "asinh", "acosh", "atanh", "mul_add",
 ];
+
+/// The source-text patterns for [`FORBIDDEN`].
+fn patterns() -> Vec<String> {
+    FORBIDDEN
+        .iter()
+        .flat_map(|m| [format!(".{m}("), format!("f64::{m}("), format!("f32::{m}(")])
+        .collect()
+}
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let mut entries: Vec<_> = std::fs::read_dir(dir)
@@ -68,14 +71,15 @@ fn no_platform_math_or_half_away_rounding() {
     rust_files(&root.join("src"), &mut files);
     rust_files(&root.join("../pixelforge-py/src"), &mut files);
     assert!(files.len() >= 5, "found only {files:?}");
+    let patterns = patterns();
     let mut findings = Vec::new();
     for file in &files {
         let text = std::fs::read_to_string(file).unwrap();
         let mut in_block = false;
         for (n, line) in text.lines().enumerate() {
             let code = code_part(line, &mut in_block);
-            for pat in FORBIDDEN {
-                if code.contains(pat) {
+            for pat in &patterns {
+                if code.contains(pat.as_str()) {
                     findings.push(format!(
                         "{}:{}: {pat}  {}",
                         file.display(),
@@ -106,4 +110,32 @@ fn comment_stripping() {
     assert_eq!(code_part("x.exp() inside", &mut b), "");
     assert_eq!(code_part("end */ x.ln(2)", &mut b), " x.ln(2)");
     assert!(!b);
+}
+
+#[test]
+fn patterns_catch_methods_and_associated_forms_only() {
+    let hit = |code: &str| patterns().iter().any(|p| code.contains(p.as_str()));
+    for code in [
+        "x.round()",
+        "f64::round(x)",
+        "x.tan()",
+        "f64::hypot(a, b)",
+        "a.sin_cos()",
+        "f32::exp_m1(x)",
+        "f64::mul_add(a, b, c)",
+        "x.log10()",
+    ] {
+        assert!(hit(code), "{code}");
+    }
+    for code in [
+        "x.round_ties_even()",
+        "libm::hypot(a, b)",
+        "libm::atan2(y, x)",
+        "x.tangent()",
+        "n.ilog2()",
+        "log::info!(\"x\")",
+        "self.cost(i)",
+    ] {
+        assert!(!hit(code), "{code}");
+    }
 }
