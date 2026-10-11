@@ -146,21 +146,28 @@ def test_semi_transparent_superpixels_get_less_palette_mass(monkeypatch):
     mask = np.ones((32, 32), dtype=bool)
     weight = np.ones((32, 32))
     weight[:, 24:] = 0.2
+    # The prior is internal to the native stage, so it is recorded on the Python reference
+    # (tests/gerstner_reference.py), which the native stage is tested equal to.
+    from tests import gerstner_reference as reference
+
     priors = []
-    step = gerstner.PaletteAnnealer.step
+    step = reference.PaletteAnnealer.step
 
     def record(self, points, weights):
         priors.append(weights.copy())
         step(self, points, weights)
 
-    monkeypatch.setattr(gerstner.PaletteAnnealer, "step", record)
+    monkeypatch.setattr(reference.PaletteAnnealer, "step", record)
     config = Config(method="gerstner", palette_size=2, denoise="none", g_max_iters=3)
-    out = gerstner.run(lab, mask, 8, 8, config, weight=weight)
+    ref = reference.run(lab, mask, 8, 8, config, weight=weight)
     first = priors[0].reshape(8, 8)
     assert np.isclose(first.sum(), 1.0)
     assert np.allclose(first[:, 6:] / first[:, :6].max(), 0.2)
     assert np.allclose(first[:, :6], first[0, 0])
-    assert out.small_mask.all()
+    out = gerstner.run(lab, mask, 8, 8, config, weight=weight)
+    assert out.small_mask.all() and ref.small_mask.all()
+    assert np.array_equal(out.indices, ref.indices)
+    assert np.array_equal(gerstner.palette_prior(np.full(64, 1.0)), np.full(64, 1 / 64))
 
 
 def test_shared_grid_helpers():

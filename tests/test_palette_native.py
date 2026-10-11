@@ -204,12 +204,15 @@ def test_build(overrides):
     assert same(palette.build(pixels, config), want)
 
 
-def test_build_mcda_stays_in_python():
-    config = Config(method="gerstner", g_max_iters=2)
-    with pytest.raises(ValueError, match="mcda"):
-        _native.palette_build(np.zeros((4, 3)), config.to_dict())
+def test_build_dispatches_mcda():
+    config = Config(method="gerstner", g_max_iters=20)
+    pixels = random_lab(np.random.default_rng(2), 50)
     assert palette.resolve_source(config) == "mcda"
-    assert len(palette.build(random_lab(np.random.default_rng(2), 50), config)) >= 1
+    want = _native.mcda(pixels, config.palette_size, config.to_dict())
+    assert np.array_equal(_native.palette_build(pixels, config.to_dict()), want)
+    assert np.array_equal(palette.build(pixels, config), want)
+    with pytest.raises(ValueError, match="at least one pixel"):
+        _native.palette_build(np.zeros((0, 3)), config.to_dict())
 
 
 def test_hex_text(tmp_path):

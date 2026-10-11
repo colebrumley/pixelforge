@@ -126,6 +126,28 @@ All notable changes to this project are documented here. The format follows
   `pixelforge.kopf` logger (was `pixelforge.downscale.kopf`), same text. Downscale time on
   the 1024² portrait (background preset, kopf): 2.61 s → 1.68 s on a loaded machine (load
   average 16–22). Parity tests: `tests/test_box_native.py`, `tests/test_kopf_run_native.py`.
+- gerstner's control flow and the MCDA palette are native (migration plan Phase 5, part B):
+  `crates/pixelforge/src/annealer.rs` (`PaletteAnnealer`, `principal_axis`) and
+  `gerstner_run.rs` (the grid, INITIALIZE, the iteration loop over the existing SLIC,
+  statistics and bilateral loops, the transparent attribution); `pixelforge.downscale.gerstner.run`
+  calls `_native.gerstner_run`, `palette.mcda` calls `_native.mcda`, and the Rust
+  `palette::build` handles the mcda source. Ported operation for operation; three routines
+  numpy hands to BLAS/LAPACK are replaced: `centered.T @ centered` and `weighted.T @ points`
+  are sequential sums (Accelerate's differed from them on 89% and 35% of the entries, up
+  to 217 ulp on the products), `np.linalg.eigh` is a cyclic Jacobi solver (principal axis
+  within 2.8e-13, variance within 3.8e-13 relative), and `exp`/`log` are `libm`'s (1 ulp
+  from numpy's on ~10% of arguments). On the fixtures at 16/32 px × K 4/8/16 and the preset
+  sizes every index and mask is identical and palettes move by at most 3.3e-11; with those
+  routines swapped into the old Python code the results are bit for bit identical
+  (`tests/test_gerstner_run_native.py`). Snapshot compare against 1e69f8f: all 48 cases
+  identical, `tests/golden.json` unchanged. A seeded run now draws its perturbation from
+  SplitMix64 instead of numpy's PCG64 stream: it stays deterministic and still differs from
+  the unseeded run, but seeded outputs differ from the Python version's for the same seed.
+  Progress lines go to the `pixelforge.gerstner` logger (was `pixelforge.downscale.gerstner`).
+  Downscale stage on the portrait, background preset (`stats.timings.downscale`, one run
+  each, load average 21–29): 5.21 s → 4.49 s; one annealer step on 16,384 points × 64
+  clusters: 12.9 ms (numpy) → 7.9 ms. The former Python control flow is kept as
+  `tests/gerstner_reference.py`.
 - Preprocessing is native (`crates/pixelforge/src/preprocess.rs`, migration plan Phase 4):
   `pixelforge.preprocess.run` calls `_native.preprocess_run`, which assembles the masks,
   layout, enhance pass, filters and LAB conversion in Rust, and `subject_bbox`,
