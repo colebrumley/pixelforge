@@ -1,15 +1,17 @@
-//! gerstner hot loops: the modified-SLIC assignment pass and the superpixel bilateral filter.
+//! gerstner hot loops: the modified-SLIC assignment pass, the superpixel bilateral filter
+//! and the per-iteration superpixel statistics.
 //!
-//! Both are per-pixel independent (no reductions across pixels), so they run over fixed row
-//! bands on worker threads; the thread count changes the speed only, never a bit of the
-//! output. Each pixel replays the operations of the numpy reference
-//! (`pixelforge/downscale/_reference/gerstner.py`) in the same order.
+//! The first two are per-pixel independent (no reductions across pixels), so they run over
+//! fixed row bands on worker threads; the thread count changes the speed only, never a bit of
+//! the output. Each pixel replays the operations of the numpy reference
+//! (`pixelforge/downscale/_reference/gerstner.py`) in the same order. `superpixel_stats` is
+//! a reduction over pixels and runs single-threaded on purpose (see its documentation).
 
 use crate::parallel::thread_count;
-use numpy::ndarray::{Array2, Array3};
+use numpy::ndarray::{Array1, Array2, Array3};
 use numpy::{
-    IntoPyArray, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3,
-    PyUntypedArrayMethods,
+    IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2,
+    PyReadonlyArray3, PyUntypedArrayMethods,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -455,8 +457,131 @@ pub fn bilateral_filter<'py>(
     Ok(out.into_pyarray(py))
 }
 
+/// The pixel `mask` of `superpixel_stats`: bool or uint8 (nonzero = opaque).
+#[derive(FromPyObject)]
+pub enum PixelMask<'py> {
+    Bool(PyReadonlyArray2<'py, bool>),
+    U8(PyReadonlyArray2<'py, u8>),
+}
+
+impl PixelMask<'_> {
+    fn to_flags(&self) -> PyResult<(Vec<usize>, Vec<bool>)> {
+        Ok(match self {
+            PixelMask::Bool(a) => (a.shape().to_vec(), contiguous(a, "mask")?.to_vec()),
+            PixelMask::U8(a) => (
+                a.shape().to_vec(),
+                contiguous(a, "mask")?.iter().map(|&v| v != 0).collect(),
+            ),
+        })
+    }
+}
+
+/// Count, mass, colour sums and centre sums per superpixel; gerstner's seven per-iteration
+/// `np.bincount` calls fused into one pass.
+///
+/// Pixels are visited in row-major order and only those with a nonzero `mask` and an
+/// assignment `s >= 0` contribute: `count[s] += 1`, `mass[s] += w`, `sum_c[s] += w · col_c`,
+/// `sum_x[s] += w · (x + 0.5)`, `sum_y[s] += w · (y + 0.5)`, the product rounded before the
+/// add (without `weight`, w is not applied at all and mass counts pixels). `np.bincount`
+/// adds each bin's values sequentially in input order, and its input is the masked pixel
+/// list in row-major order, so these sums are bitwise equal to the reference.
+///
+/// SINGLE-THREADED ON PURPOSE: a banded parallel version would sum each bin as per-band
+/// partial sums merged afterwards, which changes the rounding of the sums and therefore the
+/// superpixel means, centres and the output pixels. Keep the one sequential pass.
+///
+/// Returns (count int64 (n_sp,), mass (n_sp,), colour sums (n_sp, 3), sum_x, sum_y).
+#[pyfunction]
+#[pyo3(signature = (assigned_to, mask, weight, channels, n_sp))]
+#[allow(clippy::type_complexity)]
+pub fn superpixel_stats<'py>(
+    py: Python<'py>,
+    assigned_to: PyReadonlyArray2<'py, i64>,
+    mask: PixelMask<'py>,
+    weight: Option<PyReadonlyArray2<'py, f64>>,
+    channels: PyReadonlyArray3<'py, f64>,
+    n_sp: usize,
+) -> PyResult<(
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray2<f64>>,
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray1<f64>>,
+)> {
+    let (hi, wi) = (assigned_to.shape()[0], assigned_to.shape()[1]);
+    let (mask_shape, mask) = mask.to_flags()?;
+    check_shape("mask", &mask_shape, &[hi, wi])?;
+    check_shape("channels", channels.shape(), &[3, hi, wi])?;
+    let assigned = contiguous(&assigned_to, "assigned_to")?;
+    let ch = contiguous(&channels, "channels")?;
+    let weight = match &weight {
+        Some(w) => {
+            check_shape("weight", w.shape(), &[hi, wi])?;
+            Some(contiguous(w, "weight")?)
+        }
+        None => None,
+    };
+    let n_sp_i =
+        i64::try_from(n_sp).map_err(|_| value_error(format!("n_sp {n_sp} is too large")))?;
+    if let Some(&v) = assigned.iter().find(|&&v| v >= n_sp_i) {
+        return Err(value_error(format!(
+            "assigned_to holds {v}, outside -1..{n_sp}"
+        )));
+    }
+
+    let plane = hi * wi;
+    let mut count = vec![0_i64; n_sp];
+    let mut mass = vec![0.0_f64; n_sp];
+    let mut sums = vec![0.0_f64; 3 * n_sp];
+    let mut sum_x = vec![0.0_f64; n_sp];
+    let mut sum_y = vec![0.0_f64; n_sp];
+    py.detach(|| {
+        for y in 0..hi {
+            let pyv = y as f64 + 0.5;
+            for x in 0..wi {
+                let k = y * wi + x;
+                let s = assigned[k];
+                if !mask[k] || s < 0 {
+                    continue;
+                }
+                let s = s as usize;
+                let pxv = x as f64 + 0.5;
+                count[s] += 1;
+                match weight {
+                    Some(wt) => {
+                        let w = wt[k];
+                        mass[s] += w;
+                        sums[3 * s] += w * ch[k];
+                        sums[3 * s + 1] += w * ch[plane + k];
+                        sums[3 * s + 2] += w * ch[2 * plane + k];
+                        sum_x[s] += w * pxv;
+                        sum_y[s] += w * pyv;
+                    }
+                    None => {
+                        mass[s] += 1.0;
+                        sums[3 * s] += ch[k];
+                        sums[3 * s + 1] += ch[plane + k];
+                        sums[3 * s + 2] += ch[2 * plane + k];
+                        sum_x[s] += pxv;
+                        sum_y[s] += pyv;
+                    }
+                }
+            }
+        }
+    });
+    let sums = Array2::from_shape_vec((n_sp, 3), sums).expect("shape matches length");
+    Ok((
+        Array1::from(count).into_pyarray(py),
+        Array1::from(mass).into_pyarray(py),
+        sums.into_pyarray(py),
+        Array1::from(sum_x).into_pyarray(py),
+        Array1::from(sum_y).into_pyarray(py),
+    ))
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(slic_assign, m)?)?;
     m.add_function(wrap_pyfunction!(bilateral_filter, m)?)?;
+    m.add_function(wrap_pyfunction!(superpixel_stats, m)?)?;
     Ok(())
 }

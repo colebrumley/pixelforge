@@ -4,9 +4,10 @@ The input is segmented into exactly wo·ho superpixels (one per output pixel) wh
 palette is grown by mass-constrained deterministic annealing (MCDA). `PaletteAnnealer` is the
 palette half on its own; `palette.mcda` reuses it directly on pixel colors.
 
-The two per-pixel hot loops, the SLIC assignment pass and the bilateral filter, run in the
-native extension (`pixelforge._native`, rust/src/gerstner.rs); the numpy versions they replace
-are kept in `_reference/gerstner.py` for tests and benchmarks.
+The per-pixel hot loops, the SLIC assignment pass, the bilateral filter and the per-iteration
+superpixel statistics, run in the native extension (`pixelforge._native`,
+rust/src/gerstner.rs); the numpy versions they replace are kept in `_reference/gerstner.py`
+for tests and benchmarks.
 """
 
 from __future__ import annotations
@@ -320,10 +321,8 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
     coef = config.g_m * math.sqrt(n_sp / (hi * wi))
 
     ys, xs = np.nonzero(mask)
-    px, py = xs + 0.5, ys + 0.5
     col = np.ascontiguousarray(lab[ys, xs], dtype=np.float64)
     channels = np.ascontiguousarray(np.moveaxis(lab, -1, 0), dtype=np.float64)   # (3, hi, wi)
-    all_opaque = bool(mask.all())
     # Pixel weight (alpha) of the opaque pixels: superpixel means and centers are weighted by
     # it, and so is each superpixel's share of the palette prior. None when it is all ones.
     pix_w = None
@@ -331,6 +330,9 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         pix_w = np.asarray(weight, dtype=np.float64)[ys, xs]
         if np.all(pix_w == 1.0):
             pix_w = None
+    # Inputs of the per-iteration statistics pass (`_native.superpixel_stats`).
+    mask_c = np.ascontiguousarray(mask, dtype=bool)
+    stats_w = None if pix_w is None else np.ascontiguousarray(weight, dtype=np.float64)
 
     # INITIALIZE: regular grid of centers, every pixel assigned to the nearest center.
     cx, cy = grid.cx0.copy(), grid.cy0.copy()
@@ -360,25 +362,18 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
         radius = grid.search_radius(cx, cy)
         assigned_to = _assign(grid, cx, cy, radius, candidate_ok=has_color, channels=channels,
                               sp_color=sp_color, coef=coef)
-        # Masked (transparent) input pixels are never assigned and never contribute.
-        assign = assigned_to.ravel() if all_opaque else assigned_to[mask]
-        assigned = assign >= 0
-        a_w = pix_w
-        if assigned.all():
-            a, a_px, a_py, a_col = assign, px, py, col
-        else:
-            a, a_px, a_py, a_col = assign[assigned], px[assigned], py[assigned], col[assigned]
-            if pix_w is not None:
-                a_w = pix_w[assigned]
-        count = np.bincount(a, minlength=n_sp)
+        # Masked (transparent) input pixels are never assigned and never contribute. One
+        # native pass sums in pixel order, bitwise equal to np.bincount over the assigned
+        # masked pixels (the reference in _reference/gerstner.py).
+        count, w_mass, sums, sum_x, sum_y = _native.superpixel_stats(
+            assigned_to, mask_c, stats_w, channels, n_sp)
         got = count > 0   # superpixels with zero pixels keep their previous center and color
-        mass = count if a_w is None else np.bincount(a, weights=a_w, minlength=n_sp)
+        mass = count if stats_w is None else w_mass
         for c in range(3):
-            sums = np.bincount(a, weights=_weighted(a_col[:, c], a_w), minlength=n_sp)
-            mean[got, c] = sums[got] / mass[got]
-        cx[got] = np.bincount(a, weights=_weighted(a_px, a_w), minlength=n_sp)[got] / mass[got]
-        cy[got] = np.bincount(a, weights=_weighted(a_py, a_w), minlength=n_sp)[got] / mass[got]
-        if a_w is not None:
+            mean[got, c] = sums[got, c] / mass[got]
+        cx[got] = sum_x[got] / mass[got]
+        cy[got] = sum_y[got] / mass[got]
+        if stats_w is not None:
             coverage[got] = mass[got] / count[got]
         has_color |= got
 
