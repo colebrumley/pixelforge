@@ -1,6 +1,9 @@
 //! Hardware palettes: the bundled `.hex` palettes (embedded), the `.hex` / `.gpl` parsers,
 //! inline `hex:rrggbb,...` palettes and file loading, ported from `pixelforge/palette.py`
-//! with the same rules and messages.
+//! with the same rules and messages; median cut, hue ramps and the palette build
+//! (`median_cut`, `regularize_ramps`, `build`), formula for formula. Median cut is bitwise
+//! identical to the numpy version; the ramps use `libm`'s hypot/atan2/cos/sin, which differ
+//! from numpy's platform functions by at most one ulp on a few percent of arguments.
 
 use crate::pyrepr::{str_list_repr, str_repr};
 use crate::pyunicode;
@@ -297,6 +300,340 @@ pub fn parse_hex_lines(name: &str) -> Result<Vec<String>, PaletteError> {
     Ok(load_palette(name)?.into_iter().map(rgb8_hex).collect())
 }
 
+// ------------------------------------------------------------------------------ clustering
+//
+// Ported from `pixelforge/palette.py` formula for formula: numpy's reductions through
+// `npsum` (`box.mean(axis=0)` is a sequential sum per column divided by the count,
+// `.sum()` over a whole contiguous array is pairwise, `np.cumsum` is sequential), stable
+// sorts with numpy's comparison semantics (`-0.0 == 0.0`, NaN last), first minimum and
+// maximum for `argmin` / `argmax`, so median cut is bitwise identical to Python's.
+
+/// Boxes spanning less than this (LAB units; ΔE ≈ 2.3 is one just-noticeable difference)
+/// are not split.
+pub const MEDIAN_CUT_MIN_RANGE: f64 = 2.3;
+
+pub const RAMP_BIN_DEGREES: f64 = 30.0;
+pub const RAMP_MAX_SHIFT_DEGREES: f64 = 6.0;
+pub const RAMP_ACHROMATIC_CHROMA: f64 = 8.0;
+/// L distance from the bin's mean L at which the hue shift reaches its 6° maximum.
+pub const RAMP_FULL_SHIFT_L: f64 = 30.0;
+/// Blue/purple.
+pub const RAMP_DARK_HUE: f64 = 270.0;
+/// Yellow.
+pub const RAMP_LIGHT_HUE: f64 = 90.0;
+
+/// The comment line `write_hex` puts first for a transparent-first palette; `parse_hex`
+/// skips it.
+pub const TRANSPARENT_HEX_LINE: &str = "; transparent";
+
+/// numpy's sort order for floats: NaN after everything, `-0.0 == 0.0`.
+fn np_cmp(a: f64, b: f64) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a.is_nan(), b.is_nan()) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Greater,
+        (false, true) => Ordering::Less,
+        _ => a.partial_cmp(&b).expect("not NaN"),
+    }
+}
+
+/// `box.mean(axis=0)` for an `(n, 3)` box: rows added in order per column, divided by n.
+fn mean_axis0(pixels: &[[f64; 3]]) -> [f64; 3] {
+    let mut sum = [0.0; 3];
+    for p in pixels {
+        for c in 0..3 {
+            sum[c] += p[c];
+        }
+    }
+    let n = pixels.len() as f64;
+    [sum[0] / n, sum[1] / n, sum[2] / n]
+}
+
+/// Summed squared LAB distance of a box's pixels from the box mean:
+/// `((box - mean) ** 2).sum()`, pairwise over the 3n values in row-major order.
+fn box_error(pixels: &[[f64; 3]]) -> f64 {
+    let mean = mean_axis0(pixels);
+    let sq: Vec<f64> = pixels
+        .iter()
+        .flat_map(|p| {
+            let d = [p[0] - mean[0], p[1] - mean[1], p[2] - mean[2]];
+            [d[0] * d[0], d[1] * d[1], d[2] * d[2]]
+        })
+        .collect();
+    crate::npsum::pairwise_sum(&sq)
+}
+
+/// `box.max(axis=0) - box.min(axis=0)`, NaN propagating as numpy's reductions do.
+fn box_ranges(pixels: &[[f64; 3]]) -> [f64; 3] {
+    let mut out = [0.0; 3];
+    for (c, o) in out.iter_mut().enumerate() {
+        let (mut lo, mut hi) = (pixels[0][c], pixels[0][c]);
+        for p in &pixels[1..] {
+            let v = p[c];
+            if !hi.is_nan() && (v.is_nan() || v > hi) {
+                hi = v;
+            }
+            if !lo.is_nan() && (v.is_nan() || v < lo) {
+                lo = v;
+            }
+        }
+        *o = hi - lo;
+    }
+    out
+}
+
+/// Index of the first maximum (`np.argmax`: the first NaN counts as the maximum).
+fn argmax3(v: &[f64; 3]) -> usize {
+    let mut best = 0;
+    for i in 0..3 {
+        if v[i].is_nan() {
+            return i;
+        }
+        if v[i] > v[best] {
+            best = i;
+        }
+    }
+    best
+}
+
+/// `_split_mask`: the pixels on the lower side of the cut that minimizes the summed squared
+/// error of the two halves. The cut is only placed between two different values; ties → the
+/// lowest cut.
+fn split_mask(values: &[f64]) -> Vec<bool> {
+    let mut ordered = values.to_vec();
+    ordered.sort_by(|a, b| np_cmp(*a, *b));
+    let n = ordered.len();
+    let total = crate::npsum::cumsum(&ordered);
+    let squares: Vec<f64> = ordered.iter().map(|v| v * v).collect();
+    let total_sq = crate::npsum::cumsum(&squares);
+    let (last, last_sq) = (total[n - 1], total_sq[n - 1]);
+    let mut best = 0usize;
+    let mut best_err = 0.0_f64;
+    for j in 0..n - 1 {
+        let below = (j + 1) as f64;
+        let above = (n - (j + 1)) as f64;
+        let rest = last - total[j];
+        let mut error = (total_sq[j] - total[j] * total[j] / below)
+            + ((last_sq - total_sq[j]) - rest * rest / above);
+        if ordered[j + 1] == ordered[j] {
+            error = f64::INFINITY;
+        }
+        // np.argmin: the first minimum, or the first NaN.
+        if j == 0 || (!best_err.is_nan() && (error.is_nan() || error < best_err)) {
+            best = j;
+            best_err = error;
+        }
+    }
+    let cut = ordered[best];
+    values.iter().map(|&v| v <= cut).collect()
+}
+
+/// Box-splitting palette in LAB (`palette.median_cut`): at most `k` colours (fewer if the
+/// input has fewer). The box with the largest summed squared error (ties → the earliest) is
+/// split along its axis of largest range at the error-minimizing cut; boxes whose ranges are
+/// all at most [`MEDIAN_CUT_MIN_RANGE`] are not split. The colours are the box means, sorted
+/// by L, then a, then b (`np.lexsort((b, a, L))`, stable).
+pub fn median_cut(lab_pixels: &[[f64; 3]], k: i64) -> Result<Vec<[f64; 3]>, PaletteError> {
+    if lab_pixels.is_empty() {
+        return Err(PaletteError(
+            "median_cut needs at least one pixel".to_string(),
+        ));
+    }
+    let mut boxes: Vec<Vec<[f64; 3]>> = vec![lab_pixels.to_vec()];
+    let mut errors = vec![box_error(lab_pixels)];
+    let mut ranges = vec![box_ranges(lab_pixels)];
+    while (boxes.len() as i64) < k {
+        let mut order: Vec<usize> = (0..boxes.len()).collect();
+        // sorted(range(len(boxes)), key=lambda i: (-errors[i], i))
+        order.sort_by(|&i, &j| np_cmp(-errors[i], -errors[j]).then(i.cmp(&j)));
+        let chosen = order.into_iter().find_map(|i| {
+            let axis = argmax3(&ranges[i]);
+            (ranges[i][axis] > MEDIAN_CUT_MIN_RANGE).then_some((i, axis))
+        });
+        let Some((i, axis)) = chosen else {
+            break;
+        };
+        let values: Vec<f64> = boxes[i].iter().map(|p| p[axis]).collect();
+        let lower = split_mask(&values);
+        let mut lo = Vec::new();
+        let mut hi = Vec::new();
+        for (p, &l) in boxes[i].iter().zip(&lower) {
+            if l {
+                lo.push(*p);
+            } else {
+                hi.push(*p);
+            }
+        }
+        errors.splice(i..=i, [box_error(&lo), box_error(&hi)]);
+        ranges.splice(i..=i, [box_ranges(&lo), box_ranges(&hi)]);
+        boxes.splice(i..=i, [lo, hi]);
+    }
+    let mut palette: Vec<[f64; 3]> = boxes.iter().map(|b| mean_axis0(b)).collect();
+    palette.sort_by(|p, q| {
+        np_cmp(p[0], q[0])
+            .then(np_cmp(p[1], q[1]))
+            .then(np_cmp(p[2], q[2]))
+    });
+    Ok(palette)
+}
+
+/// Python's float `%` (numpy's `remainder`): the result has the divisor's sign.
+fn py_mod(x: f64, y: f64) -> f64 {
+    let m = x % y;
+    if m != 0.0 {
+        if (y < 0.0) != (m < 0.0) {
+            m + y
+        } else {
+            m
+        }
+    } else {
+        0.0_f64.copysign(y)
+    }
+}
+
+/// `np.minimum`: NaN propagates.
+fn np_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || a <= b {
+        a
+    } else {
+        b
+    }
+}
+
+/// `np.sign`.
+fn np_sign(x: f64) -> f64 {
+    if x > 0.0 {
+        1.0
+    } else if x < 0.0 {
+        -1.0
+    } else if x == 0.0 {
+        0.0
+    } else {
+        x
+    }
+}
+
+/// Hue-shifted ramps (Section 8.1, `palette.regularize_ramps`): colours are binned by hue
+/// angle (30° bins, achromatic ones separately); within a bin a colour's hue moves toward
+/// 270° if darker than the bin's mean L and toward 90° if lighter, by
+/// 6°·min(1, |L − mean L| / 30), never past the target. L and chroma are kept. Every
+/// operation is numpy's; only `libm`'s transcendentals (Decision 6) can move the last bit of
+/// a moved colour's a and b.
+pub fn regularize_ramps(palette: &[[f64; 3]]) -> Vec<[f64; 3]> {
+    let deg = 180.0 / std::f64::consts::PI; // npy_rad2deg
+    let rad = std::f64::consts::PI / 180.0; // npy_deg2rad
+    let chroma: Vec<f64> = palette.iter().map(|p| libm::hypot(p[1], p[2])).collect();
+    let hue: Vec<f64> = palette
+        .iter()
+        .map(|p| py_mod(libm::atan2(p[2], p[1]) * deg, 360.0))
+        .collect();
+    let bins: Vec<i64> = hue
+        .iter()
+        .zip(&chroma)
+        .map(|(&h, &c)| {
+            if c < RAMP_ACHROMATIC_CHROMA {
+                -1
+            } else {
+                (h / RAMP_BIN_DEGREES).floor() as i64
+            }
+        })
+        .collect();
+    let mut unique = bins.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    let mut new_hue = hue.clone();
+    for bin in unique {
+        let members: Vec<usize> = (0..palette.len()).filter(|&i| bins[i] == bin).collect();
+        let ls: Vec<f64> = members.iter().map(|&i| palette[i][0]).collect();
+        let mean = crate::npsum::pairwise_mean(&ls);
+        for &i in &members {
+            let offset = palette[i][0] - mean;
+            let amount = RAMP_MAX_SHIFT_DEGREES * np_min(1.0, offset.abs() / RAMP_FULL_SHIFT_L);
+            let target = if offset < 0.0 {
+                RAMP_DARK_HUE
+            } else {
+                RAMP_LIGHT_HUE
+            };
+            // Signed shortest rotation to the target in (-180, 180]; +180 when opposite.
+            let mut to_target = py_mod(target - hue[i] + 180.0, 360.0) - 180.0;
+            if to_target == -180.0 {
+                to_target = 180.0;
+            }
+            new_hue[i] = hue[i] + np_sign(to_target) * np_min(amount, to_target.abs());
+        }
+    }
+    palette
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            if new_hue[i] != hue[i] {
+                let r = new_hue[i] * rad;
+                [p[0], chroma[i] * libm::cos(r), chroma[i] * libm::sin(r)]
+            } else {
+                *p
+            }
+        })
+        .collect()
+}
+
+/// `palette.resolve_source`: `palette_source`, with "auto" meaning mcda for gerstner and
+/// median_cut otherwise.
+pub fn resolve_source(config: &crate::config::Config) -> &str {
+    if config.palette_source != "auto" {
+        return &config.palette_source;
+    }
+    if config.method == "gerstner" {
+        "mcda"
+    } else {
+        "median_cut"
+    }
+}
+
+/// The LAB colours of `palette_name`, from the Config's cached hex lines, or `None` without
+/// a palette name.
+pub fn build_named(config: &crate::config::Config) -> Result<Option<Vec<[f64; 3]>>, PaletteError> {
+    let Some(lines) = config.palette_hex_lines()? else {
+        return Ok(None);
+    };
+    let mut rgb8 = Vec::with_capacity(lines.len() * 3);
+    for line in &lines {
+        rgb8.extend_from_slice(&hex_to_rgb8(line));
+    }
+    let lab = crate::color::rgb8_to_lab(&rgb8);
+    Ok(Some(
+        lab.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect(),
+    ))
+}
+
+/// Palette `(K, 3)` in LAB for the given pixels according to the config: the named palette,
+/// else median cut. The mcda source is not ported yet (the Python pipeline keeps it) and is
+/// an error here.
+pub fn build(
+    lab_pixels: &[[f64; 3]],
+    config: &crate::config::Config,
+) -> Result<Vec<[f64; 3]>, PaletteError> {
+    if let Some(named) = build_named(config)? {
+        return Ok(named);
+    }
+    if resolve_source(config) == "mcda" {
+        return Err(PaletteError(
+            "palette source 'mcda' is not available in the Rust library yet".to_string(),
+        ));
+    }
+    median_cut(lab_pixels, config.palette_size)
+}
+
+/// The text `write_hex` writes: one `rrggbb` per line, with a leading
+/// [`TRANSPARENT_HEX_LINE`] when `transparent_first`, and a final newline.
+pub fn hex_text(colors: &[[u8; 3]], transparent_first: bool) -> String {
+    let mut lines: Vec<String> = Vec::with_capacity(colors.len() + 1);
+    if transparent_first {
+        lines.push(TRANSPARENT_HEX_LINE.to_string());
+    }
+    lines.extend(colors.iter().map(|&c| rgb8_hex(c)));
+    lines.join("\n") + "\n"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,5 +754,76 @@ mod tests {
             format!("{d} is not a regular file")
         );
         std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn median_cut_hand_checked() {
+        assert_eq!(
+            median_cut(&[], 4).unwrap_err().0,
+            "median_cut needs at least one pixel"
+        );
+        // L = 0, 10, 10, 50: the cut between the two 10s is not allowed (inf); the cut above
+        // them leaves 66.7 of squared error against 1066.7 below 0.
+        let px = [
+            [50.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+        ];
+        let pal = median_cut(&px, 2).unwrap();
+        assert_eq!(pal, vec![[20.0 / 3.0, 0.0, 0.0], [50.0, 0.0, 0.0]]);
+        // All ranges at most 2.3: one box, the mean, however large k is.
+        let pal = median_cut(&[[0.0, 0.0, 0.0], [1.0, 2.3, 0.0]], 8).unwrap();
+        assert_eq!(pal, vec![[0.5, 1.15, 0.0]]);
+        // k = 1 and k = 0 keep the single box.
+        assert_eq!(median_cut(&px, 1).unwrap().len(), 1);
+        assert_eq!(median_cut(&px, 0).unwrap().len(), 1);
+        // Equal L: ordered by a, then b (np.lexsort((b, a, L))).
+        let px = [[50.0, 30.0, 0.0], [50.0, -30.0, 9.0], [50.0, -30.0, -9.0]];
+        let pal = median_cut(&px, 3).unwrap();
+        assert_eq!(
+            pal,
+            vec![[50.0, -30.0, -9.0], [50.0, -30.0, 9.0], [50.0, 30.0, 0.0]]
+        );
+    }
+
+    #[test]
+    fn regularize_ramps_hand_checked() {
+        let (cos6, sin6) = (0.9945218953682733, 0.10452846326765347);
+        let palette = [
+            [30.0, 20.0, 0.0],  // hue 0, darker than the bin mean 60: toward 270, -6 degrees
+            [90.0, 20.0, 0.0],  // hue 0, lighter: toward 90, +6 degrees
+            [50.0, 1.0, 1.0],   // achromatic, alone in its bin: unchanged
+            [40.0, 0.0, -30.0], // hue 270, alone in its bin: unchanged
+        ];
+        let out = regularize_ramps(&palette);
+        let close = |x: f64, y: f64| (x - y).abs() < 1e-12;
+        assert_eq!(out[0][0], 30.0);
+        assert!(
+            close(out[0][1], 20.0 * cos6) && close(out[0][2], -20.0 * sin6),
+            "{out:?}"
+        );
+        assert!(
+            close(out[1][1], 20.0 * cos6) && close(out[1][2], 20.0 * sin6),
+            "{out:?}"
+        );
+        assert_eq!(out[2], palette[2]);
+        assert_eq!(out[3], palette[3]);
+    }
+
+    #[test]
+    fn python_modulo_has_the_divisor_sign() {
+        assert_eq!(py_mod(-90.0, 360.0), 270.0);
+        assert_eq!(py_mod(-1e-20, 360.0), 360.0);
+        assert_eq!(py_mod(720.0, 360.0).to_bits(), 0.0_f64.to_bits());
+        assert_eq!(py_mod(-720.0, 360.0).to_bits(), 0.0_f64.to_bits());
+    }
+
+    #[test]
+    fn hex_text_lines() {
+        let colors = [[0, 255, 16], [171, 205, 239]];
+        assert_eq!(hex_text(&colors, false), "00ff10\nabcdef\n");
+        assert_eq!(hex_text(&colors, true), "; transparent\n00ff10\nabcdef\n");
+        assert_eq!(hex_text(&[], false), "\n");
     }
 }

@@ -21,4 +21,5 @@ pub mod parallel;
 pub mod postprocess;
 pub mod pyrepr;
 pub mod pyunicode;
+pub mod quantize;
 pub mod tiles;

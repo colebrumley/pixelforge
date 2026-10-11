@@ -1,4 +1,10 @@
-"""Palette construction: median cut, standalone MCDA, hardware palettes, hue ramps."""
+"""Palette construction: median cut, standalone MCDA, hardware palettes, hue ramps.
+
+Median cut, the hue ramps, `build` (except the mcda source) and the `.hex` text run
+natively (`pixelforge._native`, from crates/pixelforge/src/palette.rs): median cut bitwise
+identical to the former numpy version, the ramps within one ulp (libm's hypot, atan2, cos
+and sin); the mcda source, the file I/O and the parsers are still here.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import color, io
+from . import _native, color, io
 from .errors import PixelforgeError
 
 PALETTE_DIR = Path(__file__).parent / "palettes"
@@ -31,28 +37,6 @@ RAMP_LIGHT_HUE = 90.0    # yellow
 
 # ----------------------------------------------------------------------------- clustering
 
-def _box_error(box: np.ndarray) -> float:
-    """Summed squared LAB distance of a box's pixels from the box mean."""
-    centered = box - box.mean(axis=0)
-    return float((centered * centered).sum())
-
-
-def _split_mask(values: np.ndarray) -> np.ndarray:
-    """Pixels on the lower side of the cut that minimizes the summed squared error.
-
-    The cut is only ever placed between two different values, so a run of identical values
-    is never divided. Ties → the lowest cut.
-    """
-    ordered = np.sort(values, kind="stable")
-    n = len(ordered)
-    below = np.arange(1, n)
-    total, total_sq = np.cumsum(ordered), np.cumsum(ordered * ordered)
-    error = (total_sq[:-1] - total[:-1] ** 2 / below) + (
-        (total_sq[-1] - total_sq[:-1]) - (total[-1] - total[:-1]) ** 2 / (n - below))
-    error[ordered[1:] == ordered[:-1]] = np.inf
-    return values <= ordered[int(np.argmin(error))]
-
-
 def median_cut(lab_pixels: np.ndarray, K: int) -> np.ndarray:
     """Box-splitting palette in LAB. Returns at most K colors (fewer if the input has fewer).
 
@@ -70,29 +54,7 @@ def median_cut(lab_pixels: np.ndarray, K: int) -> np.ndarray:
     otherwise the palette is spent on imperceptible variations of a flat background.
     """
     pixels = np.ascontiguousarray(lab_pixels, dtype=np.float64).reshape(-1, 3)
-    if len(pixels) == 0:
-        raise ValueError("median_cut needs at least one pixel")
-    boxes = [pixels]
-    errors = [_box_error(pixels)]
-    while len(boxes) < K:
-        # Largest error first; ties → earliest box. Single-color boxes are skipped.
-        chosen = None
-        for i in sorted(range(len(boxes)), key=lambda i: (-errors[i], i)):
-            ranges = boxes[i].max(axis=0) - boxes[i].min(axis=0)
-            if ranges.max() > MEDIAN_CUT_MIN_RANGE:
-                chosen = (i, int(np.argmax(ranges)))   # ties → lowest axis
-                break
-        if chosen is None:
-            break
-        i, axis = chosen
-        box = boxes[i]
-        lower = _split_mask(box[:, axis])
-        halves = [box[lower], box[~lower]]
-        boxes[i:i + 1] = halves
-        errors[i:i + 1] = [_box_error(h) for h in halves]
-    palette = np.array([b.mean(axis=0) for b in boxes])
-    order = np.lexsort((palette[:, 2], palette[:, 1], palette[:, 0]))
-    return palette[order]
+    return _native.median_cut(pixels, K)
 
 
 def mcda(lab_pixels: np.ndarray, K: int, config) -> np.ndarray:
@@ -202,13 +164,20 @@ def parse_hex_lines(name: str) -> list[str]:
 TRANSPARENT_HEX_LINE = "; transparent"
 
 
+def _rgb8(palette_rgb8) -> np.ndarray:
+    """(K, 3) uint8; other integer dtypes must hold 8-bit values."""
+    rgb8 = np.asarray(palette_rgb8).reshape(-1, 3)
+    if rgb8.dtype != np.uint8:
+        if rgb8.size and (rgb8.min() < 0 or rgb8.max() > 255):
+            raise ValueError("palette colors must be 8-bit RGB values")
+        rgb8 = rgb8.astype(np.uint8)
+    return np.ascontiguousarray(rgb8)
+
+
 def write_hex(path, palette_rgb8: np.ndarray, transparent_first: bool = False) -> None:
     """One 'rrggbb' per line. ``transparent_first`` adds a leading TRANSPARENT_HEX_LINE, a
     comment that parse_hex skips, so the file still loads as the K colors."""
-    lines = [color.rgb8_to_hex(c)[1:] for c in np.asarray(palette_rgb8).reshape(-1, 3)]
-    if transparent_first:
-        lines.insert(0, TRANSPARENT_HEX_LINE)
-    Path(path).write_text("\n".join(lines) + "\n")
+    Path(path).write_text(_native.palette_hex_text(_rgb8(palette_rgb8), transparent_first))
 
 
 # --------------------------------------------------------------------------------- ramps
@@ -220,30 +189,8 @@ def regularize_ramps(palette_lab: np.ndarray) -> np.ndarray:
     color's hue moves toward 270° if it is darker than the bin's mean L and toward 90° if
     lighter, by 6°·min(1, |L − mean L| / 30), never past the target. L and chroma are kept.
     """
-    palette = np.array(palette_lab, dtype=np.float64).reshape(-1, 3)
-    L, a, b = palette[:, 0], palette[:, 1], palette[:, 2]
-    chroma = np.hypot(a, b)
-    hue = np.degrees(np.arctan2(b, a)) % 360.0
-    bins = np.floor(hue / RAMP_BIN_DEGREES).astype(np.int64)
-    bins[chroma < RAMP_ACHROMATIC_CHROMA] = -1
-
-    new_hue = hue.copy()
-    for bin_id in np.unique(bins):
-        members = np.nonzero(bins == bin_id)[0]
-        offset = L[members] - L[members].mean()
-        amount = RAMP_MAX_SHIFT_DEGREES * np.minimum(1.0, np.abs(offset) / RAMP_FULL_SHIFT_L)
-        target = np.where(offset < 0, RAMP_DARK_HUE, RAMP_LIGHT_HUE)
-        # Signed shortest rotation to the target in (-180, 180]; +180 when exactly opposite.
-        to_target = (target - hue[members] + 180.0) % 360.0 - 180.0
-        to_target[to_target == -180.0] = 180.0
-        new_hue[members] = hue[members] + np.sign(to_target) * np.minimum(amount,
-                                                                          np.abs(to_target))
-    rad = np.radians(new_hue)
-    out = palette.copy()
-    moved = new_hue != hue
-    out[moved, 1] = chroma[moved] * np.cos(rad[moved])
-    out[moved, 2] = chroma[moved] * np.sin(rad[moved])
-    return out
+    palette = np.ascontiguousarray(palette_lab, dtype=np.float64).reshape(-1, 3)
+    return _native.regularize_ramps(palette)
 
 
 # --------------------------------------------------------------------------------- build
@@ -256,10 +203,12 @@ def resolve_source(config) -> str:
 
 def build(lab_pixels: np.ndarray, config) -> np.ndarray:
     """Palette (K, 3) in LAB for the given pixels according to the config."""
+    settings = config.to_dict()
     if config.palette_name is not None:
-        # The cached lines, so the palette used is exactly the one Config.hash() covers.
-        lines = config.palette_hex_lines()
-        return color.rgb8_to_lab(np.array([color.hex_to_rgb8(h) for h in lines], np.uint8))
-    if resolve_source(config) == "mcda":
+        # The cached lines, so the palette used is exactly the one Config.hash() covers: they
+        # reach the native build as an inline palette, never re-read from a file.
+        settings["palette_name"] = INLINE_PREFIX + ",".join(config.palette_hex_lines())
+    elif resolve_source(config) == "mcda":
         return mcda(lab_pixels, config.palette_size, config)
-    return median_cut(lab_pixels, config.palette_size)
+    pixels = np.ascontiguousarray(lab_pixels, dtype=np.float64).reshape(-1, 3)
+    return _native.palette_build(pixels, settings)
