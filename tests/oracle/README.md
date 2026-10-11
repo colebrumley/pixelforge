@@ -52,8 +52,9 @@ whose items are all scalars is written on one line. Conventions:
   "unsupported field type" (no field has another type) and the `seed` entry of
   `UPPER_BOUNDS` (2^63 already fails the 64-bit check in `_coerce`).
 - `lab_lattice.json`: `axis` = `np.linspace(0, 1, 10)`; `rgb`, the 1,000 lattice colours (r
-  outermost, then g, then b); `lab` = `pixelforge.color.rgb_to_lab(rgb)` (skimage `rgb2lab`,
-  D65).
+  outermost, then g, then b); `lab` = skimage `rgb2lab(rgb)` (D65). The three LAB files
+  are recorded from scikit-image itself, not from `pixelforge.color` (native since Phase 2),
+  which is tested against them.
 - `lab_roundtrip.json`: `lab`, 200 inputs: L in `linspace(0, 100, 8)` × a and b in
   `linspace(-128, 127, 5)` (L outermost; many are out of gamut); `lab_to_rgb` (floats
   clipped to [0, 1]) and `lab_to_rgb8` (`np.round`, half to even).

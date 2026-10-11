@@ -9,3 +9,7 @@ publish = false
 [dependencies]
 # Pure-Rust exp: bit-identical on every platform, unlike f64::exp (platform libm).
 libm = "0.2.16"
+
+[dev-dependencies]
+# Reads the oracle fixtures in tests/oracle (tests only).
+serde_json = "1.0.150"
