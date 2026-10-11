@@ -20,6 +20,7 @@ mod preprocess;
 mod pyjson;
 mod pylog;
 mod quantize;
+mod sheet;
 
 use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
@@ -79,5 +80,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     preprocess::register(m)?;
     io::register(m)?;
     pipeline::register(m)?;
+    sheet::register(m)?;
     Ok(())
 }

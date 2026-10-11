@@ -16,7 +16,7 @@ fn field_value<'py>(py: Python<'py>, v: &FieldValue) -> PyResult<Bound<'py, PyAn
     to_py(py, &Value::from(*v))
 }
 
-fn to_py<'py>(py: Python<'py>, v: &Value) -> PyResult<Bound<'py, PyAny>> {
+pub(crate) fn to_py<'py>(py: Python<'py>, v: &Value) -> PyResult<Bound<'py, PyAny>> {
     Ok(match v {
         Value::None => py.None().into_bound(py),
         Value::Bool(b) => b.into_pyobject(py)?.to_owned().into_any(),
@@ -36,7 +36,7 @@ fn to_py<'py>(py: Python<'py>, v: &Value) -> PyResult<Bound<'py, PyAny>> {
 }
 
 /// A Python object as a Config `Value`, unconverted.
-fn from_py(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
+pub(crate) fn from_py(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
     if obj.is_none() {
         return Ok(Value::None);
     }
@@ -87,7 +87,7 @@ fn kwargs(dict: &Bound<'_, PyDict>) -> PyResult<Vec<(String, Value)>> {
 }
 
 /// `pixelforge.errors.ConfigError(message)`.
-fn config_error_py(py: Python<'_>, message: &str) -> PyErr {
+pub(crate) fn config_error_py(py: Python<'_>, message: &str) -> PyErr {
     match py
         .import("pixelforge.errors")
         .and_then(|m| m.getattr("ConfigError"))

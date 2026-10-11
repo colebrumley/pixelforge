@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The `compare` command's library pieces in Rust (Phase 7, part B of
+  `docs/rust-migration-plan.md`): `crates/pixelforge/src/sheet.rs` ports `side_by_side`,
+  `PREPASS_COLUMNS`, `parse_sweep` (Python's `int()`/`float()` grammar and messages, the
+  `method` refusal), `_show` (`%g` when it reads back exactly, else `repr`),
+  `override_flags` (with `shlex.quote`), `preview_scale` and `proof_sheet`. Proof-sheet
+  labels are drawn with an embedded public-domain 6×10 bitmap font (printable ASCII, `?`
+  for anything else) instead of Pillow's default font: deterministic, no font files, and the
+  same layout rules, but the label sizes and so the sheet's pixels differ from the Python
+  version's. Exposed as `_native.sheet_*` and compared with `pixelforge/cli.py` in
+  `tests/test_sheet_native.py`.
 - Preprocessing filters and the enhance pass in Rust (Phase 4 of
   `docs/rust-migration-plan.md`): `filters.rs` ports
   scipy's `uniform_filter1d` (any size, `nearest`/`wrap`), `gaussian_filter1d`, the 3×3

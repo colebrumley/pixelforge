@@ -35,4 +35,5 @@ pub mod pyjson;
 pub mod pyrepr;
 pub mod pyunicode;
 pub mod quantize;
+pub mod sheet;
 pub mod tiles;
