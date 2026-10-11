@@ -318,23 +318,43 @@ def record_config_errors() -> dict:
 
 # --------------------------------------------------------------------------------- (b) LAB
 
-def record_lab() -> dict[str, dict]:
-    from pixelforge import color
+def _skimage_rgb_to_lab(rgb: np.ndarray) -> np.ndarray:
+    from skimage import color as skcolor
 
+    rgb = np.ascontiguousarray(rgb, dtype=np.float64)
+    return skcolor.rgb2lab(rgb.reshape(-1, 1, 3)).reshape(rgb.shape)
+
+
+def _skimage_lab_to_rgb(lab: np.ndarray) -> np.ndarray:
+    import warnings
+
+    from skimage import color as skcolor
+
+    lab = np.ascontiguousarray(lab, dtype=np.float64)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # out-of-gamut colors are clipped below
+        rgb = skcolor.lab2rgb(lab.reshape(-1, 1, 3)).reshape(lab.shape)
+    return np.clip(rgb, 0.0, 1.0)
+
+
+def record_lab() -> dict[str, dict]:
+    # scikit-image itself (the pre-Phase-2 pixelforge.color), not pixelforge.color: these
+    # files are the reference the native conversion is tested against.
     axis = np.linspace(0.0, 1.0, 10)
     rgb = np.array([[r, g, b] for r in axis for g in axis for b in axis])
-    lattice = {"axis": axis, "rgb": rgb, "lab": color.rgb_to_lab(rgb)}
+    lattice = {"axis": axis, "rgb": rgb, "lab": _skimage_rgb_to_lab(rgb)}
 
     lab = np.array([[L, a, b] for L in np.linspace(0.0, 100.0, 8)
                     for a in np.linspace(-128.0, 127.0, 5) for b in np.linspace(-128.0, 127.0, 5)])
-    roundtrip = {"lab": lab, "lab_to_rgb": color.lab_to_rgb(lab),
-                 "lab_to_rgb8": color.lab_to_rgb8(lab)}
+    lab_rgb = _skimage_lab_to_rgb(lab)
+    roundtrip = {"lab": lab, "lab_to_rgb": lab_rgb,
+                 "lab_to_rgb8": np.round(np.clip(lab_rgb * 255.0, 0.0, 255.0)).astype(np.uint8)}
 
     greys = np.repeat(np.arange(256, dtype=np.uint8)[:, None], 3, axis=1)
     corners = np.array([[r, g, b] for r in (0, 255) for g in (0, 255) for b in (0, 255)],
                        dtype=np.uint8)
     rgb8 = np.concatenate([greys, corners])
-    rgb8_lab = {"rgb8": rgb8, "lab": color.rgb8_to_lab(rgb8)}
+    rgb8_lab = {"rgb8": rgb8, "lab": _skimage_rgb_to_lab(rgb8.astype(np.float64) / 255.0)}
     return {"lab_lattice.json": lattice, "lab_roundtrip.json": roundtrip,
             "rgb8_lab.json": rgb8_lab}
 
@@ -613,8 +633,9 @@ whose items are all scalars is written on one line. Conventions:
   "unsupported field type" (no field has another type) and the `seed` entry of
   `UPPER_BOUNDS` (2^63 already fails the 64-bit check in `_coerce`).
 - `lab_lattice.json`: `axis` = `np.linspace(0, 1, 10)`; `rgb`, the 1,000 lattice colours (r
-  outermost, then g, then b); `lab` = `pixelforge.color.rgb_to_lab(rgb)` (skimage `rgb2lab`,
-  D65).
+  outermost, then g, then b); `lab` = skimage `rgb2lab(rgb)` (D65). The three LAB files
+  are recorded from scikit-image itself, not from `pixelforge.color` (native since Phase 2),
+  which is tested against them.
 - `lab_roundtrip.json`: `lab`, 200 inputs: L in `linspace(0, 100, 8)` × a and b in
   `linspace(-128, 127, 5)` (L outermost; many are out of gamut); `lab_to_rgb` (floats
   clipped to [0, 1]) and `lab_to_rgb8` (`np.round`, half to even).
