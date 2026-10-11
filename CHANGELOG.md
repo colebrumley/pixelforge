@@ -10,7 +10,7 @@ All notable changes to this project are documented here. The format follows
 
 - The package now builds a Rust extension, `pixelforge._native`, with maturin (crate in
   `rust/`), so installing from the repo requires a stable Rust toolchain alongside Python
-  3.11+. The extension carries no numerics yet; outputs are unchanged.
+  3.11+. The extension holds the kopf and gerstner per-pixel loops (see Changed).
 - `scripts/bench.py` (per-stage timings per input/preset/method, JSON with git sha and
   environment, `--compare OLD.json`) and `scripts/snapshot_outputs.py` (`save`/`compare` of
   output pixels and palettes with differing-pixel counts and ΔE). `bench/0edd462.json` is the
@@ -76,8 +76,8 @@ All notable changes to this project are documented here. The format follows
 - gerstner: the SLIC assignment pass and the superpixel bilateral filter run in the native
   extension (`_native.slic_assign`, `_native.bilateral_filter`, `rust/src/gerstner.rs`) on
   `PIXELFORGE_THREADS` threads (default: available parallelism; the thread count never
-  changes the output). The palette annealer, superpixel statistics, Laplacian smoothing and
-  control flow stay in Python; the numpy kernels are kept in
+  changes the output). The palette annealer, Laplacian smoothing and control flow stay in
+  Python; the numpy kernels are kept in
   `pixelforge/downscale/_reference/gerstner.py` for tests and benchmarks. The assignment is
   bitwise identical to numpy; the bilateral filter uses `libm::exp`, which differs from
   numpy's `exp` at rounding level, so a few output pixels can change (10 of 65,536 on
