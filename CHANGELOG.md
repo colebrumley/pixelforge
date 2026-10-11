@@ -8,6 +8,25 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The `pixelforge` command line in Rust (Phase 7, part A of `docs/rust-migration-plan.md`):
+  `crates/pixelforge/src/main.rs` and `src/cli/` (feature `cli`, on by default; the Python
+  binding builds the library without it, so clap never reaches the extension) port
+  `convert`, `batch` and `palettes` from `pixelforge/cli.py`, with `compare` present as a
+  stub until its proof sheet is ported. The options are generated from the field table with
+  clap 4.5 (`--flag`/`--no-flag` pairs where the last one wins, the hidden `--g-T-final`,
+  per-preset defaults in `--help`, click's `int()`/`float()` conversions and `click.Path`
+  checks, usage errors exit 2, `--version` prints `pixelforge, version 0.1.0`); `--config`
+  is read by a port of CPython 3.11's JSON scanner, so values, `NaN`/`Infinity` rejection and
+  every syntax error message are Python's; the collision check resolves paths like
+  `Path.resolve()`; config errors exit 2 and other errors 1 with the same messages, `--debug`
+  / `PIXELFORGE_DEBUG` print the error chain. Library `UserWarning`s (multi-frame input, the
+  stretch aspect) are printed once each as `pixelforge: warning: …` and, unlike Python's
+  `warnings`, respect `-q`. `crates/pixelforge/tests/cli.rs` ports the CLI cases of
+  `test_cli.py`, `test_pipeline.py` and `test_determinism.py` (fresh processes at 1, 2, 3 and
+  8 threads); `tests/test_cli_parity.py` runs both CLIs on every fixture (box, plus kopf,
+  gerstner and three `batch` runs) and finds equal PNG pixels and text, byte-identical
+  palette, tilemap and Tiled files, equal `_meta.json`, stdout JSON and `-v` stderr (timings
+  and environment aside).
 - Preprocessing filters and the enhance pass in Rust (Phase 4 of
   `docs/rust-migration-plan.md`): `filters.rs` ports
   scipy's `uniform_filter1d` (any size, `nearest`/`wrap`), `gaussian_filter1d`, the 3×3

@@ -1,0 +1,186 @@
+"""The Rust `pixelforge` program against the Python CLI (Phase 7 parity).
+
+Both CLIs run the same command into separate output directories; then PNG pixels, palette,
+transparency and text chunks must decode equal, `_palette.json`, `_palette.hex`,
+`_tilemap.*`, `.tmj` and `shared_palette.hex` must be byte-identical, `_meta.json` equal
+without `environment` and `stats.timings`, the stdout JSON lines equal after the same drops
+(output directories masked), and the `-v` stderr lines equal with the stage timings masked.
+
+The Rust binary is ``$PIXELFORGE_BIN`` when set, else ``cargo run --quiet --bin pixelforge``
+from the workspace; the tests skip when neither is available.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+from PIL import Image
+
+ROOT = Path(__file__).resolve().parent.parent
+FIXTURES = ROOT / "tests" / "fixtures"
+FIXTURE_NAMES = sorted(p.stem for p in FIXTURES.glob("*.png"))
+TIMING = re.compile(r"\b\d+\.\d\d s\b")
+BYTE_IDENTICAL = ("_palette.json", "_palette.hex", "_tilemap.json", "_tilemap.csv", ".tmj",
+                  "shared_palette.hex")
+
+
+def _rust_command() -> list[str] | None:
+    explicit = os.environ.get("PIXELFORGE_BIN")
+    if explicit:
+        return [explicit] if Path(explicit).is_file() else None
+    cargo = shutil.which("cargo")
+    if cargo is None or not (ROOT / "Cargo.toml").is_file():
+        return None
+    return [cargo, "run", "--quiet", "--manifest-path", str(ROOT / "Cargo.toml"),
+            "-p", "pixelforge", "--bin", "pixelforge", "--"]
+
+
+@pytest.fixture(scope="module")
+def rust():
+    command = _rust_command()
+    if command is None:
+        pytest.skip("no Rust pixelforge binary (set PIXELFORGE_BIN, or install cargo)")
+    done = subprocess.run(command + ["--version"], capture_output=True, text=True,
+                          timeout=1800)
+    if done.returncode != 0:
+        pytest.skip(f"the Rust pixelforge binary does not run: {done.stderr.strip()[-500:]}")
+    assert done.stdout == "pixelforge, version 0.1.0\n"
+    return command
+
+
+def _run(command: list[str], args: list[str], outdir: Path) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(ROOT), env.get("PYTHONPATH")]))
+    env.pop("PIXELFORGE_DEBUG", None)
+    return subprocess.run(command + ["-v", *args, "-o", str(outdir)], capture_output=True,
+                          text=True, env=env, timeout=600)
+
+
+def _png(path: Path):
+    with Image.open(path) as im:
+        return (im.mode, im.size, im.getpalette(), im.info.get("transparency"), im.tobytes(),
+                dict(im.text))
+
+
+def _meta(path: Path) -> dict:
+    meta = json.loads(path.read_text())
+    del meta["environment"], meta["stats"]["timings"]
+    return meta
+
+
+def _stdout(text: str, outdir: Path) -> list[dict]:
+    lines = []
+    for line in text.replace(str(outdir), "OUT").splitlines():
+        payload = json.loads(line)
+        payload.get("stats", {}).pop("timings", None)
+        lines.append(payload)
+    return lines
+
+
+def _stderr(text: str, outdir: Path) -> list[str]:
+    return TIMING.sub("T s", text.replace(str(outdir), "OUT")).splitlines()
+
+
+def _assert_same(rust_cmd, args, tmp_path):
+    """Run both programs; same exit code, files, stdout and stderr. Returns the file names."""
+    py_out, rs_out = tmp_path / "py", tmp_path / "rs"
+    py = _run([sys.executable, "-m", "pixelforge"], args, py_out)
+    rs = _run(rust_cmd, args, rs_out)
+    assert rs.returncode == py.returncode, py.stderr + rs.stderr
+    names = sorted(p.name for p in py_out.iterdir()) if py_out.exists() else []
+    assert (sorted(p.name for p in rs_out.iterdir()) if rs_out.exists() else []) == names
+    for name in names:
+        a, b = py_out / name, rs_out / name
+        if name.endswith(".png"):
+            assert _png(a) == _png(b), name
+        elif name.endswith("_meta.json"):
+            assert _meta(a) == _meta(b), name
+        else:
+            assert name.endswith(BYTE_IDENTICAL), name
+            assert a.read_bytes() == b.read_bytes(), name
+    assert _stdout(py.stdout, py_out) == _stdout(rs.stdout, rs_out)
+    assert _stderr(py.stderr, py_out) == _stderr(rs.stderr, rs_out)
+    return names
+
+
+_QUICK = {("circle_alpha", "sprite"), ("two_color", "background")}
+_BOX_CASES = [pytest.param(name, preset, marks=() if (name, preset) in _QUICK
+                           else pytest.mark.slow)
+              for name in FIXTURE_NAMES for preset in ("sprite", "background")]
+
+
+@pytest.mark.parametrize("name, preset", _BOX_CASES)
+def test_convert_box_matches_python(rust, tmp_path, name, preset):
+    names = _assert_same(rust, ["convert", str(FIXTURES / f"{name}.png"), "--preset", preset,
+                                "--method", "box", "--out-width", "32", "--out-height", "32"],
+                         tmp_path)
+    if (name, preset) == ("line_diag", "sprite"):
+        # Keyed, the 2-px line covers no 32-px cell by half: both fail the same way.
+        assert names == []
+        return
+    assert f"{name}.png" in names
+    if preset == "background":
+        assert f"{name}.tmj" in names
+
+
+@pytest.mark.slow
+def test_convert_kopf_matches_python(rust, tmp_path):
+    _assert_same(rust, ["convert", str(FIXTURES / "circle_alpha.png"), "--method", "kopf",
+                        "--out-width", "32", "--out-height", "32", "--kopf-max-iters", "10"],
+                 tmp_path)
+
+
+@pytest.mark.slow
+def test_convert_gerstner_matches_python(rust, tmp_path):
+    _assert_same(rust, ["convert", str(FIXTURES / "noisy_gradient.png"), "--preset",
+                        "background", "--method", "gerstner", "--out-width", "32",
+                        "--out-height", "32", "--palette-size", "8"], tmp_path)
+
+
+def _frames(tmp_path) -> Path:
+    frames = tmp_path / "frames"
+    frames.mkdir()
+    for name in ("circle_alpha", "gradient6", "noisy_gradient"):
+        shutil.copy(FIXTURES / f"{name}.png", frames / f"{name}.png")
+    shutil.copy(FIXTURES / "two_color.png", frames / "two_color_preview.png")   # skipped
+    return frames
+
+
+@pytest.mark.parametrize("extra", [
+    ["--method", "box"],
+    pytest.param(["--method", "box", "--enhance", "1", "--preset", "background",
+                  "--out-width", "32", "--out-height", "32"], marks=pytest.mark.slow),
+    pytest.param(["--method", "gerstner", "--out-height", "16", "--palette-size", "6"],
+                 marks=pytest.mark.slow),
+], ids=["box", "enhance-background", "gerstner"])
+def test_batch_matches_python(rust, tmp_path, extra):
+    frames = _frames(tmp_path)
+    names = _assert_same(rust, ["batch", str(frames), *extra], tmp_path)
+    assert "shared_palette.hex" in names and "noisy_gradient.png" in names
+
+
+def test_config_errors_match_python(rust, tmp_path):
+    """Usage of --config: the same message (and exit code 2) from both programs."""
+    image = str(FIXTURES / "two_color.png")
+    cases = {"bad.json": '{"method": "box",\n "seed" 1}', "nan.json": '{"enhance": NaN}',
+             "list.json": '[1, 2]', "type.json": '{"palette_size": [1, {"a": 2.5}]}',
+             "unknown.json": '{"zeta": 1, "alpha": 2}', "big.json": '{"seed": 1e400}'}
+    for name, text in cases.items():
+        path = tmp_path / name
+        path.write_text(text)
+        outputs = []
+        for command in ([sys.executable, "-m", "pixelforge"], rust):
+            done = subprocess.run(command + ["convert", image, "-o", str(tmp_path / "out"),
+                                             "--config", str(path)],
+                                  capture_output=True, text=True,
+                                  env={**os.environ, "PYTHONPATH": str(ROOT)})
+            outputs.append((done.returncode, done.stderr))
+        assert outputs[0] == outputs[1], name
+        assert outputs[0][0] == 2 and outputs[0][1].startswith("config error: ")
