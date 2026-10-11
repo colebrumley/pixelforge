@@ -208,23 +208,43 @@ x86-64 and arm64), and `_palette.json` rounds LAB to 6 decimals for the same rea
 
 ## Timings
 
-Whole runs (`total_s`, load to post-processing) on an Apple M1 Max (10 cores, every core
-used), background preset, from `cargo xtask bench` and its Python predecessor; the first two
-columns are `bench/0edd462.json` and `bench/9f53516.json`:
+Whole runs (`total_s`, load to post-processing, the minimum of 3 runs) on an Apple M1 Max
+(10 cores) at a load average of 5–7, from `cargo xtask bench --repeat 3` at 0.2.0
+(`bench/aaec276.json`). The first two columns are the Python baselines `bench/0edd462.json`
+(pure numpy) and `bench/9f53516.json` (Python with the Rust hot loops), both taken under a
+load average of 12–24, so their ratios are approximate:
 
-| case | pure Python (`0edd462`) | Python + Rust hot loops (`9f53516`) | Rust (0.2.0) |
-| --- | ---: | ---: | ---: |
-| portrait 1024² → 256², box | 1.64 s | 1.64 s | 0.32 s |
-| portrait 1024² → 256², kopf (24 iterations) | 33.9 s | 4.48 s | 1.78 s |
-| portrait 1024² → 256², gerstner (139 iterations) | 31.0 s | 6.76 s | 3.80 s |
-| `gradient6` 256² → 256², gerstner (299 iterations) | 28.4 s | 12.85 s | 8.10 s |
+| case | pure Python | Python + Rust hot loops | Rust 0.2.0 | vs pure | vs hot loops |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| portrait 1024² → 256², box | 1.64 s | 1.64 s | 0.30 s | 5.5× | 5.6× |
+| portrait 1024² → 256², kopf (24 iterations) | 33.9 s | 4.48 s | 1.70 s | 20× | 2.6× |
+| portrait 1024² → 256², gerstner (139 iterations) | 31.0 s | 6.76 s | 3.82 s | 8.1× | 1.8× |
+| knight 456×528 → 44×64, kopf (50 iterations) | 8.05 s | 0.67 s | 0.32 s | 25× | 2.1× |
+| knight 456×528 → 44×64, gerstner (61 iterations) | 2.72 s | 0.46 s | 0.19 s | 14× | 2.4× |
+| `gradient6` 256² → 256², gerstner (299 iterations) | 28.4 s | 12.85 s | 7.77 s | 3.7× | 1.7× |
+| `noisy_gradient` 256² → 256², gerstner (97 iterations) | 8.43 s | 3.20 s | 1.93 s | 4.4× | 1.7× |
+| `circle_alpha` 256² → 64², kopf (13 iterations) | 1.01 s | 0.14 s | 0.05 s | 20× | 2.8× |
 
-The portrait is a 1024×1024 photo outside the repository; `gradient6` is a test fixture.
-All three columns were measured on a heavily loaded machine (load average 12–24 for the
-middle column, about 30 for the Rust one, not recorded for the first), so they are upper
-bounds, not idle-machine numbers. `cargo xtask bench --compare bench/9f53516.json` compares
-a new run with the fixture cases of that file (`--case PATH:background` adds a photo of your
-own).
+Over the 30 cases of the fixture matrix plus the two photos, the Rust binary is 3.7–32×
+faster than the pure-Python version and 1.6–7× faster than the Python version that already
+had the Rust hot loops; what it gained in the second step is everything outside the kernels
+(decoding, preprocessing, the annealer, palette and quantization, output files). The
+portrait and the knight sprite are photos outside the repository; the others are fixtures.
+
+Threads (`PIXELFORGE_THREADS`, same machine and load, minimum of 3; the output is identical
+at every count):
+
+| case | 1 thread | 2 | 4 | 10 (default) |
+| --- | ---: | ---: | ---: | ---: |
+| portrait, kopf | 9.55 s | 4.98 s | 2.76 s | 1.64 s |
+| portrait, gerstner | 8.14 s | 5.53 s | 4.18 s | 3.83 s |
+| portrait, box | 0.62 s | 0.43 s | 0.34 s | 0.29 s |
+| knight, kopf | 1.35 s | 0.74 s | 0.44 s | 0.33 s |
+
+kopf scales with the cores (its per-pixel sums are banded); gerstner less so, because its
+annealer and per-iteration statistics run on one thread by design (the statistics sum in
+pixel order to stay bitwise equal to the reference). `cargo xtask bench --compare OLD.json`
+compares a new run with an earlier file (`--case PATH:background` adds a photo of your own).
 
 Gerstner at 256×256 output with 32 colors is the slow corner: from seconds to a minute or
 more depending on how many annealing iterations the image needs. Without `-v` such runs print
