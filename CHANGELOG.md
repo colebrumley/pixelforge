@@ -8,9 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- The package now builds a Rust extension, `pixelforge._native`, with maturin (crate in
-  `rust/`), so installing from the repo requires a stable Rust toolchain alongside Python
-  3.11+. The extension holds the kopf and gerstner per-pixel loops (see Changed).
+- The package now builds a Rust extension, `pixelforge._native`, with maturin (binding
+  crate `crates/pixelforge-py`), so installing from the repo requires a stable Rust
+  toolchain alongside Python 3.11+. The extension holds the kopf and gerstner per-pixel loops
+  (see Changed).
 - `scripts/bench.py` (per-stage timings per input/preset/method, JSON with git sha and
   environment, `--compare OLD.json`) and `scripts/snapshot_outputs.py` (`save`/`compare` of
   output pixels and palettes with differing-pixel counts and ΔE). `bench/0edd462.json` is the
@@ -57,12 +58,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
-- kopf's per-pixel loops run natively (`pixelforge._native`, `rust/src/kopf.rs`): the E-step
-  fused with the M-step sums, the C-step's directional and overlap sums, and the final
-  spatial-only recoloring of starved kernels. The per-kernel algebra, constraints and
-  convergence stay in Python. kopf is much faster, and multithreaded (timings: TODO, measure
-  on an idle machine). The numpy implementation is kept in
-  `pixelforge/downscale/_reference/kopf.py` for tests and benchmarks only.
+- The Rust code is a Cargo workspace at the repo root (`Cargo.toml`, one `Cargo.lock`,
+  `target/`) with two crates: `crates/pixelforge`, a plain Rust library without Python (the
+  kopf and gerstner kernels and `parallel`, taking slices), and `crates/pixelforge-py`, the
+  PyO3 binding built as `pixelforge._native` that checks arguments and calls the library.
+  It replaces the single crate that was in `rust`. Same Python-facing functions, signatures
+  and error messages; no output changed (`scripts/snapshot_outputs.py compare`: every
+  fixture case identical).
+- kopf's per-pixel loops run natively (`pixelforge._native`,
+  `crates/pixelforge/src/kopf.rs`): the E-step fused with the M-step sums, the C-step's
+  directional and overlap sums, and the final spatial-only recoloring of starved kernels.
+  The per-kernel algebra, constraints and convergence stay in Python. kopf is much faster,
+  and multithreaded (timings: TODO, measure on an idle machine). The numpy implementation is
+  kept in `pixelforge/downscale/_reference/kopf.py` for tests and benchmarks only.
 - New environment variable `PIXELFORGE_THREADS`: worker threads for the native kernels
   (default: the available parallelism). It affects speed only; results are bitwise
   identical for any thread count (fixed 32-row bands merged in a fixed order). `_meta.json`
@@ -74,10 +82,10 @@ All notable changes to this project are documented here. The format follows
   pure-Python baseline is pixel-identical, and `scripts/update_golden.py` regenerated
   `tests/golden.json` unchanged.
 - gerstner: the SLIC assignment pass and the superpixel bilateral filter run in the native
-  extension (`_native.slic_assign`, `_native.bilateral_filter`, `rust/src/gerstner.rs`) on
-  `PIXELFORGE_THREADS` threads (default: available parallelism; the thread count never
-  changes the output). The palette annealer, Laplacian smoothing and control flow stay in
-  Python; the numpy kernels are kept in
+  extension (`_native.slic_assign`, `_native.bilateral_filter`,
+  `crates/pixelforge/src/gerstner.rs`) on `PIXELFORGE_THREADS` threads (default: available
+  parallelism; the thread count never changes the output). The palette annealer, Laplacian
+  smoothing and control flow stay in Python; the numpy kernels are kept in
   `pixelforge/downscale/_reference/gerstner.py` for tests and benchmarks. The assignment is
   bitwise identical to numpy; the bilateral filter uses `libm::exp`, which differs from
   numpy's `exp` at rounding level, so a few output pixels can change (10 of 65,536 on
@@ -123,7 +131,7 @@ All notable changes to this project are documented here. The format follows
 - The sprite preset no longer enables `remove_bg` when rembg is installed; use `--remove-bg`.
 - `_palette.json` LAB values are rounded to 6 decimals.
 - The package version lives in `pixelforge/version.py`, mirrored in `pyproject.toml` and
-  `rust/Cargo.toml`; `tests/test_version.py` keeps the three equal.
+  the root `Cargo.toml` (`[workspace.package]`); `tests/test_version.py` keeps the three equal.
 - README: byte identity across machines requires `git clone && uv sync --locked`.
 - Kopf no longer grows σ for kernels cut by the alpha silhouette or the image border, which
   blurred features near sprite edges below the box filter's sharpness, and kernels whose

@@ -58,28 +58,30 @@ went from 204 s + 5 s preprocessing (50 Ã— 4.1 s, 554 MiB) to 27 s + 1.6 s (31 Ã
 
 ## Native layer
 
-The per-pixel hot loops live in a Rust extension, `pixelforge._native` (crate `rust/`,
-PyO3 + maturin, built on install):
+The per-pixel hot loops live in Rust. The Cargo workspace at the repo root has two crates:
+`crates/pixelforge`, a plain Rust library with no Python dependency that holds the numerical
+code, and `crates/pixelforge-py`, the extension `pixelforge._native` (PyO3 + maturin, built on
+install) that checks arguments and calls the library:
 
-- kopf (`rust/src/kopf.rs`): the fused E-step + M-step sums (`kopf_em_step`), the C-step's
-  directional and overlap sums (`kopf_c_step`), and the spatial-only recoloring of starved
-  kernels (`kopf_spatial_refill`). Everything per kernel stays in Python
+- kopf (`crates/pixelforge/src/kopf.rs`): the fused E-step + M-step sums (`kopf_em_step`),
+  the C-step's directional and overlap sums (`kopf_c_step`), and the spatial-only recoloring
+  of starved kernels (`kopf_spatial_refill`). Everything per kernel stays in Python
   (`downscale/kopf.py`): the M-step and C-step algebra on (ho, wo) arrays, the constraints,
   convergence, logging and the DEVIATION notes.
-- gerstner (`rust/src/gerstner.rs`): the modified-SLIC assignment pass (`slic_assign`), the
-  superpixel bilateral filter (`bilateral_filter`) and the per-iteration superpixel
-  statistics (`superpixel_stats`: pixel count, mass, colour and centre sums). The palette
-  annealer, Laplacian smoothing, the means and centres (sums / mass) and the control flow
-  stay in Python (`downscale/gerstner.py`).
+- gerstner (`crates/pixelforge/src/gerstner.rs`): the modified-SLIC assignment pass
+  (`slic_assign`), the superpixel bilateral filter (`bilateral_filter`) and the
+  per-iteration superpixel statistics (`superpixel_stats`: pixel count, mass, colour and
+  centre sums). The palette annealer, Laplacian smoothing, the means and centres
+  (sums / mass) and the control flow stay in Python (`downscale/gerstner.py`).
 
 The native code uses float64 only, `exp` from the pure-Rust `libm` crate (the platform `exp`
 can differ in the last bit between macOS and Linux), no fast-math or FMA contraction, and the
 thread-count-independent partition of contract item 2. Threading per kernel:
 
 - kopf's kernels reduce across pixels into per-kernel sums, so their bands of `BAND_ROWS`
-  (32) input-pixel rows (`rust/src/parallel.rs`) are part of the numerics: each band sums
-  into its own buffer, the buffers are merged in band order, and changing the band height
-  changes the rounding of the sums.
+  (32) input-pixel rows (`crates/pixelforge/src/parallel.rs`) are part of the numerics: each
+  band sums into its own buffer, the buffers are merged in band order, and changing the band
+  height changes the rounding of the sums.
 - gerstner's `slic_assign` and `bilateral_filter` are per-pixel independent (each output
   element is computed from the inputs alone, no reduction across pixels), so their bands of
   8 rows only split the work between threads and are not part of the numerics.

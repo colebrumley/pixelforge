@@ -4,11 +4,11 @@ A constrained EM over one anisotropic Gaussian kernel per output pixel. All spat
 are in output-pixel units. Every input pixel is covered by at most 4 × 4 kernels (those whose
 R_k window contains it); the per-pixel loops over those slots (E-step responsibilities γ,
 M-step sums, the C-step's directional and overlap sums, and the final spatial-only refill)
-run natively in `pixelforge._native` (rust/src/kopf.rs). Everything per kernel, i.e. the
-M-step and C-step algebra on (ho, wo) arrays, the constraints, convergence and logging, is
-here. γ is kept in a (hi, wi, 16) array, slot s = jy·4 + jx, between the E-step and the C-step.
-The numpy implementation the native code replaced is kept as a test reference in
-`pixelforge/downscale/_reference/kopf.py`.
+run natively in `pixelforge._native` (from crates/pixelforge/src/kopf.rs). Everything per
+kernel, i.e. the M-step and C-step algebra on (ho, wo) arrays, the constraints, convergence
+and logging, is here. γ is kept in a (hi, wi, 16) array, slot s = jy·4 + jx, between the
+E-step and the C-step. The numpy implementation the native code replaced is kept as a test
+reference in `pixelforge/downscale/_reference/kopf.py`.
 """
 
 from __future__ import annotations
