@@ -9,7 +9,7 @@ build/
 gallery/
 out/
 samples/
-rust/target/
+target/
 *.so
 *.abi3.so
 *.pyd

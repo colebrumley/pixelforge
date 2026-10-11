@@ -4,7 +4,8 @@ build-backend = "maturin"
 
 [project]
 name = "pixelforge"
-# Keep equal to pixelforge/version.py and rust/Cargo.toml (tests/test_version.py checks).
+# Keep equal to pixelforge/version.py and the root Cargo.toml's [workspace.package]
+# (tests/test_version.py checks).
 version = "0.1.0"
 description = "Deterministic conversion of raster images into 16-bit-style pixel art"
 readme = "README.md"
@@ -41,14 +42,14 @@ Repository = "https://github.com/colebrumley/pixelforge"
 pixelforge = "pixelforge.cli:main"
 
 [tool.maturin]
-manifest-path = "rust/Cargo.toml"
+manifest-path = "crates/pixelforge-py/Cargo.toml"
 python-source = "."
 module-name = "pixelforge._native"
 features = ["pyo3/extension-module"]
 
 [tool.uv]
 # Rebuild the extension on `uv sync` / `uv run` when the Rust sources change.
-cache-keys = [{file = "pyproject.toml"}, {file = "rust/Cargo.toml"}, {file = "rust/Cargo.lock"}, {file = "rust/src/**/*.rs"}]
+cache-keys = [{file = "pyproject.toml"}, {file = "Cargo.toml"}, {file = "Cargo.lock"}, {file = "crates/**/Cargo.toml"}, {file = "crates/**/*.rs"}]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

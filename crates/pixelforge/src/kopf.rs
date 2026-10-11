@@ -11,22 +11,19 @@
 //!
 //! γ is exchanged with Python pixel-major, shape (hi, wi, 16), slot s = jy·4 + jx: each pixel
 //! writes and reads one contiguous run instead of 16 strided ones.
+//!
+//! The entry points take row-major slices and plain dimensions; the Python binding
+//! (crates/pixelforge-py) validates dtypes, shapes and contiguity before calling them.
 
-use numpy::{
-    PyArrayDyn, PyArrayMethods, PyReadonlyArrayDyn, PyReadwriteArrayDyn, PyUntypedArrayMethods,
-};
-use pyo3::exceptions::PyValueError;
-use pyo3::prelude::*;
-
-use crate::parallel::{band_rows, n_bands, run_bands, thread_count, BAND_ROWS};
+use crate::parallel::{band_rows, n_bands, run_bands, BAND_ROWS};
 
 /// R_k half-width in output units (kopf.RK_HALF_WIDTH).
 const RK_HALF_WIDTH: f64 = 2.0;
 /// Slots per axis: ceil(2 · RK_HALF_WIDTH).
 const NS: usize = 4;
-const NSLOT: usize = NS * NS;
+pub const NSLOT: usize = NS * NS;
 /// Values accumulated per kernel by the E+M step: w, x, y, xx, xy, yy, c0, c1, c2.
-const EM_Q: usize = 9;
+pub const EM_Q: usize = 9;
 /// Values accumulated per kernel by the C-step: plus[4], both[4], overlap[4].
 const C_Q: usize = 12;
 /// Values accumulated per kernel by the refill: mass, c0, c1, c2.
@@ -262,138 +259,33 @@ impl Model<'_> {
     }
 }
 
-// ------------------------------------------------------------------ argument checking
-
-fn value_error(func: &str, msg: String) -> PyErr {
-    PyValueError::new_err(format!("{func}: {msg}"))
+/// The (ho, wo) kernel geometry every entry point takes, row-major: centers μ and the
+/// entries of Σ⁻¹ = [[inv_a, inv_b], [inv_b, inv_c]].
+pub struct Kernels<'a> {
+    pub ho: usize,
+    pub wo: usize,
+    pub mu_x: &'a [f64],
+    pub mu_y: &'a [f64],
+    pub inv_a: &'a [f64],
+    pub inv_b: &'a [f64],
+    pub inv_c: &'a [f64],
 }
 
-fn check_layout(
-    func: &str,
-    name: &str,
-    got: &[usize],
-    contiguous: bool,
-    want: &[usize],
-) -> PyResult<()> {
-    if got != want {
-        return Err(value_error(
-            func,
-            format!("{name} must have shape {want:?}, got {got:?}"),
-        ));
+impl Kernels<'_> {
+    fn check(&self) {
+        let m = self.ho * self.wo;
+        check_len("mu_x", self.mu_x, m);
+        check_len("mu_y", self.mu_y, m);
+        check_len("inv_a", self.inv_a, m);
+        check_len("inv_b", self.inv_b, m);
+        check_len("inv_c", self.inv_c, m);
     }
-    if !contiguous {
-        return Err(value_error(
-            func,
-            format!("{name} must be C-contiguous (use numpy.ascontiguousarray)"),
-        ));
-    }
-    Ok(())
 }
 
-fn cast_array<'a, 'py, T: numpy::Element>(
-    func: &str,
-    name: &str,
-    dtype: &str,
-    obj: &'a Bound<'py, PyAny>,
-) -> PyResult<&'a Bound<'py, PyArrayDyn<T>>> {
-    obj.cast::<PyArrayDyn<T>>().map_err(|_| {
-        let got = obj
-            .getattr("dtype")
-            .map(|d| d.to_string())
-            .unwrap_or_else(|_| obj.get_type().to_string());
-        value_error(
-            func,
-            format!("{name} must be a {dtype} numpy.ndarray, got {got}"),
-        )
-    })
-}
-
-/// The shape of a `dtype` array argument, before its shape is known to the caller.
-fn shape_of<T: numpy::Element>(
-    func: &str,
-    name: &str,
-    dtype: &str,
-    obj: &Bound<'_, PyAny>,
-    ndim: usize,
-) -> PyResult<Vec<usize>> {
-    let shape = cast_array::<T>(func, name, dtype, obj)?.shape().to_vec();
-    if shape.len() != ndim {
-        return Err(value_error(
-            func,
-            format!("{name} must be {ndim}-dimensional, got shape {shape:?}"),
-        ));
-    }
-    Ok(shape)
-}
-
-fn readonly<'py, T: numpy::Element>(
-    func: &str,
-    name: &str,
-    dtype: &str,
-    obj: &Bound<'py, PyAny>,
-    shape: &[usize],
-) -> PyResult<PyReadonlyArrayDyn<'py, T>> {
-    let arr = cast_array::<T>(func, name, dtype, obj)?;
-    check_layout(func, name, arr.shape(), arr.is_c_contiguous(), shape)?;
-    arr.try_readonly()
-        .map_err(|e| value_error(func, format!("cannot read {name}: {e}")))
-}
-
-fn readwrite<'py>(
-    func: &str,
-    name: &str,
-    obj: &Bound<'py, PyAny>,
-    shape: &[usize],
-) -> PyResult<PyReadwriteArrayDyn<'py, f64>> {
-    let arr = cast_array::<f64>(func, name, "float64", obj)?;
-    check_layout(func, name, arr.shape(), arr.is_c_contiguous(), shape)?;
-    arr.try_readwrite().map_err(|e| {
-        value_error(
-            func,
-            format!("cannot write {name} (it must be writeable and must not alias another argument): {e}"),
-        )
-    })
-}
-
-fn f64s<'a>(func: &str, name: &str, arr: &'a PyReadonlyArrayDyn<'_, f64>) -> PyResult<&'a [f64]> {
-    arr.as_slice()
-        .map_err(|e| value_error(func, format!("{name}: {e}")))
-}
-
-fn u8s<'a>(func: &str, name: &str, arr: &'a PyReadonlyArrayDyn<'_, u8>) -> PyResult<&'a [u8]> {
-    arr.as_slice()
-        .map_err(|e| value_error(func, format!("{name}: {e}")))
-}
-
-fn f64s_mut<'a>(
-    func: &str,
-    name: &str,
-    arr: &'a mut PyReadwriteArrayDyn<'_, f64>,
-) -> PyResult<&'a mut [f64]> {
-    arr.as_slice_mut()
-        .map_err(|e| value_error(func, format!("{name}: {e}")))
-}
-
-/// The five (ho, wo) kernel-geometry arrays every function takes.
-struct Geometry<'py> {
-    mu_x: PyReadonlyArrayDyn<'py, f64>,
-    mu_y: PyReadonlyArrayDyn<'py, f64>,
-    inv_a: PyReadonlyArrayDyn<'py, f64>,
-    inv_b: PyReadonlyArrayDyn<'py, f64>,
-    inv_c: PyReadonlyArrayDyn<'py, f64>,
-}
-
-impl<'py> Geometry<'py> {
-    fn new(func: &str, args: [(&str, &Bound<'py, PyAny>); 5], k: &[usize]) -> PyResult<Self> {
-        let [mx, my, a, b, c] = args;
-        Ok(Geometry {
-            mu_x: readonly(func, mx.0, "float64", mx.1, k)?,
-            mu_y: readonly(func, my.0, "float64", my.1, k)?,
-            inv_a: readonly(func, a.0, "float64", a.1, k)?,
-            inv_b: readonly(func, b.0, "float64", b.1, k)?,
-            inv_c: readonly(func, c.0, "float64", c.1, k)?,
-        })
-    }
+/// Panics unless `slice` holds `want` elements (the binding checks shapes first, so this
+/// only guards direct Rust callers).
+fn check_len<T>(name: &str, slice: &[T], want: usize) {
+    assert_eq!(slice.len(), want, "{name} must hold {want} elements");
 }
 
 /// Per-band views of a (hi, wi, 16) array: entry `b` holds band `b`'s rows, so bands can
@@ -409,89 +301,57 @@ fn split_gamma(gamma: &mut [f64], hi: usize, wi: usize) -> Vec<&mut [f64]> {
 
 /// E-step and M-step sums for one kopf iteration, fused per pixel.
 ///
-/// Writes γ (after normalization and the pixel weight) into `gamma_out` (hi, wi, 16), slot
-/// s = jy·4 + jx (pixel-major, so each pixel writes one contiguous run), and the per-kernel sums into `sums_out` (ho, wo, 9): w, x, y, xx, xy, yy,
-/// c0, c1, c2 with x = Σγ·dx etc. and dx, dy offsets from the μ passed in.
-#[pyfunction]
+/// `channels` is (3, hi, wi), `mask` (hi, wi) (0 = transparent), `pixel_weight` (hi, wi),
+/// `nu` (ho, wo, 3), `inv_color` and `ghost` (ho, wo). Writes γ (after normalization and
+/// the pixel weight) into `gamma_out` (hi, wi, 16), slot s = jy·4 + jx (pixel-major, so
+/// each pixel writes one contiguous run), and the per-kernel sums into `sums_out`
+/// (ho, wo, 9): w, x, y, xx, xy, yy, c0, c1, c2 with x = Σγ·dx etc. and dx, dy offsets
+/// from the μ passed in.
 #[allow(clippy::too_many_arguments)]
-pub fn kopf_em_step<'py>(
-    py: Python<'py>,
-    channels: &Bound<'py, PyAny>,
-    mask: &Bound<'py, PyAny>,
-    pixel_weight: Option<&Bound<'py, PyAny>>,
-    mu_x: &Bound<'py, PyAny>,
-    mu_y: &Bound<'py, PyAny>,
-    inv_a: &Bound<'py, PyAny>,
-    inv_b: &Bound<'py, PyAny>,
-    inv_c: &Bound<'py, PyAny>,
-    nu: &Bound<'py, PyAny>,
-    inv_color: &Bound<'py, PyAny>,
-    ghost: &Bound<'py, PyAny>,
-    gamma_out: &Bound<'py, PyAny>,
-    sums_out: &Bound<'py, PyAny>,
-) -> PyResult<()> {
-    const F: &str = "kopf_em_step";
-    let cs = shape_of::<f64>(F, "channels", "float64", channels, 3)?;
-    if cs[0] != 3 {
-        return Err(value_error(
-            F,
-            format!("channels must have shape (3, hi, wi), got {cs:?}"),
-        ));
+pub fn em_step(
+    hi: usize,
+    wi: usize,
+    kernels: &Kernels,
+    channels: &[f64],
+    mask: &[u8],
+    pixel_weight: Option<&[f64]>,
+    nu: &[f64],
+    inv_color: &[f64],
+    ghost: &[u8],
+    gamma_out: &mut [f64],
+    sums_out: &mut [f64],
+    threads: usize,
+) {
+    let (ho, wo) = (kernels.ho, kernels.wo);
+    kernels.check();
+    check_len("channels", channels, 3 * hi * wi);
+    check_len("mask", mask, hi * wi);
+    if let Some(w) = pixel_weight {
+        check_len("pixel_weight", w, hi * wi);
     }
-    let (hi, wi) = (cs[1], cs[2]);
-    let ks = shape_of::<f64>(F, "mu_x", "float64", mu_x, 2)?;
-    let (ho, wo) = (ks[0], ks[1]);
-    let channels = readonly::<f64>(F, "channels", "float64", channels, &[3, hi, wi])?;
-    let mask = readonly::<u8>(F, "mask", "uint8", mask, &[hi, wi])?;
-    let pixel_weight = pixel_weight
-        .map(|w| readonly::<f64>(F, "pixel_weight", "float64", w, &[hi, wi]))
-        .transpose()?;
-    let geo = Geometry::new(
-        F,
-        [
-            ("mu_x", mu_x),
-            ("mu_y", mu_y),
-            ("inv_a", inv_a),
-            ("inv_b", inv_b),
-            ("inv_c", inv_c),
-        ],
-        &[ho, wo],
-    )?;
-    let nu = readonly::<f64>(F, "nu", "float64", nu, &[ho, wo, 3])?;
-    let inv_color = readonly::<f64>(F, "inv_color", "float64", inv_color, &[ho, wo])?;
-    let ghost = readonly::<u8>(F, "ghost", "uint8", ghost, &[ho, wo])?;
-    let mut gamma_out = readwrite(F, "gamma_out", gamma_out, &[hi, wi, NSLOT])?;
-    let mut sums_out = readwrite(F, "sums_out", sums_out, &[ho, wo, EM_Q])?;
-
+    check_len("nu", nu, ho * wo * 3);
+    check_len("inv_color", inv_color, ho * wo);
+    check_len("ghost", ghost, ho * wo);
+    check_len("gamma_out", gamma_out, hi * wi * NSLOT);
+    check_len("sums_out", sums_out, ho * wo * EM_Q);
     let model = Model {
         ax: Axis::new(wi, wo),
         ay: Axis::new(hi, ho),
         wo,
-        mu_x: f64s(F, "mu_x", &geo.mu_x)?,
-        mu_y: f64s(F, "mu_y", &geo.mu_y)?,
-        inv_a: f64s(F, "inv_a", &geo.inv_a)?,
-        inv_b: f64s(F, "inv_b", &geo.inv_b)?,
-        inv_c: f64s(F, "inv_c", &geo.inv_c)?,
-        color: Some((
-            f64s(F, "channels", &channels)?,
-            f64s(F, "nu", &nu)?,
-            f64s(F, "inv_color", &inv_color)?,
-        )),
-        mask: Some(u8s(F, "mask", &mask)?),
-        ghost: Some(u8s(F, "ghost", &ghost)?),
-        pixel_weight: pixel_weight
-            .as_ref()
-            .map(|w| f64s(F, "pixel_weight", w))
-            .transpose()?,
+        mu_x: kernels.mu_x,
+        mu_y: kernels.mu_y,
+        inv_a: kernels.inv_a,
+        inv_b: kernels.inv_b,
+        inv_c: kernels.inv_c,
+        color: Some((channels, nu, inv_color)),
+        mask: Some(mask),
+        ghost: Some(ghost),
+        pixel_weight,
     };
-    let gamma = f64s_mut(F, "gamma_out", &mut gamma_out)?;
-    let sums = f64s_mut(F, "sums_out", &mut sums_out)?;
-    let threads = thread_count();
-    py.detach(|| em_step(&model, hi, wi, gamma, sums, threads));
-    Ok(())
+    em_step_bands(&model, hi, wi, gamma_out, sums_out, threads);
 }
 
-fn em_step(
+fn em_step_bands(
     model: &Model,
     hi: usize,
     wi: usize,
@@ -546,56 +406,43 @@ fn em_step(
 /// (1, 0), (0, 1), (√½, √½), (√½, −√½) (kopf.py's `axes` order): `both_out[a]` = Σ γ·u²,
 /// `plus_out[a]` = Σ γ·u² over u > 0. `overlap_out[d]` = Σ_i γ_k(i)·γ_n(i) for the neighbor
 /// n = k + d, d in (0, 1), (1, 0), (1, 1), (1, −1), over pixels where both slots exist.
-/// All outputs are (4, ho, wo).
-#[pyfunction]
+/// `old_mu_*` and `move_*` are (ho, wo); all outputs are (4, ho, wo).
 #[allow(clippy::too_many_arguments)]
-pub fn kopf_c_step<'py>(
-    py: Python<'py>,
-    gamma: &Bound<'py, PyAny>,
-    old_mu_x: &Bound<'py, PyAny>,
-    old_mu_y: &Bound<'py, PyAny>,
-    move_x: &Bound<'py, PyAny>,
-    move_y: &Bound<'py, PyAny>,
-    plus_out: &Bound<'py, PyAny>,
-    both_out: &Bound<'py, PyAny>,
-    overlap_out: &Bound<'py, PyAny>,
-) -> PyResult<()> {
-    const F: &str = "kopf_c_step";
-    let gs = shape_of::<f64>(F, "gamma", "float64", gamma, 3)?;
-    if gs[2] != NSLOT {
-        return Err(value_error(
-            F,
-            format!("gamma must have shape (hi, wi, 16), got {gs:?}"),
-        ));
-    }
-    let (hi, wi) = (gs[0], gs[1]);
-    let ks = shape_of::<f64>(F, "old_mu_x", "float64", old_mu_x, 2)?;
-    let (ho, wo) = (ks[0], ks[1]);
-    let k = [ho, wo];
-    let gamma = readonly::<f64>(F, "gamma", "float64", gamma, &[hi, wi, NSLOT])?;
-    let old_mu_x = readonly::<f64>(F, "old_mu_x", "float64", old_mu_x, &k)?;
-    let old_mu_y = readonly::<f64>(F, "old_mu_y", "float64", old_mu_y, &k)?;
-    let move_x = readonly::<f64>(F, "move_x", "float64", move_x, &k)?;
-    let move_y = readonly::<f64>(F, "move_y", "float64", move_y, &k)?;
-    let mut plus_out = readwrite(F, "plus_out", plus_out, &[4, ho, wo])?;
-    let mut both_out = readwrite(F, "both_out", both_out, &[4, ho, wo])?;
-    let mut overlap_out = readwrite(F, "overlap_out", overlap_out, &[4, ho, wo])?;
+pub fn c_step(
+    hi: usize,
+    wi: usize,
+    ho: usize,
+    wo: usize,
+    gamma: &[f64],
+    old_mu_x: &[f64],
+    old_mu_y: &[f64],
+    move_x: &[f64],
+    move_y: &[f64],
+    plus_out: &mut [f64],
+    both_out: &mut [f64],
+    overlap_out: &mut [f64],
+    threads: usize,
+) {
+    let m = ho * wo;
+    check_len("gamma", gamma, hi * wi * NSLOT);
+    check_len("old_mu_x", old_mu_x, m);
+    check_len("old_mu_y", old_mu_y, m);
+    check_len("move_x", move_x, m);
+    check_len("move_y", move_y, m);
+    check_len("plus_out", plus_out, 4 * m);
+    check_len("both_out", both_out, 4 * m);
+    check_len("overlap_out", overlap_out, 4 * m);
     let args = CStepArgs {
         ax: Axis::new(wi, wo),
         ay: Axis::new(hi, ho),
         wo,
-        gamma: f64s(F, "gamma", &gamma)?,
-        old_mu_x: f64s(F, "old_mu_x", &old_mu_x)?,
-        old_mu_y: f64s(F, "old_mu_y", &old_mu_y)?,
-        move_x: f64s(F, "move_x", &move_x)?,
-        move_y: f64s(F, "move_y", &move_y)?,
+        gamma,
+        old_mu_x,
+        old_mu_y,
+        move_x,
+        move_y,
     };
-    let plus = f64s_mut(F, "plus_out", &mut plus_out)?;
-    let both = f64s_mut(F, "both_out", &mut both_out)?;
-    let overlap = f64s_mut(F, "overlap_out", &mut overlap_out)?;
-    let threads = thread_count();
-    py.detach(|| c_step(&args, plus, both, overlap, threads));
-    Ok(())
+    c_step_bands(&args, plus_out, both_out, overlap_out, threads);
 }
 
 struct CStepArgs<'a> {
@@ -609,7 +456,7 @@ struct CStepArgs<'a> {
     move_y: &'a [f64],
 }
 
-fn c_step(
+fn c_step_bands(
     args: &CStepArgs,
     plus: &mut [f64],
     both: &mut [f64],
@@ -690,71 +537,43 @@ fn c_step(
 ///
 /// γ from −0.5·(p − μ)ᵀΣ⁻¹(p − μ) alone, over every in-image slot (no pixel mask, no ghost
 /// test, no color term, no pixel weight), normalized per pixel. Then with g = γ·pixel_mass:
-/// `mass_out` (ho, wo) = Σ g and `color_out` (ho, wo, 3) = Σ g·channel.
-#[pyfunction]
+/// `mass_out` (ho, wo) = Σ g and `color_out` (ho, wo, 3) = Σ g·channel. `channels` is
+/// (3, hi, wi) and `pixel_mass` (hi, wi).
 #[allow(clippy::too_many_arguments)]
-pub fn kopf_spatial_refill<'py>(
-    py: Python<'py>,
-    channels: &Bound<'py, PyAny>,
-    pixel_mass: &Bound<'py, PyAny>,
-    mu_x: &Bound<'py, PyAny>,
-    mu_y: &Bound<'py, PyAny>,
-    inv_a: &Bound<'py, PyAny>,
-    inv_b: &Bound<'py, PyAny>,
-    inv_c: &Bound<'py, PyAny>,
-    mass_out: &Bound<'py, PyAny>,
-    color_out: &Bound<'py, PyAny>,
-) -> PyResult<()> {
-    const F: &str = "kopf_spatial_refill";
-    let cs = shape_of::<f64>(F, "channels", "float64", channels, 3)?;
-    if cs[0] != 3 {
-        return Err(value_error(
-            F,
-            format!("channels must have shape (3, hi, wi), got {cs:?}"),
-        ));
-    }
-    let (hi, wi) = (cs[1], cs[2]);
-    let ks = shape_of::<f64>(F, "mu_x", "float64", mu_x, 2)?;
-    let (ho, wo) = (ks[0], ks[1]);
-    let channels = readonly::<f64>(F, "channels", "float64", channels, &[3, hi, wi])?;
-    let pixel_mass = readonly::<f64>(F, "pixel_mass", "float64", pixel_mass, &[hi, wi])?;
-    let geo = Geometry::new(
-        F,
-        [
-            ("mu_x", mu_x),
-            ("mu_y", mu_y),
-            ("inv_a", inv_a),
-            ("inv_b", inv_b),
-            ("inv_c", inv_c),
-        ],
-        &[ho, wo],
-    )?;
-    let mut mass_out = readwrite(F, "mass_out", mass_out, &[ho, wo])?;
-    let mut color_out = readwrite(F, "color_out", color_out, &[ho, wo, 3])?;
+pub fn spatial_refill(
+    hi: usize,
+    wi: usize,
+    kernels: &Kernels,
+    channels: &[f64],
+    pixel_mass: &[f64],
+    mass_out: &mut [f64],
+    color_out: &mut [f64],
+    threads: usize,
+) {
+    let (ho, wo) = (kernels.ho, kernels.wo);
+    kernels.check();
+    check_len("channels", channels, 3 * hi * wi);
+    check_len("pixel_mass", pixel_mass, hi * wi);
+    check_len("mass_out", mass_out, ho * wo);
+    check_len("color_out", color_out, ho * wo * 3);
     let model = Model {
         ax: Axis::new(wi, wo),
         ay: Axis::new(hi, ho),
         wo,
-        mu_x: f64s(F, "mu_x", &geo.mu_x)?,
-        mu_y: f64s(F, "mu_y", &geo.mu_y)?,
-        inv_a: f64s(F, "inv_a", &geo.inv_a)?,
-        inv_b: f64s(F, "inv_b", &geo.inv_b)?,
-        inv_c: f64s(F, "inv_c", &geo.inv_c)?,
+        mu_x: kernels.mu_x,
+        mu_y: kernels.mu_y,
+        inv_a: kernels.inv_a,
+        inv_b: kernels.inv_b,
+        inv_c: kernels.inv_c,
         color: None,
         mask: None,
         ghost: None,
         pixel_weight: None,
     };
-    let channels = f64s(F, "channels", &channels)?;
-    let pixel_mass = f64s(F, "pixel_mass", &pixel_mass)?;
-    let mass = f64s_mut(F, "mass_out", &mut mass_out)?;
-    let color = f64s_mut(F, "color_out", &mut color_out)?;
-    let threads = thread_count();
-    py.detach(|| spatial_refill(&model, channels, pixel_mass, mass, color, threads));
-    Ok(())
+    spatial_refill_bands(&model, channels, pixel_mass, mass_out, color_out, threads);
 }
 
-fn spatial_refill(
+fn spatial_refill_bands(
     model: &Model,
     channels: &[f64],
     pixel_mass: &[f64],
