@@ -2,7 +2,7 @@
 
 The conversions and the nearest-colour search run natively (`pixelforge._native`, from
 crates/pixelforge/src/color.rs): scikit-image 0.26's formulas with libm's `pow`/`cbrt`, so
-results agree with `skimage.color.rgb2lab`/`lab2rgb` to about 1e-13 and are bit-identical
+results agree with scikit-image's `rgb2lab`/`lab2rgb` to about 1e-13 and are bit-identical
 on every platform.
 """
 
