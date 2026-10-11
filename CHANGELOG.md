@@ -27,65 +27,7 @@ All notable changes to this project are documented here. The format follows
   sheet to one row. Each cell also reports its full config. Plain `compare` is unchanged.
 - README: a photo sample (`docs/sample_photo.png`, from an AI-generated portrait) and guidance
   on source photos.
-
-### Changed
-
-- kopf's per-pixel loops run natively (`pixelforge._native`, `rust/src/kopf.rs`): the E-step
-  fused with the M-step sums, the C-step's directional and overlap sums, and the final
-  spatial-only recoloring of starved kernels. The per-kernel algebra, constraints and
-  convergence stay in Python. kopf is much faster, and multithreaded (timings: TODO, measure
-  on an idle machine). The numpy implementation is kept in
-  `pixelforge/downscale/_reference/kopf.py` for tests and benchmarks only.
-- New environment variable `PIXELFORGE_THREADS`: worker threads for the native kernels
-  (default: the available parallelism). It affects speed only; results are bitwise
-  identical for any thread count (fixed 32-row bands merged in a fixed order). `_meta.json`
-  records the thread count used as `environment.threads` (recorded, never hashed, like the
-  library versions); `pixelforge._native.thread_count()` returns it.
-- The native sums accumulate in a different order than numpy's block sums and use `libm`'s
-  `exp`, so kopf's internal values differ from the numpy version at ~1e-15 relative. No
-  output changed: every case of `scripts/snapshot_outputs.py compare` against the
-  pure-Python baseline is pixel-identical, and `scripts/update_golden.py` regenerated
-  `tests/golden.json` unchanged.
-
-### Fixed
-
-- `convert`, `batch` and `compare` refuse (exit 2) to write an output over an input file, and
-  `batch` refuses inputs that share a stem; `--force` overrides both. `batch` skips
-  `*_preview`, `*_tileset` and `*_compare` images.
-- With a named palette (`--palette-name`) the outline snaps to the nearest palette entry
-  instead of adding a colour outside the hardware palette; a `_palette.hex` fed back through
-  `--palette-name` reproduces itself. `stats.outline_index` names the entry used.
-- `Config.replace(preset=...)` re-applies the new preset to every field the caller did not
-  set explicitly; previously the old preset's values were kept under the new label.
-- The output canvas is exactly the requested size: the outline ring is reserved inside it
-  (`stats.outline_margin`) instead of growing the image by 2 px; with `tileset=True` a
-  clipped outline is reported as `stats.outline_clipped`.
-- Dithering with gerstner (the default method) now dithers the smoothed superpixel means;
-  it was a no-op because the per-pixel values already sat on palette colours. `auto` dither
-  ignores transparent cells when measuring local detail, so silhouette edges dither too.
-- `batch` derives one scale from the largest frame's subject and gives every frame the same
-  canvas, so animation frames keep a constant size; `--scale N` and `--canvas WxH` are new.
-- Tile de-duplication requires both a mean ΔE below `tile_dedupe_tolerance` and every
-  pixel's ΔE below 10, and merges into the nearest tile; sparse details (stars, highlights)
-  are no longer erased or stamped into every cell. `stats.tiles_rerender_px_changed` reports
-  what the re-render changed. Tiling is 50–100× faster on large outputs.
-- Orphan removal keeps high-contrast single pixels (eyes, highlights): a region is merged
-  only when its ΔE to the replacement is below `orphan_max_delta` (25), and passes stop on
-  convergence instead of oscillating.
-- Gerstner/MCDA splits palette colours a few ΔE apart (the 3× growth rule collapsed them),
-  stops annealing when no pair grows instead of cooling to 1e-3, and starts at a temperature
-  scaled to the colour spread instead of its variance (about 40 % fewer iterations).
-- `key_bg` also keys out the anti-aliased fringe around a flat backdrop (`key_bg_fringe`
-  passes of coverage unmixing), so the halo no longer takes palette entries.
-- Kopf converges: the |Δμ| < 1e-3 criterion was unreachable even on a solid colour, so
-  every run hit `kopf_max_iters`; RMS criteria on Δμ, Δν and the σ-change fraction replace it.
-- 16-bit grayscale inputs are rescaled instead of clipped to white; EXIF orientation is
-  applied; animations use the first frame with a warning.
-
-### Added
-
 - MIT `LICENSE` and package metadata (license expression, author, classifiers, project URLs).
-- `MANIFEST.in` so the sdist ships tests, fixtures, scripts, DESIGN.md and REQUIREMENTS.md.
 - Ruff configuration and `ruff` in the `dev` dependency group.
 - GitHub Actions CI: lint job plus tests on Ubuntu (Python 3.11/3.12/3.13) and macOS arm64 (3.12).
 - This changelog.
@@ -115,6 +57,22 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- kopf's per-pixel loops run natively (`pixelforge._native`, `rust/src/kopf.rs`): the E-step
+  fused with the M-step sums, the C-step's directional and overlap sums, and the final
+  spatial-only recoloring of starved kernels. The per-kernel algebra, constraints and
+  convergence stay in Python. kopf is much faster, and multithreaded (timings: TODO, measure
+  on an idle machine). The numpy implementation is kept in
+  `pixelforge/downscale/_reference/kopf.py` for tests and benchmarks only.
+- New environment variable `PIXELFORGE_THREADS`: worker threads for the native kernels
+  (default: the available parallelism). It affects speed only; results are bitwise
+  identical for any thread count (fixed 32-row bands merged in a fixed order). `_meta.json`
+  records the thread count used as `environment.threads` (recorded, never hashed, like the
+  library versions); `pixelforge._native.thread_count()` returns it.
+- The native sums accumulate in a different order than numpy's block sums and use `libm`'s
+  `exp`, so kopf's internal values differ from the numpy version at ~1e-15 relative. No
+  output changed: every case of `scripts/snapshot_outputs.py compare` against the
+  pure-Python baseline is pixel-identical, and `scripts/update_golden.py` regenerated
+  `tests/golden.json` unchanged.
 - gerstner: the SLIC assignment pass and the superpixel bilateral filter run in the native
   extension (`_native.slic_assign`, `_native.bilateral_filter`, `rust/src/gerstner.rs`) on
   `PIXELFORGE_THREADS` threads (default: available parallelism; the thread count never
@@ -164,12 +122,48 @@ All notable changes to this project are documented here. The format follows
 - `batch` passes its shared palette to frames inline; frame metadata no longer holds `--outdir`.
 - The sprite preset no longer enables `remove_bg` when rembg is installed; use `--remove-bg`.
 - `_palette.json` LAB values are rounded to 6 decimals.
-- The package version is single-sourced from `pixelforge/version.py`.
+- The package version lives in `pixelforge/version.py`, mirrored in `pyproject.toml` and
+  `rust/Cargo.toml`; `tests/test_version.py` keeps the three equal.
 - README: byte identity across machines requires `git clone && uv sync --locked`.
 - Kopf no longer grows σ for kernels cut by the alpha silhouette or the image border, which
   blurred features near sprite edges below the box filter's sharpness, and kernels whose
   cell is mostly transparent no longer claim (and then drop) pixels near the silhouette, which
   erased lines 2–3 px inside it. Kopf's alpha mask is now the box filter's cell rule.
+
+### Fixed
+
+- `convert`, `batch` and `compare` refuse (exit 2) to write an output over an input file, and
+  `batch` refuses inputs that share a stem; `--force` overrides both. `batch` skips
+  `*_preview`, `*_tileset` and `*_compare` images.
+- With a named palette (`--palette-name`) the outline snaps to the nearest palette entry
+  instead of adding a colour outside the hardware palette; a `_palette.hex` fed back through
+  `--palette-name` reproduces itself. `stats.outline_index` names the entry used.
+- `Config.replace(preset=...)` re-applies the new preset to every field the caller did not
+  set explicitly; previously the old preset's values were kept under the new label.
+- The output canvas is exactly the requested size: the outline ring is reserved inside it
+  (`stats.outline_margin`) instead of growing the image by 2 px; with `tileset=True` a
+  clipped outline is reported as `stats.outline_clipped`.
+- Dithering with gerstner (the default method) now dithers the smoothed superpixel means;
+  it was a no-op because the per-pixel values already sat on palette colours. `auto` dither
+  ignores transparent cells when measuring local detail, so silhouette edges dither too.
+- `batch` derives one scale from the largest frame's subject and gives every frame the same
+  canvas, so animation frames keep a constant size; `--scale N` and `--canvas WxH` are new.
+- Tile de-duplication requires both a mean ΔE below `tile_dedupe_tolerance` and every
+  pixel's ΔE below 10, and merges into the nearest tile; sparse details (stars, highlights)
+  are no longer erased or stamped into every cell. `stats.tiles_rerender_px_changed` reports
+  what the re-render changed. Tiling is 50–100× faster on large outputs.
+- Orphan removal keeps high-contrast single pixels (eyes, highlights): a region is merged
+  only when its ΔE to the replacement is below `orphan_max_delta` (25), and passes stop on
+  convergence instead of oscillating.
+- Gerstner/MCDA splits palette colours a few ΔE apart (the 3× growth rule collapsed them),
+  stops annealing when no pair grows instead of cooling to 1e-3, and starts at a temperature
+  scaled to the colour spread instead of its variance (about 40 % fewer iterations).
+- `key_bg` also keys out the anti-aliased fringe around a flat backdrop (`key_bg_fringe`
+  passes of coverage unmixing), so the halo no longer takes palette entries.
+- Kopf converges: the |Δμ| < 1e-3 criterion was unreachable even on a solid colour, so
+  every run hit `kopf_max_iters`; RMS criteria on Δμ, Δν and the σ-change fraction replace it.
+- 16-bit grayscale inputs are rescaled instead of clipped to white; EXIF orientation is
+  applied; animations use the first frame with a warning.
 
 ### Removed
 
@@ -187,7 +181,6 @@ All notable changes to this project are documented here. The format follows
 - `PRESETS` and `PRESET_LONGEST_EDGE` are read-only mappings.
 - `box.run` and `gerstner.run` raise `PixelforgeError` on an all-transparent mask.
 - `--debug` / `PIXELFORGE_DEBUG=1` prints the full traceback on CLI errors.
-
 
 ## [0.1.0]
 
