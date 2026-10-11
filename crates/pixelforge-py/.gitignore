@@ -1,0 +1,5 @@
+# The smoke tests' cache and the extension module `maturin develop` places next to the
+# Python sources.
+.pytest_cache/
+python/pixelforge/*.so
+python/pixelforge/*.pyd

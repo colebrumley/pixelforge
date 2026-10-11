@@ -1,20 +1,17 @@
-//! The Config field table (`pixelforge::config`) as Python objects, for
-//! tests/test_field_table.py to compare with pixelforge/config.py, and the Rust `Config`
-//! itself (canonical JSON, hash, errors, `replace`, palettes) for tests/test_config_native.py.
+//! The Rust `Config` as the Python class `NativeConfig` (wrapped by `pixelforge.Config`),
+//! and the field table and presets as Python values.
 //!
 //! Keyword arguments are converted to `pixelforge::config::Value` as they are, without any
-//! coercion, so the Rust `_coerce` sees what Python's would: ints beyond i64 as `BigInt`,
-//! NaN and infinities as floats, lists as lists, anything else as its `repr`.
+//! coercion, so the library's coercion and validation see what Python passed: ints beyond
+//! i64 as `BigInt`, NaN and infinities as floats, lists as lists, anything else as its
+//! `repr` (rejected with the library's message).
 
-use pixelforge::config::{Config, FieldValue, Value, FIELDS, PRESETS, PRESET_LONGEST_EDGE};
-use pixelforge::palette;
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pixelforge::config::{Config, FieldValue, Value, FIELDS, PRESETS};
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 
-fn field_value<'py>(py: Python<'py>, v: &FieldValue) -> PyResult<Bound<'py, PyAny>> {
-    to_py(py, &Value::from(*v))
-}
+use crate::package_error;
 
 pub(crate) fn to_py<'py>(py: Python<'py>, v: &Value) -> PyResult<Bound<'py, PyAny>> {
     Ok(match v {
@@ -35,8 +32,12 @@ pub(crate) fn to_py<'py>(py: Python<'py>, v: &Value) -> PyResult<Bound<'py, PyAn
     })
 }
 
+fn field_value<'py>(py: Python<'py>, v: &FieldValue) -> PyResult<Bound<'py, PyAny>> {
+    to_py(py, &Value::from(*v))
+}
+
 /// A Python object as a Config `Value`, unconverted.
-pub(crate) fn from_py(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
+fn from_py(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
     if obj.is_none() {
         return Ok(Value::None);
     }
@@ -86,42 +87,95 @@ fn kwargs(dict: &Bound<'_, PyDict>) -> PyResult<Vec<(String, Value)>> {
         .collect()
 }
 
-/// `pixelforge.errors.ConfigError(message)`.
-pub(crate) fn config_error_py(py: Python<'_>, message: &str) -> PyErr {
-    match py
-        .import("pixelforge.errors")
-        .and_then(|m| m.getattr("ConfigError"))
-        .and_then(|cls| cls.call1((message,)))
-    {
-        Ok(exc) => PyErr::from_value(exc),
-        Err(e) => e,
+fn config_error(py: Python<'_>, message: &str) -> PyErr {
+    package_error(py, "ConfigError", message)
+}
+
+/// A validated configuration (`Config::new`): field defaults ← preset ← the keyword
+/// arguments. Immutable; `replace` returns a new one.
+#[pyclass(name = "NativeConfig", module = "pixelforge._native", frozen)]
+pub struct NativeConfig {
+    pub(crate) config: Config,
+}
+
+#[pymethods]
+impl NativeConfig {
+    /// `NativeConfig(kwargs)`; `ConfigError` with the library's message if invalid.
+    #[new]
+    fn new(py: Python<'_>, kwargs: &Bound<'_, PyDict>) -> PyResult<Self> {
+        let config = Config::new(&self::kwargs(kwargs)?).map_err(|e| config_error(py, &e.0))?;
+        Ok(NativeConfig { config })
+    }
+
+    /// Every field and its value, in field order.
+    fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let out = PyDict::new(py);
+        for (name, v) in self.config.to_dict() {
+            out.set_item(name, to_py(py, &v)?)?;
+        }
+        Ok(out)
+    }
+
+    /// The canonical JSON embedded in every PNG (sorted keys, no whitespace).
+    fn canonical_json(&self) -> String {
+        self.config.canonical_json()
+    }
+
+    /// SHA-256 of the canonical JSON, the version and the palette's colours (the
+    /// `config_hash` of `_meta.json`); `ConfigError` if `palette_name` cannot be read.
+    fn hash(&self, py: Python<'_>) -> PyResult<String> {
+        self.config.hash().map_err(|e| config_error(py, &e.0))
+    }
+
+    /// A copy with `changes` applied; a changed preset is re-applied to every field that
+    /// was not given explicitly.
+    fn replace(&self, py: Python<'_>, changes: &Bound<'_, PyDict>) -> PyResult<NativeConfig> {
+        let config = self
+            .config
+            .replace(&kwargs(changes)?)
+            .map_err(|e| config_error(py, &e.0))?;
+        Ok(NativeConfig { config })
+    }
+
+    /// Load `palette_name` (file read and parse); `ConfigError` if it is unusable.
+    fn validate_palette(&self, py: Python<'_>) -> PyResult<()> {
+        self.config
+            .validate_palette()
+            .map_err(|e| config_error(py, &e.0))
+    }
+
+    /// `{"config": dict, "palette_sha256": str | None, "palette": [str] | None,
+    /// "version": str}`: everything needed to reproduce a run besides the input image.
+    fn provenance<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let p = self
+            .config
+            .provenance()
+            .map_err(|e| config_error(py, &e.0))?;
+        let config = PyDict::new(py);
+        for (name, v) in &p.config {
+            config.set_item(*name, to_py(py, v)?)?;
+        }
+        let out = PyDict::new(py);
+        out.set_item("config", config)?;
+        out.set_item("palette_sha256", p.palette_sha256)?;
+        out.set_item("palette", p.palette)?;
+        out.set_item("version", p.version)?;
+        Ok(out)
+    }
+
+    /// `(width, height)` of `canvas`, or None.
+    fn canvas_size(&self) -> Option<(i64, i64)> {
+        self.config.canvas_size()
     }
 }
 
-pub(crate) fn build(py: Python<'_>, kw: &Bound<'_, PyDict>) -> PyResult<Config> {
-    Config::new(&kwargs(kw)?).map_err(|e| config_error_py(py, &e.0))
-}
-
-/// Every Config field in declaration order, as dicts with keys name, type (the Python
-/// annotation, e.g. "int | None"), default, help, choices (list or None) and upper_bound
-/// (int or None).
+/// The field names in declaration order.
 #[pyfunction]
-fn config_fields(py: Python<'_>) -> PyResult<Bound<'_, PyList>> {
-    let out = PyList::empty(py);
-    for f in FIELDS {
-        let d = PyDict::new(py);
-        d.set_item("name", f.name)?;
-        d.set_item("type", f.python_type())?;
-        d.set_item("default", field_value(py, &f.default)?)?;
-        d.set_item("help", f.help)?;
-        d.set_item("choices", f.choices.map(|c| c.to_vec()))?;
-        d.set_item("upper_bound", f.upper_bound)?;
-        out.append(d)?;
-    }
-    Ok(out)
+fn config_fields() -> Vec<&'static str> {
+    FIELDS.iter().map(|f| f.name).collect()
 }
 
-/// {"presets": {name: {field: value}}, "longest_edge": {name: int}}, in table order.
+/// `{preset: {field: value}}`: each preset's overrides of the field defaults.
 #[pyfunction]
 fn config_presets(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     let presets = PyDict::new(py);
@@ -132,104 +186,12 @@ fn config_presets(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
         }
         presets.set_item(*name, d)?;
     }
-    let edges = PyDict::new(py);
-    for (name, edge) in PRESET_LONGEST_EDGE {
-        edges.set_item(*name, *edge)?;
-    }
-    let out = PyDict::new(py);
-    out.set_item("presets", presets)?;
-    out.set_item("longest_edge", edges)?;
-    Ok(out)
-}
-
-/// `Config(**kwargs).canonical_json()` computed in Rust; ConfigError if invalid.
-#[pyfunction]
-fn config_canonical_json(py: Python<'_>, kwargs: &Bound<'_, PyDict>) -> PyResult<String> {
-    Ok(build(py, kwargs)?.canonical_json())
-}
-
-/// `Config(**kwargs).hash()` computed in Rust; ConfigError if invalid, ValueError if the
-/// palette cannot be loaded.
-#[pyfunction]
-fn config_hash(py: Python<'_>, kwargs: &Bound<'_, PyDict>) -> PyResult<String> {
-    build(py, kwargs)?
-        .hash()
-        .map_err(|e| PyValueError::new_err(e.0))
-}
-
-/// `Config(**kwargs).to_dict()` computed in Rust (field order).
-#[pyfunction]
-fn config_to_dict<'py>(
-    py: Python<'py>,
-    kwargs: &Bound<'py, PyDict>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let out = PyDict::new(py);
-    for (name, v) in build(py, kwargs)?.to_dict() {
-        out.set_item(name, to_py(py, &v)?)?;
-    }
-    Ok(out)
-}
-
-/// `Config(**kwargs).replace(**c1).replace(**c2)...canonical_json()` computed in Rust;
-/// `changes` is one dict or a list of dicts applied in order.
-#[pyfunction]
-fn config_replace_canonical_json(
-    py: Python<'_>,
-    kwargs: &Bound<'_, PyDict>,
-    changes: &Bound<'_, PyAny>,
-) -> PyResult<String> {
-    let chain: Vec<Bound<'_, PyDict>> = if let Ok(d) = changes.cast::<PyDict>() {
-        vec![d.clone()]
-    } else {
-        changes
-            .try_iter()?
-            .map(|item| {
-                let item = item?;
-                let d = item.cast::<PyDict>().map_err(|_| {
-                    PyTypeError::new_err("changes must be a dict or a list of dicts")
-                })?;
-                Ok(d.clone())
-            })
-            .collect::<PyResult<_>>()?
-    };
-    let mut config = build(py, kwargs)?;
-    for d in &chain {
-        config = config
-            .replace(&self::kwargs(d)?)
-            .map_err(|e| config_error_py(py, &e.0))?;
-    }
-    Ok(config.canonical_json())
-}
-
-/// The ConfigError message `Config(**kwargs)` raises in Rust, or None when it is valid.
-#[pyfunction]
-fn config_error(kwargs: &Bound<'_, PyDict>) -> PyResult<Option<String>> {
-    Ok(Config::new(&self::kwargs(kwargs)?).err().map(|e| e.0))
-}
-
-/// The ConfigError message of `Config(**kwargs).validate_palette()` in Rust, or None when
-/// the palette loads (or there is none). ConfigError if the kwargs themselves are invalid.
-#[pyfunction]
-fn config_validate_palette(py: Python<'_>, kwargs: &Bound<'_, PyDict>) -> PyResult<Option<String>> {
-    Ok(build(py, kwargs)?.validate_palette().err().map(|e| e.0))
-}
-
-/// `palette.parse_hex_lines(name)` in Rust: lowercase 'rrggbb' lines; ValueError with
-/// Python's message if the palette cannot be loaded.
-#[pyfunction]
-fn palette_hex_lines(name: &str) -> PyResult<Vec<String>> {
-    palette::parse_hex_lines(name).map_err(|e| PyValueError::new_err(e.0))
+    Ok(presets)
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<NativeConfig>()?;
     m.add_function(wrap_pyfunction!(config_fields, m)?)?;
     m.add_function(wrap_pyfunction!(config_presets, m)?)?;
-    m.add_function(wrap_pyfunction!(config_canonical_json, m)?)?;
-    m.add_function(wrap_pyfunction!(config_hash, m)?)?;
-    m.add_function(wrap_pyfunction!(config_to_dict, m)?)?;
-    m.add_function(wrap_pyfunction!(config_replace_canonical_json, m)?)?;
-    m.add_function(wrap_pyfunction!(config_error, m)?)?;
-    m.add_function(wrap_pyfunction!(config_validate_palette, m)?)?;
-    m.add_function(wrap_pyfunction!(palette_hex_lines, m)?)?;
     Ok(())
 }

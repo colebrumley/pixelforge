@@ -1,0 +1,34 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "pixelforge"
+# Keep equal to the root Cargo.toml's [workspace.package] version
+# (crates/pixelforge/tests/version.rs checks).
+version = "0.2.0"
+description = "Python binding of pixelforge: deterministic conversion of raster images into 16-bit-style pixel art"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "Cole Brumley"}]
+keywords = ["pixel-art", "image-processing", "downscaling", "palette", "sprites", "tileset"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Multimedia :: Graphics",
+]
+dependencies = ["numpy>=1.26"]
+
+[project.urls]
+Homepage = "https://github.com/colebrumley/pixelforge"
+Repository = "https://github.com/colebrumley/pixelforge"
+
+[tool.maturin]
+manifest-path = "Cargo.toml"
+python-source = "python"
+module-name = "pixelforge._native"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
