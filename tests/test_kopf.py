@@ -146,3 +146,34 @@ def test_silhouette_does_not_saturate_sigma(preprocessed):
     assert pre.mask.shape == (64, 64)
     out = kopf.run(pre.lab, pre.mask, 16, 16, config)
     assert out.stats["sigma_capped"] < 0.1 * 16 * 16
+
+
+@pytest.mark.parametrize("n_in, n_out", [(1024, 256), (1000, 37), (64, 64), (5, 3), (300, 299)])
+def test_axis_selections_are_slices_when_downscaling(n_in, n_out):
+    # reduce() relies on every slot's runs and kernels being contiguous ranges (slices).
+    axis = kopf._Axis(n_in, n_out)
+    for runs, kernels in axis.sel:
+        assert isinstance(runs, slice) and isinstance(kernels, slice)
+        assert runs.stop - runs.start == kernels.stop - kernels.start
+
+
+@pytest.mark.parametrize("ufunc", [np.add, np.maximum])
+def test_reduce_slices_match_fancy_indexing(ufunc):
+    rng = np.random.default_rng(3)
+    layout = kopf._Layout(97, 83, 23, 19)
+    # The same layout with index-array selections exercises the np.ix_ fallback.
+    fallback = kopf._Layout(97, 83, 23, 19)
+    for axis in (fallback.y, fallback.x):
+        axis.sel = [(np.arange(len(axis.starts))[r], np.arange(axis.n_out)[k]) for r, k in axis.sel]
+    for jy, jx in layout.slots:
+        per_pixel = rng.random((97, 83))
+        start = rng.random((23, 19))
+        a, b = start.copy(), start.copy()
+        layout.reduce(per_pixel, jy, jx, a, ufunc)
+        fallback.reduce(per_pixel, jy, jx, b, ufunc)
+        assert np.array_equal(a, b)
+
+
+def test_contiguity_fallback_for_gapped_kernels():
+    runs, kernels = kopf._as_slices(np.array([0, 1, 2]), np.array([0, 2, 3]))
+    assert isinstance(runs, np.ndarray) and isinstance(kernels, np.ndarray)

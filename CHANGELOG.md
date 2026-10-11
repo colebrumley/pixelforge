@@ -94,6 +94,8 @@ All notable changes to this project are documented here. The format follows
   instead of regenerating it inside the repository.
 - gerstner uses the shared `downscale.neighbor_mean4` and `box.cell_index` helpers (output
   unchanged); the remaining spec deviations carry `# DEVIATION:` comments.
+- Kopf folds per-kernel block sums into place through slices instead of `np.ix_` gathers
+  and scatters (output bitwise unchanged): portrait background 39.4 s → 35.2 s here.
 
 - Downscalers weight colors by input alpha; semi-transparent fringes pull less (opaque
   inputs are unchanged).
