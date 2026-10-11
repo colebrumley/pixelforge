@@ -28,6 +28,23 @@ All notable changes to this project are documented here. The format follows
 - README: a photo sample (`docs/sample_photo.png`, from an AI-generated portrait) and guidance
   on source photos.
 
+### Changed
+
+- kopf's per-pixel loops run natively (`pixelforge._native`, `rust/src/kopf.rs`): the E-step
+  fused with the M-step sums, the C-step's directional and overlap sums, and the final
+  spatial-only recoloring of starved kernels. The per-kernel algebra, constraints and
+  convergence stay in Python. kopf is much faster, and multithreaded (timings: TODO, measure
+  on an idle machine). The numpy implementation is kept in
+  `pixelforge/downscale/_reference/kopf.py` for tests and benchmarks only.
+- New environment variable `PIXELFORGE_THREADS`: worker threads for the native kernels
+  (default: the available parallelism). It affects speed only; results are bitwise
+  identical for any thread count (fixed 32-row bands merged in a fixed order).
+- The native sums accumulate in a different order than numpy's block sums and use `libm`'s
+  `exp`, so kopf's internal values differ from the numpy version at ~1e-15 relative. No
+  output changed: every case of `scripts/snapshot_outputs.py compare` against the
+  pure-Python baseline is pixel-identical, and `scripts/update_golden.py` regenerated
+  `tests/golden.json` unchanged.
+
 ### Fixed
 
 - `convert`, `batch` and `compare` refuse (exit 2) to write an output over an input file, and

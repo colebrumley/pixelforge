@@ -52,6 +52,9 @@ Python 3.11+ and a stable Rust toolchain: pixelforge includes a compiled extensi
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # or: brew install rustup
 ```
 
+The compiled kernels use every core by default; set `PIXELFORGE_THREADS=N` to limit them
+(it changes speed only, never the output).
+
 Not published to PyPI; install straight from GitHub:
 
 ```bash
