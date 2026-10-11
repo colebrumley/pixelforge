@@ -285,6 +285,15 @@ number DESIGN.md still owes. Test suite: 576 passed in 54 s; `-m "not slow"` 566
 
 Acceptance: 576 tests pass; snapshot compare reports every case identical; CI green.
 
+Done 2026-10-10 (merged as 4157bba and the workspace merge after it): `crates/pixelforge`
+(library, `libm` only), `crates/pixelforge-py` (binding, unchanged `_native` API), release
+profile at the workspace root, CI and docs repointed; `tests/oracle/` (1.7 MB, 13 data files,
+recorded by `scripts/record_oracles.py`, reproduced byte for byte by `tests/test_oracle.py`);
+the field table in `crates/pixelforge/src/config.rs` with `tests/test_field_table.py`. 638
+tests pass; the 48 Phase 0 snapshot cases are identical; `cargo clippy -D warnings` clean.
+Two `ConfigError` branches are unreachable and have no oracle case (`_coerce`'s
+"unsupported field type" and the `seed` upper bound, which the 64-bit check fires first).
+
 ### Phase 2 — Config and colour
 
 - `config`: `Config`, presets, `_explicit`/`replace`, validation with today's messages,
