@@ -3,9 +3,8 @@
 //!
 //! Transcribed from `pixelforge/config.py`: the `Config` dataclass fields in declaration
 //! order (name, annotated type, default), `FIELD_HELP`, `FIELD_CHOICES`, `UPPER_BOUNDS`,
-//! `PRESETS` and `PRESET_LONGEST_EDGE`. While the Python package exists,
-//! `tests/test_field_table.py` compares this table with it field by field through
-//! `pixelforge._native.config_fields()` / `config_presets()`, so the two cannot drift.
+//! `PRESETS` and `PRESET_LONGEST_EDGE`. Until the Python package was removed (0.2.0),
+//! `tests/test_field_table.py` compared this table with it field by field.
 //!
 //! The `Config` itself (construction, coercion, validation with Python's messages,
 //! `replace`, palette resolution, canonical JSON, `hash`, `provenance`) is in the

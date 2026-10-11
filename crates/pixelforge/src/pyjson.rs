@@ -144,8 +144,8 @@ fn write(out: &mut String, value: &Json, layout: Layout, level: usize) {
 /// Python's `round(x, ndigits)` for a finite `x` and `ndigits >= 0`: the decimal string of
 /// `x` correctly rounded to `ndigits` places (half to even on an exact tie), read back as a
 /// float. Rust's fixed-precision formatting is exact and rounds ties to even, like
-/// CPython's `_Py_dg_dtoa` mode 3; `tests/test_pyjson_native.py` checks this against
-/// Python on random values and on exact ties.
+/// CPython's `_Py_dg_dtoa` mode 3; checked against Python on random values and on exact
+/// ties (by the former `tests/test_pyjson_native.py`, removed in 0.2.0).
 pub fn py_round(x: f64, ndigits: usize) -> f64 {
     if !x.is_finite() {
         return x;

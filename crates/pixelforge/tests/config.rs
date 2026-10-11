@@ -119,7 +119,7 @@ fn json_keys(text: &str) -> Vec<String> {
     keys
 }
 
-/// `pytest.raises(ValueError, match=name)`: building the config fails and the message
+/// Building the config fails (a `ValueError` in Python) and the message
 /// contains `name`.
 fn assert_err_mentions(pairs: &[(&str, Value)], name: &str) {
     let message = config_err(pairs);

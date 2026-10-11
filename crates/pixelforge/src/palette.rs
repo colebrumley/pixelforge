@@ -11,25 +11,13 @@ use std::fmt;
 use std::io::Read;
 
 /// The bundled palettes, sorted by name (`bundled_palettes()`), embedded from
-/// `pixelforge/palettes/*.hex`.
+/// `crates/pixelforge/palettes/*.hex`.
 pub const BUNDLED: &[(&str, &str)] = &[
-    (
-        "gameboy",
-        include_str!("../../../pixelforge/palettes/gameboy.hex"),
-    ),
-    (
-        "genesis",
-        include_str!("../../../pixelforge/palettes/genesis.hex"),
-    ),
-    ("nes", include_str!("../../../pixelforge/palettes/nes.hex")),
-    (
-        "pico8",
-        include_str!("../../../pixelforge/palettes/pico8.hex"),
-    ),
-    (
-        "snes15",
-        include_str!("../../../pixelforge/palettes/snes15.hex"),
-    ),
+    ("gameboy", include_str!("../palettes/gameboy.hex")),
+    ("genesis", include_str!("../palettes/genesis.hex")),
+    ("nes", include_str!("../palettes/nes.hex")),
+    ("pico8", include_str!("../palettes/pico8.hex")),
+    ("snes15", include_str!("../palettes/snes15.hex")),
 ];
 
 pub const PALETTE_SUFFIXES: &[&str] = &[".hex", ".gpl"];
@@ -635,7 +623,7 @@ mod tests {
 
     #[test]
     fn bundled_matches_the_package_directory() {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../pixelforge/palettes");
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/palettes");
         let mut names: Vec<String> = std::fs::read_dir(dir)
             .unwrap()
             .filter_map(|e| {

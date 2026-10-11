@@ -6,8 +6,8 @@
 //! (numpy/_core/src/umath/loops_utils.h.src), which is sequential below 8 elements, eight
 //! interleaved accumulators up to 128 elements, and a recursive split above that. Reductions
 //! over a leading axis (`arr.sum(axis=0)` on a C-contiguous array) add the rows in order, so
-//! they are plain sequential sums per column. Verified against numpy 2.4.6 in
-//! `tests/test_npsum.py` while the Python package exists.
+//! they are plain sequential sums per column. Verified against numpy 2.4.6 (by the former
+//! `tests/test_npsum.py`, removed with the Python package in 0.2.0).
 
 /// numpy's pairwise block size.
 const PW_BLOCKSIZE: usize = 128;

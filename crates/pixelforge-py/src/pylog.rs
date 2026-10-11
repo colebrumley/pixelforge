@@ -1,8 +1,8 @@
 //! Forwards the library's `log` records to Python's `logging`.
 //!
 //! The Rust target `pixelforge::kopf` becomes the Python logger `pixelforge.kopf`, a child
-//! of the `pixelforge` logger the CLI and the tests configure. The crate-wide maximum level
-//! mirrors that logger's effective level: binding functions that run long loops call
+//! of the `pixelforge` logger (the package adds a `NullHandler`; callers configure it).
+//! The crate-wide maximum level mirrors that logger's effective level: `run_loaded` calls
 //! `sync_level` on entry, so disabled levels cost nothing (no GIL, no formatting) and
 //! `logging` never changes a result (the records only read values).
 
@@ -62,29 +62,5 @@ pub fn sync_level(py: Python<'_>) -> PyResult<()> {
         l if l <= 30 => LevelFilter::Warn,
         _ => LevelFilter::Error,
     });
-    Ok(())
-}
-
-/// Emit one record from Rust (for `tests/test_logging_bridge.py`).
-#[pyfunction]
-fn log_probe(py: Python<'_>, target: &str, level: &str, message: &str) -> PyResult<()> {
-    sync_level(py)?;
-    let level = match level {
-        "error" => Level::Error,
-        "warning" => Level::Warn,
-        "info" => Level::Info,
-        "debug" => Level::Debug,
-        other => {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "log_probe: unknown level {other:?}"
-            )))
-        }
-    };
-    log::log!(target: target, level, "{message}");
-    Ok(())
-}
-
-pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(log_probe, m)?)?;
     Ok(())
 }

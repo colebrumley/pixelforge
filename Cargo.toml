@@ -3,8 +3,8 @@ members = ["crates/pixelforge", "crates/pixelforge-py", "xtask"]
 resolver = "2"
 
 [workspace.package]
-# Keep equal to pixelforge/version.py and pyproject.toml (tests/test_version.py checks).
-version = "0.1.0"
+# The single source of the version (`pixelforge --version`, `_meta.json`, `Config::hash`).
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 

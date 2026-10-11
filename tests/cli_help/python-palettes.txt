@@ -1,6 +1,0 @@
-Usage: pixelforge palettes [OPTIONS]
-
-  List the bundled palettes.
-
-Options:
-  --help  Show this message and exit.

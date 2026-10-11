@@ -1,82 +1,80 @@
 # pixelforge (Rust library)
 
-The Rust library behind pixelforge: plain Rust, no Python dependency (`libm`, `sha2`,
-`log`, and for image I/O `image`, `png`, `gif`, `tiff`, `miniz_oxide`). It holds
-the per-pixel hot loops of the downscalers, the Config field table and image I/O;
-orchestration and the CLI are still in Python while the migration in
-`docs/rust-migration-plan.md` proceeds. Python reaches it through the binding crate `crates/pixelforge-py` (PyO3 + the
-`numpy` crate), built as the extension module `pixelforge._native`.
+The pixelforge library and the `pixelforge` program (`src/main.rs`, `src/cli/`, behind the
+default `cli` feature): plain Rust, no Python (`libm`, `sha2`, `log`, for image I/O
+`image`, `png`, `gif`, `tiff`, `miniz_oxide`, and `clap` for the CLI). It was ported from
+the Python implementation stage by stage (`docs/rust-migration-plan.md`); the module
+documentation cites the Python files each module came from (`pixelforge/*.py`,
+`tests/test_*.py`), which were removed in 0.2.0 and are in the git history up to 1fff901.
+The optional Python binding is `crates/pixelforge-py`.
 
 Workspace layout (repo root):
 
-- `Cargo.toml`: the workspace, the shared version (`[workspace.package]`, kept equal to
-  `pixelforge/version.py` and `pyproject.toml`) and the release profile (profiles only take
-  effect in the root manifest). One `Cargo.lock` and `target/` at the root.
-- `crates/pixelforge`: this library.
-- `crates/pixelforge-py`: the binding (`cdylib` `pixelforge_native`, `#[pymodule] _native`).
-  Every `#[pyfunction]` checks dtypes, shapes and contiguity, raises `ValueError` naming the
-  argument, releases the GIL and calls the library.
+- `Cargo.toml`: the workspace, the version (`[workspace.package]`, the single source;
+  `crates/pixelforge-py/pyproject.toml` repeats it and `tests/version.rs` checks) and the
+  release profile (profiles only take effect in the root manifest). One `Cargo.lock` and
+  `target/` at the root.
+- `crates/pixelforge`: this library and the CLI; `palettes/` holds the bundled palettes.
+- `crates/pixelforge-py`: the optional Python binding (PyO3 + maturin, `cdylib`
+  `pixelforge_native`, `#[pymodule] _native`, and the `pixelforge` Python package in
+  `python/`); see its README.
+- `xtask/`: developer tooling (`cargo xtask fixtures|golden|bench|snapshot|gallery|help-record`).
 
 Modules:
 
 - `src/kopf.rs`: `em_step` (fused E-step + M-step sums), `c_step` (directional and overlap
-  sums) and `spatial_refill` (spatial-only recoloring of starved kernels); in Python
+  sums) and `spatial_refill` (spatial-only recoloring of starved kernels), once
   `kopf_em_step`, `kopf_c_step` and `kopf_spatial_refill`. They reduce over bands of
-  `BAND_ROWS` (32) rows merged in band order; the bands are part of the numerics. The numpy
-  versions are kept in `pixelforge/downscale/_reference/kopf.py`.
+  `BAND_ROWS` (32) rows merged in band order; the bands are part of the numerics.
+  `src/kopf_run.rs` is the control flow around them.
 - `src/gerstner.rs`: `slic_assign` (one modified-SLIC assignment pass, bitwise equal to the
   numpy `_assign`), `bilateral_filter` (the superpixel bilateral filter, `libm::exp`) and
   `superpixel_stats` (count, mass, colour and centre sums per superpixel, bitwise equal to
-  the seven `np.bincount` calls it replaces); same names in Python. `slic_assign` and
+  the seven `np.bincount` calls it replaced). `slic_assign` and
   `bilateral_filter` are per-pixel independent and run over fixed 8-row bands on
   `PIXELFORGE_THREADS` threads (default: available parallelism); those bands are not part
   of the numerics. `superpixel_stats` is single-threaded on purpose: it sums in row-major
-  pixel order like `np.bincount`, and per-band partial sums would change the rounding. The
-  numpy versions are kept in `pixelforge/downscale/_reference/gerstner.py`.
+  pixel order like `np.bincount`, and per-band partial sums would change the rounding.
+  `src/gerstner_run.rs` and `src/annealer.rs` are the rest of the method.
 - `src/color.rs`: sRGB <-> CIELAB (`rgb_to_lab`, `lab_to_rgb`, `rgb8_to_lab`, `lab_to_rgb8`),
   scikit-image 0.26's formulas (D65/2° white, its `xyz_from_rgb` matrix and the bits of its
   inverse) with `libm::pow`/`libm::cbrt`; `delta_e`, `nearest_index` (brute-force CIE76,
   ties to the lowest index), `palette_distance_matrix`, `hex_to_rgb8`, `rgb8_to_hex`, all over
   slices of interleaved triples. `tests/color_oracle.rs` checks them against `tests/oracle/`
-  (LAB within 1e-9, measured 6e-14; `lab_to_rgb8` exact). In Python `pixelforge.color`
-  calls `_native.rgb_to_lab`, `lab_to_rgb`, `rgb8_to_lab`, `lab_to_rgb8` and
-  `nearest_index`.
+  (LAB within 1e-9, measured 6e-14; `lab_to_rgb8` exact).
 - `src/parallel.rs`: `thread_count` and `run_bands` (see the determinism rules below).
 - `src/config.rs`: the Config field table (name, type, default, help, choices, upper bound
-  per field; the presets and their longest edge), the single source the Rust Config, JSON
-  and CLI will be built from. `tests/test_field_table.py` compares it with
-  `pixelforge/config.py` through `_native.config_fields()` / `config_presets()`.
-- `src/config/`: `Config` (port of `pixelforge/config.py`): `Config::new(&[(name, Value)])`
+  per field; the presets and their longest edge), the single source the Config, its JSON
+  and the CLI flags are built from.
+- `src/config/`: `Config`: `Config::new(&[(name, Value)])`
   (defaults ← preset ← explicit values, `_coerce`, `_validate` with Python's messages),
   `replace`, `to_dict`, `canonical_json`, `hash`, `provenance`, `palette_hex_lines`,
-  `palette_sha256`, `validate_palette`. `Value` is the uncoerced runtime value (the binding
-  fills it from a Python dict; JSON and CLI flags later). `tests/config_oracle.rs` checks
-  every case of `tests/oracle/config_corpus.json` and all 104 messages of
-  `config_errors.json`; `tests/test_config_native.py` compares the binding
-  (`_native.config_canonical_json`, `config_hash`, `config_to_dict`,
-  `config_replace_canonical_json`, `config_error`, `config_validate_palette`,
-  `palette_hex_lines`) with the live Python `Config`.
-- `src/palette.rs`: the bundled palettes (embedded from `pixelforge/palettes/*.hex` with
+  `palette_sha256`, `validate_palette`. `Value` is the uncoerced runtime value (from CLI
+  flags, a `--config` JSON file or a Python dict in the binding). `tests/config_oracle.rs`
+  checks every case of `tests/oracle/config_corpus.json` and all 104 messages of
+  `config_errors.json`.
+- `src/palette.rs`: the bundled palettes (embedded from `palettes/*.hex` with
   `include_str!`), `parse_hex`, `parse_gpl`, `load_palette` (bundled name, `.hex`/`.gpl`
   path relative to the working directory, `hex:` inline; 1–256 colours; regular files of at
   most 64 KiB of UTF-8, opened `O_NONBLOCK` and checked with `fstat`), `inline_name`,
   `parse_hex_lines`. File paths and OS errors are reported as Python 3.11's `pathlib` and
   `OSError` print them.
-- `src/io.rs`: image I/O (port of `pixelforge/io.py`): `open_regular` (the regular-file
+- `src/io.rs`: image I/O: `open_regular` (the regular-file
   open used for every input and palette file), `sha256_file`, `load` / `decode_bytes`
   (PNG, JPEG, GIF, WEBP, BMP, TIFF to RGBA8 as Pillow 12 decodes them, EXIF orientation,
   the pixel budget checked from the header, first frame plus a warning text),
   `from_image_array`, `from_rgba`, `indices_to_rgba`, `upscale_nearest`, `save_png` /
   `encode_png` (indexed PNG with PLTE, tRNS and sorted tEXt, RGBA above 256 entries) and
-  `read_png_text`. Everything but JPEG decoding is bitwise equal to the Pillow version
-  (`tests/test_io_native.py`); see the module documentation for the per-format rules.
+  `read_png_text`. Everything but JPEG decoding was verified bitwise equal to the Pillow
+  version; see the module documentation for the per-format rules.
+- `src/pipeline.rs`: `run` / `run_loaded` (load, preprocess, downscale, palette and
+  quantize, post-process, tiles), `Output::save` and the files it writes. The other stages:
+  `preprocess.rs`, `layout.rs`, `mask.rs`, `filters.rs`, `enhance.rs`, `downscale.rs`,
+  `boxfilter.rs`, `quantize.rs`, `postprocess.rs`, `tiles.rs`; `sheet.rs` draws the
+  `compare` sheets.
 - `src/pyrepr.rs`, `src/pyunicode.rs`: the Python text forms the above reproduce (see
-  below). `pyunicode/tables.rs` is generated by `scripts/gen_pyunicode_tables.py` from
-  Python 3.11's `unicodedata` (Unicode 14.0.0).
-
-The binding's own functions: `native_version`, `sum_f64` (sequential sum, a smoke test) and
-`thread_count` (the worker-thread count from `PIXELFORGE_THREADS`, recorded in
-`_meta.json`).
+  below). `pyunicode/tables.rs` was generated by `pyunicode/gen_tables.py` from Python
+  3.11's `unicodedata` (Unicode 14.0.0).
 
 Canonical JSON and Python's `repr` (Config hashes are embedded in every PNG, so these are
 byte-exact; `docs/rust-migration-plan.md`, Decision 7):
@@ -100,15 +98,14 @@ byte-exact; `docs/rust-migration-plan.md`, Decision 7):
   `\Uhhhhhhhh` (`str.isprintable`, from the generated table).
 - `hash()` is the SHA-256 of `canonical_json + "\n" + version`, plus
   `"\npalette:" + palette_sha256` with a palette; the version is the crate's
-  (`CARGO_PKG_VERSION`, kept equal to `pixelforge.__version__`).
+  (`CARGO_PKG_VERSION`, the workspace version).
 
-Build: maturin is the Python package's build backend, so `uv sync --locked` (or any
-`pip install`) compiles the binding and places `_native.abi3.so` inside `pixelforge/`. Needs
-a stable Rust toolchain. At the repo root: `cargo check -p pixelforge` and
-`cargo test -p pixelforge` need no Python; lint with `cargo fmt --all --check` and
-`cargo clippy --workspace --all-targets -- -D warnings`. A bare `cargo build` of the binding
-fails to link on macOS (Python symbols resolve at import time); use `uv sync` or
-`cargo check`.
+Build: a stable Rust toolchain. At the repo root: `cargo build --release -p pixelforge`
+(the program in `target/release/pixelforge`), `cargo test --workspace --all-features --
+--include-ignored` (the full suite, as CI runs it), `cargo xtask golden --check`; lint with
+`cargo fmt --all --check` and `cargo clippy --workspace --all-targets --all-features -- -D
+warnings`. The Python binding is built with maturin (`pip install ./crates/pixelforge-py`;
+see its README).
 
 Determinism rules (outputs must be byte-identical on every machine):
 
@@ -124,10 +121,8 @@ Determinism rules (outputs must be byte-identical on every machine):
   `tests/determinism_guard.rs` fails if a source file of either crate contains `.round()`,
   `f64::exp(`, `.exp()`, `.powf(`, `.powi(`, `.cbrt()`, `.ln(`, `.log(`, `.sin(`, `.cos(`,
   `.atan2(` or `.mul_add(` outside a comment; nothing is allow-listed.
-- Python passes C-contiguous arrays of the exact dtype and shape; the binding checks them and
-  raises `ValueError` naming the argument (see the helpers in
-  `crates/pixelforge-py/src/kopf.rs`) rather than relying on pyo3's conversion error. The
-  library functions take slices and assert their lengths.
+- The library functions take slices with explicit dimensions and assert their lengths;
+  the Python binding converts and checks numpy arrays before calling them.
 - Every reduction runs in a fixed order. Parallelism only over a fixed partition that does not
   depend on the thread count, merged in partition order: no atomics in the numerics, no
   dynamic chunking. `parallel.rs` provides it: `run_bands` runs one closure per band of
