@@ -4,6 +4,7 @@
 //! converts and checks arguments, releases the GIL and calls it. Determinism rules: see
 //! crates/pixelforge/README.md.
 
+mod boxfilter;
 mod color;
 mod config;
 mod downscale;
@@ -58,6 +59,10 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(kopf::kopf_em_step, m)?)?;
     m.add_function(wrap_pyfunction!(kopf::kopf_c_step, m)?)?;
     m.add_function(wrap_pyfunction!(kopf::kopf_spatial_refill, m)?)?;
+    m.add_function(wrap_pyfunction!(kopf::kopf_run, m)?)?;
+    m.add_function(wrap_pyfunction!(kopf::kopf_eigh, m)?)?;
+    m.add_function(wrap_pyfunction!(kopf::kopf_clamp_singular_values, m)?)?;
+    boxfilter::register(m)?;
     config::register(m)?;
     filters::register(m)?;
     color::register(m)?;
