@@ -1,15 +1,23 @@
-//! Python wrappers of the kopf kernels in `pixelforge::kopf`: argument checking (dtype,
-//! shape, contiguity, writeability, each failure a `ValueError` naming the argument), then
-//! the library call with the GIL released.
+//! Python wrappers of the kopf kernels in `pixelforge::kopf` and of the whole downscaler
+//! `pixelforge::kopf_run::run`: argument checking (dtype, shape, contiguity, writeability,
+//! each failure a `ValueError` naming the argument), then the library call with the GIL
+//! released.
 
 use numpy::{
     PyArrayDyn, PyArrayMethods, PyReadonlyArrayDyn, PyReadwriteArrayDyn, PyUntypedArrayMethods,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use pixelforge::kopf::{self, Kernels, EM_Q, NSLOT};
+use pixelforge::kopf_run as kopf_lib;
 use pixelforge::parallel::thread_count;
+
+use crate::boxfilter::inputs;
+use crate::color::shaped;
+use crate::config::build;
+use crate::downscale::downscaled_to_py;
 
 // ------------------------------------------------------------------ argument checking
 
@@ -364,4 +372,84 @@ pub fn kopf_spatial_refill<'py>(
         kopf::spatial_refill(hi, wi, &kernels, channels, pixel_mass, mass, color, threads)
     });
     Ok(())
+}
+
+// ------------------------------------------------------------------ the whole downscaler
+
+/// `kopf.run(lab, mask, out_width, out_height, Config(**config), weight)` as a dict with the
+/// fields of `Downscaled` (stats: iterations, converged, sigma_capped). Progress lines go to
+/// the `pixelforge.kopf` logger (DEBUG every iteration, INFO every 10th).
+#[pyfunction]
+#[pyo3(signature = (lab, mask, out_width, out_height, config, weight=None))]
+#[allow(clippy::too_many_arguments)]
+pub fn kopf_run<'py>(
+    py: Python<'py>,
+    lab: &Bound<'py, PyAny>,
+    mask: &Bound<'py, PyAny>,
+    out_width: usize,
+    out_height: usize,
+    config: &Bound<'py, PyDict>,
+    weight: Option<&Bound<'py, PyAny>>,
+) -> PyResult<Bound<'py, PyDict>> {
+    const F: &str = "kopf_run";
+    crate::pylog::sync_level(py)?;
+    let config = build(py, config)?;
+    let inp = inputs(F, lab, mask, out_width, out_height, weight)?;
+    let (l, m, w) = inp.slices(F)?;
+    let (h, wd) = (inp.h, inp.w);
+    let threads = thread_count();
+    let out = py.detach(|| kopf_lib::run(l, m, h, wd, out_width, out_height, &config, w, threads));
+    downscaled_to_py(py, out)
+}
+
+/// The covariances (N, 2, 2), flattened per matrix as `kopf_run` stores them.
+fn covariances(func: &str, cov: &Bound<'_, PyAny>) -> PyResult<Vec<[f64; 4]>> {
+    let s = shape_of::<f64>(func, "cov", "float64", cov, 3)?;
+    if s[1] != 2 || s[2] != 2 {
+        return Err(value_error(
+            func,
+            format!("cov must have shape (N, 2, 2), got {s:?}"),
+        ));
+    }
+    let arr = readonly::<f64>(func, "cov", "float64", cov, &s)?;
+    Ok(f64s(func, "cov", &arr)?
+        .chunks_exact(4)
+        .map(|c| [c[0], c[1], c[2], c[3]])
+        .collect())
+}
+
+/// `np.linalg.eigh` of N symmetric 2×2 matrices (lower triangle) as `kopf_run` computes it:
+/// (eigenvalues (N, 2) ascending, eigenvectors (N, 2, 2) as columns). For the parity tests.
+#[pyfunction]
+#[allow(clippy::type_complexity)]
+pub fn kopf_eigh<'py>(
+    py: Python<'py>,
+    cov: &Bound<'py, PyAny>,
+) -> PyResult<(Bound<'py, PyArrayDyn<f64>>, Bound<'py, PyArrayDyn<f64>>)> {
+    let cov = covariances("kopf_eigh", cov)?;
+    let n = cov.len();
+    let mut w = Vec::with_capacity(2 * n);
+    let mut v = Vec::with_capacity(4 * n);
+    for c in &cov {
+        let (vals, vecs) = kopf_lib::eigh2(c[0], c[2], c[3]);
+        w.extend(vals);
+        v.extend([vecs[0][0], vecs[0][1], vecs[1][0], vecs[1][1]]);
+    }
+    Ok((shaped(py, &[n, 2], w), shaped(py, &[n, 2, 2], v)))
+}
+
+/// `kopf._clamp_singular_values` on N covariances (N, 2, 2), as `kopf_run` computes it.
+/// For the parity tests.
+#[pyfunction]
+pub fn kopf_clamp_singular_values<'py>(
+    py: Python<'py>,
+    cov: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
+    let cov = covariances("kopf_clamp_singular_values", cov)?;
+    let n = cov.len();
+    let out: Vec<f64> = cov
+        .into_iter()
+        .flat_map(kopf_lib::clamp_singular_values)
+        .collect();
+    Ok(shaped(py, &[n, 2, 2], out))
 }

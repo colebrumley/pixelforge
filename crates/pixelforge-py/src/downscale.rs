@@ -8,7 +8,6 @@ use pixelforge::downscale::{Downscaled, StatValue};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-#[allow(dead_code)]
 fn array2<'py, T: numpy::Element>(
     py: Python<'py>,
     v: Vec<T>,
@@ -20,7 +19,6 @@ fn array2<'py, T: numpy::Element>(
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
 }
 
-#[allow(dead_code)]
 fn array3<'py>(
     py: Python<'py>,
     v: Vec<f64>,
@@ -34,8 +32,6 @@ fn array3<'py>(
 
 /// `Downscaled` → dict with the keys of `pixelforge.downscale.Downscaled` (None for the
 /// optional arrays) and `stats` as a dict in insertion order.
-// Used by the kopf and gerstner bindings (Phase 5); remove the allow when they land.
-#[allow(dead_code)]
 pub(crate) fn downscaled_to_py<'py>(
     py: Python<'py>,
     d: Downscaled,
