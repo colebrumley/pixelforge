@@ -8,6 +8,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Preprocessing's masks and geometry in Rust (Phase 4, part A of
+  `docs/rust-migration-plan.md`): `crates/pixelforge/src/mask.rs` (scipy's exact Euclidean
+  feature transform, `NI_EuclideanFeatureTransform` reproduced pass for pass so the opaque
+  pixel each transparent one copies from is scipy's, ties included; transparent filling,
+  4-connected labelling, 8-neighbour dilation, flat-background keying with fringe
+  unmixing, the subject mask, weight and crop box) and `crates/pixelforge/src/layout.rs`
+  (outline margin, `resolve_layout` with the tileset fit and its warning, `fit_crop`, the
+  integer repeat and its size limit, the box pre-reduction with numpy's summation order,
+  the seamless wrap padding). Bitwise identical to the Python functions on the EDT
+  oracle, 200 random masks, the fixtures and samples, and 1,728 configs × 14 input sizes;
+  exposed as `_native.edt`, `subject`, `resolve_layout`, `prereduce` and friends for
+  `tests/test_mask_native.py` and `tests/test_layout_native.py`. `preprocess.py` still runs
+  the Python versions.
 - The Config in Rust (`crates/pixelforge/src/config/`, Phase 2 of
   `docs/rust-migration-plan.md`): construction from presets and explicit values, Python's
   coercion and validation with byte-identical error messages, `replace`, the palette
