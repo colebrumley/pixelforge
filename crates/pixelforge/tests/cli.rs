@@ -346,6 +346,22 @@ fn batch_without_images_is_an_error() {
     );
 }
 
+/// tests/test_branches.py: a directory with no image (only a text file) is an error, and
+/// the output directory is not created.
+#[test]
+fn batch_on_empty_directory() {
+    let tmp = TempDir::new("empty-frames");
+    let empty = tmp.join("frames");
+    std::fs::create_dir(&empty).unwrap();
+    std::fs::write(empty.join("notes.txt"), "not an image").unwrap();
+    let r = invoke!("batch", &empty, "-o", &tmp.join("out"));
+    assert_eq!(r.code, 1, "{}", r.output());
+    assert!(r
+        .output()
+        .contains(&format!("no images found in {}", empty.display())));
+    assert!(!tmp.join("out").exists());
+}
+
 #[test]
 fn batch_frames_share_one_scale_and_canvas() {
     let tmp = TempDir::new("share-scale");
@@ -1299,6 +1315,46 @@ fn cli_max_input_pixels() {
     );
     assert_eq!(r.code, 1);
     assert!(r.output().contains("input budget of 100 pixels"));
+}
+
+/// The `PIXELFORGE_THREADS=3` part of test_pipeline.py's
+/// `test_meta_environment_and_rounded_palette_lab` (the rest is in tests/pipeline.rs, where
+/// the environment is not changed in process): `_meta.json` records the thread count, and
+/// the environment is not hashed.
+#[test]
+fn meta_environment_threads_from_env() {
+    let tmp = TempDir::new("threads-env");
+    let mut cmd = pixelforge();
+    cmd.env("PIXELFORGE_THREADS", "3");
+    let r = run_with(
+        cmd,
+        &[
+            &"convert",
+            &fixture("circle_alpha"),
+            &"-o",
+            &tmp.path(),
+            &"--method",
+            &"box",
+            &"--out-height",
+            &"16",
+            &"--palette-size",
+            &"4",
+        ],
+    );
+    assert_eq!(r.code, 0, "{}", r.output());
+    let meta = read_json(&tmp.join("circle_alpha_meta.json"));
+    let env = meta["environment"].as_object().unwrap();
+    let mut keys: Vec<&str> = env.keys().map(String::as_str).collect();
+    keys.sort();
+    assert_eq!(keys, ["native", "platform", "threads"]);
+    assert_eq!(env["threads"], 3);
+    let config = Config::new(&[
+        ("method".to_string(), Value::str("box")),
+        ("out_height".to_string(), Value::Int(16)),
+        ("palette_size".to_string(), Value::Int(4)),
+    ])
+    .unwrap();
+    assert_eq!(meta["config_hash"], config.hash().unwrap().as_str());
 }
 
 // ---------------------------------------------------------------------------------------
