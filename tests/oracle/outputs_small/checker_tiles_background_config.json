@@ -1,0 +1,4 @@
+{
+ "fixture": "tests/fixtures/checker_tiles.png",
+ "kwargs": {"denoise": "none", "key_bg": false, "method": "box", "out_height": 32, "out_width": 32, "preset": "background"}
+}

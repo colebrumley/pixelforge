@@ -1,0 +1,47 @@
+{
+ "type": "map",
+ "version": "1.10",
+ "orientation": "orthogonal",
+ "renderorder": "right-down",
+ "infinite": false,
+ "width": 2,
+ "height": 2,
+ "tilewidth": 16,
+ "tileheight": 16,
+ "nextlayerid": 2,
+ "nextobjectid": 1,
+ "layers": [
+  {
+   "id": 1,
+   "name": "background",
+   "type": "tilelayer",
+   "x": 0,
+   "y": 0,
+   "width": 2,
+   "height": 2,
+   "opacity": 1,
+   "visible": true,
+   "data": [
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "tilesets": [
+  {
+   "firstgid": 1,
+   "name": "checker_tiles_background",
+   "image": "checker_tiles_background_tileset.png",
+   "imagewidth": 16,
+   "imageheight": 16,
+   "columns": 1,
+   "tilecount": 1,
+   "tilewidth": 16,
+   "tileheight": 16,
+   "margin": 0,
+   "spacing": 0
+  }
+ ]
+}

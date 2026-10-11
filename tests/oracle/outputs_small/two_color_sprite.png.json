@@ -1,0 +1,26 @@
+{
+ "mode": "P",
+ "palette": [0,0,255,255,0,0,31,14,115,0,0,0],
+ "pixels": [
+  [3,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,2],
+  [3,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3]
+ ],
+ "pixels_sha256": "2226582c951809b0216d7ec5103351df103913c650533eec8e4ae1cc6076e8a0",
+ "size": [16,16],
+ "text": {"pixelforge:config": "{\"alpha_threshold\":128,\"canvas\":null,\"crop_to_alpha\":true,\"denoise\":\"none\",\"denoise_sigma_color\":0.08,\"denoise_sigma_spatial\":2.0,\"dither\":\"none\",\"dither_strength\":0.5,\"dither_variance_threshold\":4.0,\"enhance\":0.0,\"enhance_black\":null,\"enhance_radius\":2.0,\"enhance_white\":null,\"fit\":\"pad\",\"fix_jaggies\":true,\"g_T_final\":1.0,\"g_alpha\":0.7,\"g_bilateral_sigma_color\":10.0,\"g_bilateral_sigma_spatial\":1.5,\"g_eps_cluster\":0.25,\"g_eps_palette\":1.0,\"g_laplacian\":0.4,\"g_m\":45.0,\"g_max_iters\":2000,\"ink\":0.0,\"key_bg\":false,\"key_bg_fringe\":3,\"key_bg_tolerance\":0.08,\"kopf_max_iters\":50,\"kopf_tol\":0.001,\"method\":\"box\",\"orphan_max_delta\":25.0,\"orphan_min_region\":2,\"out_height\":16,\"out_width\":16,\"outline\":\"auto\",\"outline_darken\":0.55,\"palette_name\":null,\"palette_ramps\":true,\"palette_size\":16,\"palette_source\":\"auto\",\"prereduce_max_ratio\":8,\"preset\":\"sprite\",\"remove_bg\":false,\"remove_orphans\":true,\"saturation_beta\":1.1,\"scale\":null,\"scale_preview\":8,\"seamless\":false,\"seed\":null,\"tile_dedupe_tolerance\":2.0,\"tile_size\":16,\"tileset\":false,\"tileset_columns\":0,\"transparent_index\":\"last\"}", "pixelforge:input_sha256": "1556af85a05340f35d40ee8329308794559e862dc5bb3440edba0eed3c9419b3"},
+ "transparency": 3
+}
