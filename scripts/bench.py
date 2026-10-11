@@ -51,6 +51,12 @@ def resolve_input(name: str) -> Path:
     return path
 
 
+def display_path(path: Path) -> str:
+    """Repository-relative for files in the checkout (fixtures), absolute otherwise."""
+    path = path.resolve()
+    return str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path)
+
+
 def input_label(path: Path) -> str:
     return path.stem
 
@@ -156,7 +162,7 @@ def run_case(path: Path, preset: str, method: str, repeat: int) -> dict:
     total, result = best
     stats = result.stats
     method_stats = stats.get("method", {})
-    return {"input": str(path), "label": input_label(path), "preset": preset, "method": method,
+    return {"input": display_path(path), "label": input_label(path), "preset": preset, "method": method,
             "config_hash": result.config.hash(), "total_s": round(total, 4),
             "timings": dict(stats["timings"]), "iterations": int(stats["iterations"]),
             "method_stats": {k: v for k, v in method_stats.items()
