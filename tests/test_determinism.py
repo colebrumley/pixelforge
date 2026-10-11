@@ -106,9 +106,9 @@ def test_seed_only_affects_gerstner(fixture_path, tmp_path, method, record_prope
 ROOT = Path(__file__).resolve().parent.parent
 _ENVIRONMENTS = (
     {"PYTHONHASHSEED": "0", "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1",
-     "MKL_NUM_THREADS": "1"},
+     "MKL_NUM_THREADS": "1", "PIXELFORGE_THREADS": "1"},
     {"PYTHONHASHSEED": "12345", "OPENBLAS_NUM_THREADS": "4", "OMP_NUM_THREADS": "4",
-     "MKL_NUM_THREADS": "4"},
+     "MKL_NUM_THREADS": "4", "PIXELFORGE_THREADS": "3"},
 )
 # Sprite (no tileset) and background (tileset + tilemap .json/.tmj/.csv), both at 16 px.
 _SUBPROCESS_PRESETS = {"sprite": ["--out-width", "16"],
@@ -138,7 +138,7 @@ def _convert_in_subprocess(path, outdir, method, preset, env_overrides):
 @pytest.mark.parametrize("method", METHODS)
 def test_outputs_identical_across_processes_and_environments(fixture_path, tmp_path, method,
                                                               preset):
-    """Fresh interpreters with different hash seeds and BLAS/OpenMP thread counts agree on
+    """Fresh interpreters with different hash seeds and BLAS/OpenMP/native thread counts agree on
     every output file, apart from the timings and environment recorded in _meta.json."""
     runs = [_convert_in_subprocess(fixture_path("two_color"), tmp_path / str(i), method,
                                    preset, env)
