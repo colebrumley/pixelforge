@@ -1,4 +1,4 @@
-//! Determinism rules (crates/pixelforge/README.md, plan Decision 6): transcendental
+//! Determinism rules (crates/pixelforge/README.md): transcendental
 //! functions come from the `libm` crate and rounding to integers is `round_ties_even`.
 //! This test fails if any source file of the library or the binding calls the platform
 //! versions or the half-away-from-zero `round` outside a comment. Nothing is allow-listed.
@@ -92,7 +92,7 @@ fn no_platform_math_or_half_away_rounding() {
     }
     assert!(
         findings.is_empty(),
-        "use libm::* / f64::round_ties_even instead (plan Decision 6):\n{}",
+        "use libm::* / f64::round_ties_even instead (crates/pixelforge/README.md):\n{}",
         findings.join("\n")
     );
 }

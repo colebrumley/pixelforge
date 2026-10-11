@@ -331,9 +331,6 @@ options):
   full determinism contract, timings, and every deliberate deviation from the spec.
 - [REQUIREMENTS.md](REQUIREMENTS.md) — the specification the original Python prototype was
   built from (historical).
-- [docs/rust-port-plan.md](docs/rust-port-plan.md) and
-  [docs/rust-migration-plan.md](docs/rust-migration-plan.md) — how the hot loops, then the
-  whole program, were ported from Python to Rust.
 - [crates/pixelforge/README.md](crates/pixelforge/README.md) — the crate layout and the
   numerical rules for contributors.
 

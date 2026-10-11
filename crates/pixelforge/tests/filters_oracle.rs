@@ -3,7 +3,7 @@
 //! skimage_bilateral.json). Uniform and median filters and percentiles are bitwise; the
 //! Gaussian filter and the bilateral differ from the recordings in the last bits only: the
 //! recording machine's scipy and scikit-image builds contract part of their `acc += a * b`
-//! loops into fused multiply-adds (the port does not, Decision 6), and numpy's `exp` and
+//! loops into fused multiply-adds (the port does not), and numpy's `exp` and
 //! `libm::exp` differ in a few kernel values' last bit.
 
 use std::path::PathBuf;

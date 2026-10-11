@@ -1,5 +1,5 @@
 //! The Config field table: the single source of truth that the Rust `Config`, its canonical
-//! JSON, the CLI flags and `--sweep` are built from (docs/rust-migration-plan.md, Decision 8).
+//! JSON, the CLI flags and `--sweep` are built from.
 //!
 //! Transcribed from `pixelforge/config.py`: the `Config` dataclass fields in declaration
 //! order (name, annotated type, default), `FIELD_HELP`, `FIELD_CHOICES`, `UPPER_BOUNDS`,

@@ -2,7 +2,7 @@
 //! output size and canvas layout (`resolve_layout` with the tileset fit), the `fit="crop"`
 //! box, the integer repeat of small inputs, the box pre-reduction of large ones and the
 //! seamless wrap padding. Ported from `pixelforge/preprocess.py`; every result is bitwise
-//! identical to the Python version (docs/rust-migration-plan.md, Section 4.2).
+//! identical to the Python version.
 //!
 //! Python's `round()` is `f64::round_ties_even`, `//` on the non-negative sizes here is
 //! integer division, `math.ceil(a / b)` is the ceiling of the float quotient. Images are

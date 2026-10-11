@@ -3,7 +3,7 @@
 //! assignment, one statistics pass, the centre smoothing, the superpixel bilateral, one
 //! annealer step), the transparent-pixel attribution and the result.
 //!
-//! Ported operation for operation from the Python (Phase 5): sums over pixels are
+//! Ported operation for operation from the Python: sums over pixels are
 //! sequential in row-major order like `np.bincount`, `coverage.sum()` is numpy's pairwise
 //! sum, and the palette half lives in [`crate::annealer`] (where the replaced BLAS/LAPACK
 //! routines are listed).

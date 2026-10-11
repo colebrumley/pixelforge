@@ -1,4 +1,4 @@
-//! The command-line options, generated from the Config field table (Decision 8), and the
+//! The command-line options, generated from the Config field table, and the
 //! value parsers that reproduce click's conversions: `int()` / `float()` on the text,
 //! `click.Path` checks, `IntRange(min=1)`.
 //!

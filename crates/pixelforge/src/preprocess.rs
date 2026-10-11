@@ -12,7 +12,7 @@
 //!
 //! `remove_bg` is not applied by `run`: it takes the alpha as given and the caller mats it
 //! first. `pipeline::run_loaded` does so with [`remove_background_external`] (the `rembg`
-//! command, docs/rust-migration-plan.md Decision 5) unless its caller says the alpha is
+//! command) unless its caller says the alpha is
 //! already matted (the Python wrapper runs the `rembg` package itself and passes the result).
 
 use std::fmt;
@@ -281,7 +281,7 @@ fn encode_rgba_png(rgba: &[u8], h: usize, w: usize) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// `preprocess.remove_background` through the external `rembg` command (Decision 5): the
+/// `preprocess.remove_background` through the external `rembg` command: the
 /// image (`rgb` `h * w * 3` in `[0, 1]`, rounded half to even to 8 bits as Python's
 /// `np.round`, with `alpha`) is written to a temporary RGBA PNG, `rembg i IN OUT` runs on it,
 /// and the alpha channel of its output is returned (`h * w`). A missing `rembg` executable is

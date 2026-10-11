@@ -4,6 +4,5 @@ gallery/
 out/
 samples/
 bench/snapshots/
-bench/snapshots-rust/
 __pycache__/
 *.pyc

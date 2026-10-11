@@ -106,8 +106,7 @@ never what it computes.
 
 **Numerics.** Every float routine was ported formula for formula from the last Python
 version (9f53516, which reported 0.1.0) and compared with it on the fixtures, the samples
-and a 48-case snapshot matrix before the Python code was removed
-(`docs/rust-migration-plan.md` has the per-stage record).
+and a 48-case snapshot matrix before the Python code was removed.
 The rules that make the results the same on every machine:
 
 - float64 throughout. Every transcendental function (`exp`, `expm1`, `log`, `pow`, `cbrt`,

@@ -1,5 +1,4 @@
-//! The `compare` command's library pieces (docs/rust-migration-plan.md, Section 4.1
-//! "compare" and Phase 7), ported from `pixelforge/cli.py`: the side-by-side sheet, the
+//! The `compare` command's library pieces, ported from `pixelforge/cli.py`: the side-by-side sheet, the
 //! `--prepass` columns, `--sweep` parsing, the per-cell `flags` text, the preview-scale cap
 //! and the labelled proof sheet.
 //!

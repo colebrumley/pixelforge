@@ -1,4 +1,4 @@
-//! The canonical JSON writer (docs/rust-migration-plan.md, Decision 7): exactly
+//! The canonical JSON writer: exactly
 //! `json.dumps(obj, sort_keys=True, separators=(",", ":"))` for a flat object of Config
 //! values. Keys sorted by code point (byte order of UTF-8 is the same order), strings with
 //! `ensure_ascii` escaping, `true`/`false`/`null`, integers in decimal, floats as Python's

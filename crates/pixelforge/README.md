@@ -3,7 +3,7 @@
 The pixelforge library and the `pixelforge` program (`src/main.rs`, `src/cli/`, behind the
 default `cli` feature): plain Rust, no Python (`libm`, `sha2`, `log`, for image I/O
 `image`, `png`, `gif`, `tiff`, `miniz_oxide`, and `clap` for the CLI). It was ported from
-the Python implementation stage by stage (`docs/rust-migration-plan.md`); the module
+the Python implementation stage by stage; the module
 documentation cites the Python files each module came from (`pixelforge/*.py`,
 `tests/test_*.py`), which were removed in 0.2.0 and are in the git history up to 1fff901.
 The optional Python binding is `crates/pixelforge-py`.
@@ -80,7 +80,7 @@ Modules:
   3.11's `unicodedata` (Unicode 14.0.0).
 
 Canonical JSON and Python's `repr` (Config hashes are embedded in every PNG, so these are
-byte-exact; `docs/rust-migration-plan.md`, Decision 7):
+byte-exact):
 
 - `Config::canonical_json()` is `json.dumps(config.to_dict(), sort_keys=True,
   separators=(",", ":"))`: keys sorted by code point, no whitespace, `true`/`false`/`null`,
