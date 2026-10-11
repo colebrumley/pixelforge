@@ -8,6 +8,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The behavioural Python tests ported to Rust (Phase 8, part A of
+  `docs/rust-migration-plan.md`). There are new integration test files in
+  `crates/pixelforge/tests/`, one per area: `config`, `color`, `palette`, `postprocess`,
+  `quantize`, `tiles`, `io`, `preprocess`, `downscalers` (box, kopf, gerstner), `pipeline`,
+  `determinism`, `golden`, `parallel` and `version`. The `test_branches.py` cases are spread
+  over them, and `cli.rs` gains the empty-batch case and the `PIXELFORGE_THREADS` meta case.
+  `golden.rs` recomputes every `tests/golden.json` digest as `scripts/update_golden.py`
+  does. `determinism.rs` checks two runs for byte-identical output files and kernels for
+  bitwise-equal results at 1, 2, 3 and 8 threads. The `slow` marker becomes `#[ignore]`.
+  `crates/pixelforge/tests/README.md` maps each Python file to its Rust file and lists what
+  was not ported, with the reason: parity tests against the Python code and numpy/PIL-only
+  checks. The Rust suite grows from 213 to 416 tests (2 ignored by default).
 - The `compare` command in Rust and the CLI parity sweep (Phase 7, part C of
   `docs/rust-migration-plan.md`): `pixelforge compare` writes the side-by-side sheet and each
   method's outputs, or with `--prepass` / `--sweep` only the labelled proof sheet, with the
