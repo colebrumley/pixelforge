@@ -33,8 +33,10 @@ thread, gerstner similar, with skimage's 1.35 s bilateral denoise in preprocess 
    bit-identical (summation order), and the contract is byte-identical PNGs. The pure-Python
    kernels are kept as a *reference* for tests and benchmarks, never selected at runtime.
 2. **PyO3 + maturin**, crate at `rust/` (or `native/`), Python module `pixelforge._native`.
-   `abi3-py311` so one wheel per platform covers 3.11–3.13. Orchestration, config, I/O,
-   preprocess, palette, postprocess, tiles stay in Python.
+   Distribution is the GitHub repo only: no wheels, no PyPI. `pip install git+…` and
+   `uv tool install git+…` build the extension from source, so a Rust toolchain (`cargo`,
+   stable) becomes an install requirement alongside Python 3.11+. Orchestration, config,
+   I/O, preprocess, palette, postprocess, tiles stay in Python.
 3. **Determinism rules for Rust code** (amend DESIGN.md §Determinism and REQUIREMENTS.md §3.2):
    - float64 only; no `fast-math`, no `target-cpu=native`; rustc does not contract to FMA on
      its own, so leave it that way (no `mul_add` unless used unconditionally).
@@ -78,13 +80,16 @@ Acceptance: `bench.py` reproduces the table above within noise.
 - `rust/Cargo.toml`, `rust/src/lib.rs` with a `#[pymodule] _native` exposing one trivial
   function; `pyproject.toml` switches `build-system` to maturin (`python-source = "."`,
   `module-name = "pixelforge._native"`), `uv sync --locked` builds it in a dev checkout.
-- CI: add a `wheels` job (maturin-action) building macOS arm64 and manylinux x86-64 abi3
-  wheels, run the test matrix against the built wheel, upload wheels as workflow artifacts
-  and, on tags, as GitHub release assets. Keep the existing lint/test jobs.
-- README: install from the release wheel URL for users without a Rust toolchain; the git
-  URL install now needs `cargo`. `uv.lock` updated.
+- CI: install the stable Rust toolchain (`dtolnay/rust-toolchain@stable`) in the existing
+  test matrix so `uv sync --locked` builds the extension on ubuntu and macOS arm64; add
+  `cargo fmt --check` and `cargo clippy -- -D warnings` to the lint job. No wheel or release
+  jobs. Cache `~/.cargo` and `target/` to keep CI time down.
+- README: the install section states the Rust toolchain requirement (`rustup` one-liner),
+  keeps the same `uv tool install git+…` / `pip install git+…` commands, and notes that the
+  first install compiles for a minute or two. `uv.lock` updated.
 
-Acceptance: CI green on all four matrix entries with the extension imported in a test.
+Acceptance: CI green on all four matrix entries with the extension imported in a test, and
+a fresh `uv tool install git+<repo>@<branch>` works on a machine with only rustup installed.
 
 ### Phase 2 — kopf
 
@@ -132,11 +137,11 @@ Acceptance: portrait gerstner ≤ 5 s single thread, ≤ 2 s at 8 threads.
 - Memory: no (16, hi, wi) γ array any more; check peak RSS on the 1024² case drops
   accordingly and raise `io.MAX_INPUT_PIXELS` only if the user wants it.
 
-### Phase 5 — Docs and release
+### Phase 5 — Docs and version bump
 
 - DESIGN.md: determinism contract amendments, new timings table, a section on the native
   layer and how the Python reference is used in tests.
-- README: install paths, toolchain note, `PIXELFORGE_THREADS`.
+- README: install from the repo with the toolchain requirement, `PIXELFORGE_THREADS`.
 - CHANGELOG.md entries per phase. Version bump (this changes `Config.hash()`, which is why
   the goldens change anyway).
 
@@ -152,7 +157,9 @@ Acceptance: portrait gerstner ≤ 5 s single thread, ≤ 2 s at 8 threads.
   evidently is too for these inputs (shared goldens pass on both CI OSes today). After the
   port the Rust goldens must pass on both; if they do not, the culprit is almost certainly a
   stray `f64::exp`/`powf` or an FMA contraction, both avoidable.
-- **Toolchain for contributors and git-URL installs.** Mitigated by CI wheels; documented.
+- **Toolchain for contributors and git-URL installs.** Accepted: the repo is the only
+  distribution channel, so every install compiles from source. Documented in the README;
+  CI exercises the same path on both platforms.
 - **Behavioural drift.** All numerics are the same formulas; tolerance tests against the kept
   Python reference catch mistakes, and the golden regeneration is reviewed diff by diff
   (`scripts/update_golden.py` output + differing-pixel counts).
