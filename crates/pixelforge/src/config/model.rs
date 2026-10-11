@@ -439,6 +439,15 @@ impl Config {
         Ok(Some(self.palette_lines.get_or_init(|| lines).clone()))
     }
 
+    /// Fill the palette cache with lines the caller already resolved (the Python Config's
+    /// cache), so a run uses the same reading of the palette file as the caller's
+    /// `hash()`. No effect without `palette_name` or once the cache is filled.
+    pub fn seed_palette_hex_lines(&self, lines: Vec<String>) {
+        if self.palette_name.is_some() {
+            let _ = self.palette_lines.set(lines);
+        }
+    }
+
     /// SHA-256 of the resolved palette's newline-joined hex lines, or `None`.
     pub fn palette_sha256(&self) -> Result<Option<String>, PaletteError> {
         Ok(self

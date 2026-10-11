@@ -19,7 +19,7 @@ use pixelforge::io::{self, ArrayData, IoError, Loaded, TransparentIndex};
 use crate::color::py_shape;
 use crate::mask::pixelforge_error;
 
-fn io_error(py: Python<'_>, err: IoError) -> PyErr {
+pub(crate) fn io_error(py: Python<'_>, err: IoError) -> PyErr {
     match err {
         IoError::Pixelforge(e) => pixelforge_error(py, "PixelforgeError", &e.0),
         IoError::Os { error, path } => match error.raw_os_error() {
