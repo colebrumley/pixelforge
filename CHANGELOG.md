@@ -107,6 +107,25 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The pipeline is native (migration plan Phase 6, part B): `pixelforge.run` / `run_loaded`
+  call `crates/pixelforge/src/pipeline.rs` (`pipeline::run`, `run_loaded`) through
+  `_native.pipeline_run` / `pipeline_run_loaded`, and `Result.save` writes every output file
+  from Rust (`Output::save`, `_native.result_save`); `output_paths` and
+  `uses_gerstner_palette` are native too. Outputs are unchanged: every Result field, the
+  stats (key order included), the log lines and every saved file match the former Python
+  orchestration (kept as `tests/pipeline_reference.py`; `tests/test_pipeline_native.py`),
+  the 48-case snapshot matrix is identical and the goldens are unchanged, and the new Rust
+  test `crates/pixelforge/tests/pipeline_oracle.rs` reproduces `tests/oracle/outputs_small`
+  with no Python involved. `remove_bg` in the Rust library runs an external `rembg i IN OUT`
+  command (Decision 5; a missing command is the same `ConfigError`, and `_meta.json`
+  records `rembg --version` with `onnxruntime: null`); the Python package still uses the
+  `rembg` package and passes the matted alpha on (`alpha_matted`), recording the package
+  versions as before. `_meta.json`'s `environment` from the Python package keeps its keys;
+  the Rust library's own `environment()` has `platform` (spelled as Python's
+  `sys.platform` + `platform.machine()`), `threads` and `native` (the crate version).
+  Tests that spied on `palette.mcda`, `downscale.get`, `postprocess.run` or `tiles.extract`
+  through the pipeline now observe them in `tests/pipeline_reference.py` (or the stage log
+  line), since the native pipeline no longer calls the Python stage modules.
 - Image I/O is native (migration plan Phase 6, part A): `pixelforge.io`'s `load`,
   `open_regular`, `sha256_file`, `from_image` (arrays; PIL images are converted in Python as
   before, then hashed natively), `from_rgba`, `indices_to_rgba`, `upscale_nearest`,
