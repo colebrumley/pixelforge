@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import os
+import shlex
 import sys
 import traceback
 from dataclasses import fields
@@ -301,6 +302,27 @@ def shared_scale(paths: list[Path], config: Config,
                           canvas=f"{canvas[0]}x{canvas[1]}")
 
 
+def shared_levels(paths: list[Path], config: Config,
+                  max_pixels: int | None = None) -> Config:
+    """`config` with one `enhance_black` / `enhance_white` for every frame, unless both are set.
+
+    The pre-pass otherwise measures each frame's own brightness range, so a flash in one frame
+    would change the brightness of everything else in it.
+    """
+    if (config.enhance <= 0 and config.ink <= 0) or None not in (config.enhance_black,
+                                                                 config.enhance_white):
+        return config
+    samples = []
+    for path in paths:
+        loaded = io.load(path, io.MAX_INPUT_PIXELS if max_pixels is None else max_pixels)
+        value = preprocess.subject_brightness(loaded.rgb, loaded.alpha, config)
+        samples.append(value[::max(1, math.ceil(len(value) / BATCH_PIXELS_PER_IMAGE))])
+    black, white = preprocess.enhance_levels(np.concatenate(samples), config)
+    if not black < white:    # one flat color: nothing to stretch in any frame
+        return config
+    return config.replace(enhance_black=black, enhance_white=white)
+
+
 @cli.command()
 @click.argument("input_dir", type=click.Path(file_okay=False))
 @click.option("-o", "--outdir", type=click.Path(file_okay=False), default="out",
@@ -311,8 +333,8 @@ def shared_scale(paths: list[Path], config: Config,
 def batch(input_dir, outdir, force, config_path, max_input_pixels, **flags):
     """Convert a directory's images with a shared palette.
 
-    Every image in INPUT_DIR is converted with ONE shared palette and ONE scale, so animation
-    frames stay consistent.
+    Every image in INPUT_DIR is converted with ONE shared palette and ONE scale (and, with
+    --enhance or --ink, ONE pair of levels), so animation frames stay consistent.
     """
     config = build_config(config_path, flags)
     paths = []
@@ -345,6 +367,10 @@ def batch(input_dir, outdir, force, config_path, max_input_pixels, **flags):
     if scaled is not config:
         config = scaled
         header.update(scale=config.scale, canvas=config.canvas)
+    leveled = shared_levels(paths, config, max_input_pixels)
+    if leveled is not config:
+        config = leveled
+        header.update(enhance_black=config.enhance_black, enhance_white=config.enhance_white)
     if config.palette_name is None:
         palette_path = outdir / SHARED_PALETTE_NAME
         shared = shared_palette(paths, config, max_input_pixels)
@@ -372,24 +398,191 @@ def side_by_side(images: list[np.ndarray], gap: int) -> np.ndarray:
     return sheet
 
 
+# `compare --prepass`: the columns of the proof sheet, from no pre-pass to the strongest.
+PREPASS_COLUMNS = ({"enhance": 0.0, "ink": 0.0}, {"enhance": 0.5, "ink": 0.0},
+                   {"enhance": 1.0, "ink": 0.0}, {"enhance": 1.0, "ink": 0.6})
+MAX_SWEEP_VALUES = 12
+_TRUE, _FALSE = ("on", "true", "yes", "1"), ("off", "false", "no", "0")
+LABEL_BG, LABEL_FG, LABEL_PAD = (40, 40, 40, 255), (255, 255, 255, 255), 6
+# Pixels of cell previews on one proof sheet (RGBA, so 4 bytes each, held twice while the
+# sheet is assembled); the preview scale is lowered to stay within it.
+PROOF_SHEET_MAX_PIXELS = 32_000_000
+
+
+def parse_sweep(text: str) -> list[dict]:
+    """"palette-size=8,12,16" -> [{"palette_size": 8}, ...]: one Config override per value.
+
+    The field is named as its flag or as the Config field; "none" unsets an optional field and
+    booleans take on/off. Values are split on commas, so fields whose values contain one
+    (inline palettes) cannot be swept.
+    """
+    name, sep, values = text.partition("=")
+    by_flag = {f.name.lower(): f for f in fields(Config)}
+    spec = by_flag.get(name.strip().lstrip("-").replace("-", "_").lower())
+    if not sep or spec is None:
+        raise ConfigError(f"--sweep takes FIELD=VALUE[,VALUE...] with a Config field, got {text!r}")
+    if spec.name == "method":
+        raise ConfigError("--sweep cannot vary method: the methods are the rows of the sheet")
+    parts = [p.strip() for p in spec.type.split("|")]
+    raws = [v.strip() for v in values.split(",")]
+    if not 1 <= len(raws) <= MAX_SWEEP_VALUES or "" in raws:
+        raise ConfigError(f"--sweep takes 1 to {MAX_SWEEP_VALUES} non-empty values, got {text!r}")
+    columns = []
+    for raw in raws:
+        if raw.lower() == "none" and "None" in parts:
+            value = None
+        elif parts[0] == "bool":
+            if raw.lower() not in _TRUE + _FALSE:
+                raise ConfigError(f"--sweep {spec.name} takes on/off values, got {raw!r}")
+            value = raw.lower() in _TRUE
+        else:
+            try:
+                value = _CLICK_TYPES[parts[0]](raw)
+            except ValueError:
+                raise ConfigError(f"--sweep {spec.name}: {raw!r} is not {parts[0]}") from None
+        columns.append({spec.name: value})
+    return columns
+
+
+def _show(value) -> str:
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, float):
+        # The short form when it is exact ("1", "0.6"), else every digit: the text must parse
+        # back to the same float for a cell to be reproducible.
+        short = f"{value:g}"
+        return short if float(short) == value else repr(value)
+    return "none" if value is None else str(value)
+
+
+def override_flags(overrides: dict) -> str:
+    """The `convert` flags that apply `overrides`, shell-quoted.
+
+    None ("not set") has no flag, so a value it unsets in the base config stays set; the
+    cell's full config (`--config`) reproduces such a cell.
+    """
+    flags = []
+    for name, value in overrides.items():
+        flag = "--" + name.replace("_", "-").lower()
+        if isinstance(value, bool):
+            flags.append(flag if value else "--no-" + flag[2:])
+        elif value is not None:
+            flags.append(f"{flag} {shlex.quote(_show(value))}")
+    return " ".join(flags)
+
+
+def preview_scale(images: list[np.ndarray], scales: list[int]) -> list[int]:
+    """`scales` lowered by one common cap so the upscaled images fit PROOF_SHEET_MAX_PIXELS."""
+    native = sum(im.shape[0] * im.shape[1] for im in images)
+    cap = max(1, math.isqrt(PROOF_SHEET_MAX_PIXELS // max(native, 1)))
+    if cap < max(scales):
+        _warn(f"proof sheet previews scaled {cap}x instead of {max(scales)}x to stay within "
+              f"{PROOF_SHEET_MAX_PIXELS} pixels")
+    return [min(scale, cap) for scale in scales]
+
+
+def proof_sheet(cells: list[list[np.ndarray]], row_labels: list[str],
+                column_labels: list[str]) -> np.ndarray:
+    """A labelled grid of RGBA images: cells[row][column], transparent between the cells."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    font = ImageFont.load_default()
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+    def size(label: str) -> tuple[int, int]:
+        left, top, right, bottom = probe.textbbox((0, 0), label, font=font)
+        return right + 2 * LABEL_PAD, bottom + 2 * LABEL_PAD
+
+    gap = LABEL_PAD
+    left = max(size(label)[0] for label in row_labels)
+    top = max(size(label)[1] for label in column_labels)
+    widths = [max(size(label)[0], *(row[c].shape[1] for row in cells))
+              for c, label in enumerate(column_labels)]
+    heights = [max(size(label)[1], *(im.shape[0] for im in row))
+               for row, label in zip(cells, row_labels)]
+    sheet = Image.new("RGBA", (left + sum(widths) + gap * len(widths),
+                               top + sum(heights) + gap * len(heights)), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(sheet)
+    draw.rectangle((0, 0, sheet.width, top - 1), fill=LABEL_BG)
+    draw.rectangle((0, 0, left - 1, sheet.height), fill=LABEL_BG)
+    xs = [left + gap + sum(widths[:c]) + gap * c for c in range(len(widths))]
+    ys = [top + gap + sum(heights[:r]) + gap * r for r in range(len(heights))]
+    for x, label in zip(xs, column_labels):
+        draw.text((x + LABEL_PAD, LABEL_PAD), label, fill=LABEL_FG, font=font)
+    for y, label, row in zip(ys, row_labels, cells):
+        draw.text((LABEL_PAD, y + LABEL_PAD), label, fill=LABEL_FG, font=font)
+        for x, im in zip(xs, row):
+            sheet.paste(Image.fromarray(im, mode="RGBA"), (x, y))
+    return np.asarray(sheet)
+
+
 @cli.command()
 @click.argument("input_path", metavar="INPUT", type=click.Path(dir_okay=False))
 @click.option("-o", "--outdir", type=click.Path(file_okay=False), default="out",
               show_default=True, help="Output directory.")
+@click.option("--prepass", is_flag=True, default=False,
+              help="Proof sheet: every method at four --enhance/--ink settings.")
+@click.option("--sweep", "sweeps", multiple=True, metavar="FIELD=V1,V2,...",
+              help="Proof sheet: every method at each value of one option, "
+                   "e.g. palette-size=8,12,16.")
 @force_option
 @config_options
 @handle_errors
-def compare(input_path, outdir, force, config_path, max_input_pixels, **flags):
+def compare(input_path, outdir, prepass, sweeps, force, config_path, max_input_pixels, **flags):
     """Compare box, kopf and gerstner side by side.
 
-    Runs all three methods with the same config and writes INPUT_compare.png.
+    Runs all three methods with the same config and writes INPUT_compare.png, plus each
+    method's own outputs.
+
+    With --prepass or --sweep it writes only a labelled proof sheet instead: one row per
+    method (only the given one with --method), one column per setting. The JSON result lists,
+    per cell, the flags to add to a `convert` call with the same base options, and the cell's
+    full config (usable on its own with --config).
     """
     from PIL import Image
 
+    if len(sweeps) > 1:
+        raise ConfigError("--sweep can be given once: a sheet has one row per method and "
+                          "one column per value")
+    sweep = sweeps[0] if sweeps else None
+    if prepass and sweep is not None:
+        raise ConfigError("--prepass and --sweep cannot be combined")
+    stem = Path(input_path).stem
+    sheet_path = Path(outdir) / f"{stem}_compare.png"
+    if prepass or sweep is not None:
+        columns = list(PREPASS_COLUMNS) if prepass else parse_sweep(sweep)
+        methods = METHODS if flags.get("method") is None else (flags["method"],)
+        base = build_config(config_path, flags)
+        check_collisions([Path(input_path)], [sheet_path], force)
+        # Every cell is validated before the first (slow) one runs.
+        configs = [[base.replace(method=method, **column) for column in columns]
+                   for method in methods]
+        for config in configs[0]:
+            config.validate_palette()
+        loaded = io.load(input_path, io.MAX_INPUT_PIXELS if max_input_pixels is None
+                         else max_input_pixels)
+        labels = [" ".join(f"{name}={_show(value)}" for name, value in column.items())
+                  for column in columns]
+        images, report = [], []
+        for method, row in zip(methods, configs):
+            for column, label, config in zip(columns, labels, row):
+                log.info("cell %s / %s", method, label)
+                result = pipeline.run_loaded(loaded, config)
+                images.append(result.image)   # native size: upscaled once the total is known
+                report.append({"method": method, "column": label, "stats": result.stats,
+                               "flags": override_flags({"method": method, **column}),
+                               "config": config.to_dict()})
+        scales = preview_scale(images, [config.scale_preview for row in configs for config in row])
+        cells = [io.upscale_nearest(im, scale) for im, scale in zip(images, scales)]
+        previews = [cells[r * len(columns):(r + 1) * len(columns)] for r in range(len(methods))]
+        Path(outdir).mkdir(parents=True, exist_ok=True)
+        Image.fromarray(proof_sheet(previews, list(methods), labels), mode="RGBA").save(sheet_path)
+        _emit({"compare": str(sheet_path), "cells": report})
+        return
+
     flags.pop("method", None)
     base = build_config(config_path, flags)
-    stem = Path(input_path).stem
-    outputs = [Path(outdir) / f"{stem}_compare.png"]
+    outputs = [sheet_path]
     for method in METHODS:
         outputs += pipeline.output_paths(Path(outdir) / f"{stem}_{method}", base.tileset).values()
     check_collisions([Path(input_path)], outputs, force)
@@ -400,7 +593,6 @@ def compare(input_path, outdir, force, config_path, max_input_pixels, **flags):
         report[method] = {"outputs": result.save(Path(outdir) / f"{stem}_{method}"),
                           "stats": result.stats}
         previews.append(io.upscale_nearest(result.image, config.scale_preview))
-    sheet_path = Path(outdir) / f"{stem}_compare.png"
     Image.fromarray(side_by_side(previews, gap=base.scale_preview), mode="RGBA").save(sheet_path)
     _emit({"compare": str(sheet_path), "methods": report})
 

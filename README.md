@@ -13,7 +13,8 @@ Three downscalers, selectable per run:
 - **gerstner** — joint superpixel + palette optimization (Gerstner et al.; Computers &
   Graphics 2013). Segmentation and palette converge together.
 
-Post-processing adds palette ramp regularization, selective ordered dithering, orphan-pixel
+An optional pre-pass (`--enhance`, `--ink`) exaggerates small features so photos stay
+readable. Post-processing adds palette ramp regularization, selective ordered dithering, orphan-pixel
 removal, jaggy cleanup, sprite outlines and optional tileset + tilemap extraction. Bundled
 palettes: NES, Game Boy, Genesis, SNES, PICO-8.
 Orphan removal keeps high-contrast singles such as 1-px eyes and highlights: a stray pixel is
@@ -34,6 +35,13 @@ to the nearest palette color instead.)
 32 colors, plus a tileset and tilemap.
 
 ![Town background before and after](docs/sample_background.png)
+
+`pixelforge convert portrait.png --preset sprite --outline none --no-key-bg`, without (middle)
+and with `--enhance 1` (right): 1024×1024 → 64×64, 16 colors. The pre-pass keeps the eyes,
+brows and mouth that plain downscaling averages away (see [Photos](#photos---enhance-and---ink)).
+The source photo is AI-generated.
+
+![Photo portrait: source, without and with the pre-pass](docs/sample_photo.png)
 
 ## Install
 
@@ -78,6 +86,8 @@ pixelforge convert hero.png --preset sprite --method gerstner --palette-size 12
 pixelforge convert scene.png --preset background           # writes tileset + tilemap
 pixelforge batch frames/ --preset sprite                    # one shared palette for all
 pixelforge compare hero.png -o out                          # box, kopf, gerstner side by side
+pixelforge compare photo.png --prepass                      # proof sheet: methods × pre-pass
+pixelforge compare hero.png --sweep palette-size=8,12,16    # proof sheet: methods × one option
 pixelforge palettes                                         # list bundled palettes
 ```
 
@@ -114,6 +124,52 @@ if the aspect changes by more than 2 %); `--fit crop` crops the input centered.
 `--palette-name` takes a bundled name, a `.hex`/`.gpl` path, or inline colors
 (`hex:ff0000,00ff00,…`). `batch` writes its shared palette to `shared_palette.hex` and hands it
 to every frame inline, so the frames' metadata carries the colors, not the output path.
+
+### Photos: `--enhance` and `--ink`
+
+Photos have soft gradients and no lines, so features smaller than an output pixel (eyes, a
+mouth, a chain) get averaged away. `--enhance` exaggerates them before downscaling: it
+stretches the subject's brightness to the full range and adds local contrast at
+`--enhance-radius` (2) output pixels. Try `0.5` to `1`; higher values (up to 4) turn dark
+areas such as hair solid black. `--ink 0.6` also darkens thin dark features into lines; it
+adds blots on some images. The right values depend on the photo, so pick them from a
+[proof sheet](#proof-sheets). Both are off by default and in every preset: sources that
+already have outlines and full contrast (illustrations, pixel art) lose their mid-tone
+shading to them.
+
+Colors keep their hue: a pixel is brightened only as far as its brightest channel allows.
+The stretch maps the subject's 1st and 99th brightness percentiles to black and white, and
+never amplifies by more than 5×, so a nearly flat subject stays nearly flat;
+`--enhance-black` / `--enhance-white` set the two levels by hand. `batch` measures one pair
+of levels over all frames (reported in its first JSON line), so a flash in one frame does not
+change the rest of it. `--seamless` tiles stay seamless.
+
+Source photos convert best when the subject fills the frame (a feature needs 3–4 output pixels
+to survive), the light is flat and frontal, the backdrop is one flat color that differs from
+hair and skin, and adjacent parts differ in tone.
+
+`key_bg` only keys a backdrop that covers at least 90 % of the image border within
+`--key-bg-tolerance`. A mottled studio backdrop is not flat, and a head-and-shoulders shot
+cut off by the bottom edge has too little backdrop on the border; in both cases the backdrop
+stays in the picture and takes part in the levels stretch. Cut the subject out first
+(`--remove-bg`, or an input with an alpha channel) to get a sprite with a transparent
+background.
+
+### Proof sheets
+
+`compare --prepass` and `compare --sweep FIELD=V1,V2,...` write one labelled sheet
+(`INPUT_compare.png`) instead of each method's outputs: a row per method, a column per
+setting. `--prepass` uses four columns from no pre-pass to `--enhance 1 --ink 0.6`; `--sweep`
+takes one option other than `--method`, given once (`on`/`off` for booleans, `none` to
+unset; values are split on commas, so inline `hex:` palettes cannot be swept). `--method` limits the sheet
+to that row. The JSON result lists, per cell, its `flags` and its full `config`. The flags
+cover only the method and the swept setting: add them to a `convert` call with the same base
+flags and `--config` file that `compare` was given. The `config` is the whole cell: save it as
+JSON and pass it with `--config` to reproduce the cell on its own. It is also the only way to
+replay a cell that unsets a value with `none`, which no flag can do. Previews are scaled down from `--scale-preview` when
+a sheet would exceed 32 million pixels.
+Every cell is a full run, so a 3 × 4 sheet with kopf and gerstner takes minutes at large
+sizes; pick settings at a small `--out-height`, then convert at full size.
 
 Inputs much larger than the output are box-reduced to 8–16× the output size before denoising
 (`--prereduce-max-ratio`, 0 disables).
@@ -155,6 +211,8 @@ res.save("out/hero")   # out/hero.png, hero_preview.png, hero_palette.json, ...
 res.image              # numpy RGBA (H, W, 4) uint8
 res.palette            # numpy (K, 3) uint8
 res.indices            # (H, W) palette index, -1 = transparent
+
+run("photo.png", cfg.replace(enhance=0.5))   # the photo pre-pass; ink=0.6 adds lines
 
 run(Image.open("hero.png"), cfg)   # a PIL image
 run(rgba, cfg)                     # (H, W, 3|4) numpy array: uint8, or float in [0, 1]

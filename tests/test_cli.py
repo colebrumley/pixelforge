@@ -1,4 +1,5 @@
 import json
+import shlex
 import shutil
 from pathlib import Path
 
@@ -270,3 +271,143 @@ def test_group_help_lists_one_line_summaries():
     assert result.exit_code == 0
     for line in result.output.split("Commands:")[1].strip().splitlines():
         assert not line.rstrip().endswith("..."), line
+
+
+def test_compare_prepass_writes_only_a_proof_sheet(fixture_path, tmp_path):
+    from pixelforge.cli import PREPASS_COLUMNS
+
+    result = _invoke("compare", fixture_path("noisy_gradient"), "-o", tmp_path, "--prepass",
+                     "--out-height", "8", "--preset", "background", "--no-tileset")
+    assert result.exit_code == 0, result.output
+    assert [p.name for p in tmp_path.iterdir()] == ["noisy_gradient_compare.png"]
+    payload = json.loads(result.output.strip().splitlines()[-1])
+    cells = payload["cells"]
+    assert [c["method"] for c in cells[::len(PREPASS_COLUMNS)]] == ["box", "kopf", "gerstner"]
+    assert len(cells) == 3 * len(PREPASS_COLUMNS)
+    assert cells[-1]["flags"] == "--method gerstner --enhance 1 --ink 0.6"
+    assert cells[-1]["column"] == "enhance=1 ink=0.6"
+    assert len({c["stats"]["config_hash"] for c in cells}) == len(cells)
+    sheet = np.asarray(Image.open(tmp_path / "noisy_gradient_compare.png"))
+    assert sheet.shape[2] == 4 and sheet.shape[1] > 4 * 8 * 8 and sheet.shape[0] > 3 * 8 * 8
+
+
+def test_compare_cell_flags_reproduce_the_cell(fixture_path, tmp_path):
+    base = ["--out-height", "8", "--preset", "background", "--no-tileset", "--enhance", "1"]
+    result = _invoke("compare", fixture_path("noisy_gradient"), "-o", tmp_path / "sheet",
+                     "--sweep", "palette-size=4,8", "--method", "box", *base)
+    assert result.exit_code == 0, result.output
+    cells = json.loads(result.output.strip().splitlines()[-1])["cells"]
+    assert [(c["method"], c["column"], c["flags"]) for c in cells] == [
+        ("box", "palette_size=4", "--method box --palette-size 4"),
+        ("box", "palette_size=8", "--method box --palette-size 8")]
+    again = _invoke("convert", fixture_path("noisy_gradient"), "-o", tmp_path / "one", *base,
+                    *shlex.split(cells[1]["flags"]))
+    assert again.exit_code == 0, again.output
+    stats = json.loads(again.output.strip().splitlines()[-1])["stats"]
+    assert stats["config_hash"] == cells[1]["stats"]["config_hash"]
+
+
+def test_compare_cell_config_reproduces_an_unset_value(fixture_path, tmp_path):
+    """`none` unsets a value from --config, which no flag can do: the cell's config replays it."""
+    base = tmp_path / "base.json"
+    base.write_text(json.dumps({"preset": "background", "tileset": False, "out_width": 16,
+                                "method": "box"}))
+    result = _invoke("compare", fixture_path("noisy_gradient"), "-o", tmp_path / "sheet",
+                     "--config", base, "--method", "box", "--sweep", "out-width=none,8")
+    assert result.exit_code == 0, result.output
+    cell = json.loads(result.output.strip().splitlines()[-1])["cells"][0]
+    assert cell["column"] == "out_width=none" and cell["config"]["out_width"] is None
+    replay = tmp_path / "cell.json"
+    replay.write_text(json.dumps(cell["config"]))
+    again = _invoke("convert", fixture_path("noisy_gradient"), "-o", tmp_path / "one",
+                    "--config", replay)
+    assert again.exit_code == 0, again.output
+    stats = json.loads(again.output.strip().splitlines()[-1])["stats"]
+    assert stats["config_hash"] == cell["stats"]["config_hash"]
+
+
+def test_override_flags_round_trip_floats_and_quote_strings():
+    from pixelforge.cli import _show, override_flags
+
+    for value in (0.123456789, 1e-05, 1.0, 0.6, 123456789.125, 1 / 3):
+        assert float(_show(value)) == value
+    assert _show(1.0) == "1" and _show(0.6) == "0.6"
+    flags = override_flags({"palette_name": "my palettes/warm one.hex", "enhance": 0.123456789})
+    assert shlex.split(flags) == ["--palette-name", "my palettes/warm one.hex",
+                                  "--enhance", "0.123456789"]
+
+
+def test_proof_sheet_previews_stay_within_the_pixel_budget(monkeypatch, capsys):
+    from pixelforge import cli as cli_module
+
+    images = [np.zeros((16, 16, 4), dtype=np.uint8)] * 4      # 1024 native pixels
+    assert cli_module.preview_scale(images, [8, 8, 8, 2]) == [8, 8, 8, 2]
+    monkeypatch.setattr(cli_module, "PROOF_SHEET_MAX_PIXELS", 1024 * 9)
+    assert cli_module.preview_scale(images, [8, 8, 8, 2]) == [3, 3, 3, 2]
+    assert "scaled 3x instead of 8x" in capsys.readouterr().err
+    monkeypatch.setattr(cli_module, "PROOF_SHEET_MAX_PIXELS", 10)
+    assert cli_module.preview_scale(images, [8]) == [1]
+
+
+def test_parse_sweep_types():
+    from pixelforge.cli import override_flags, parse_sweep
+
+    assert parse_sweep("--out-width=16,none") == [{"out_width": 16}, {"out_width": None}]
+    assert parse_sweep("fix_jaggies=on,off") == [{"fix_jaggies": True}, {"fix_jaggies": False}]
+    assert parse_sweep("g-t-final=0.5") == [{"g_T_final": 0.5}]
+    assert parse_sweep("dither=none,bayer4") == [{"dither": "none"}, {"dither": "bayer4"}]
+    assert override_flags({"fix_jaggies": False, "out_width": None, "g_T_final": 0.5}) == (
+        "--no-fix-jaggies --g-t-final 0.5")
+
+
+@pytest.mark.parametrize("args, message", [
+    (["--sweep", "nope=1"], "FIELD=VALUE"),
+    (["--sweep", "palette-size"], "FIELD=VALUE"),
+    (["--sweep", "method=box,kopf"], "rows of the sheet"),
+    (["--sweep", "palette-size=4,,8"], "non-empty"),
+    (["--sweep", "palette-size=four"], "is not int"),
+    (["--sweep", "key-bg=maybe"], "on/off"),
+    (["--sweep", "palette-size=4,999"], "palette_size must be in"),
+    (["--sweep", "palette-size=4", "--prepass"], "cannot be combined"),
+    (["--sweep", "palette-size=4", "--sweep", "dither=none"], "given once"),
+    (["--sweep", "palette-name=pico8,missing_palette.hex"], "missing_palette.hex"),
+])
+def test_compare_sweep_errors(fixture_path, tmp_path, args, message):
+    result = _invoke("compare", fixture_path("two_color"), "-o", tmp_path, *args)
+    assert result.exit_code == 2, result.output
+    assert message in result.output
+    assert not tmp_path.exists() or not list(tmp_path.iterdir())
+
+
+def _disc_frames(directory):
+    """Two frames of one shaded disc; the second also has a small white flash."""
+    directory.mkdir()
+    y, x = np.mgrid[:96, :96]
+    inside = (y - 48) ** 2 + (x - 48) ** 2 < 40 ** 2
+    shade = np.clip(90 + 0.8 * (x - 8), 0, 255)
+    for name, flash in (("f0", False), ("f1", True)):
+        rgba = np.zeros((96, 96, 4), dtype=np.uint8)
+        rgba[..., 0], rgba[..., 1], rgba[..., 2] = shade, shade * 0.7, shade * 0.5
+        rgba[..., 3] = np.where(inside, 255, 0)
+        if flash:
+            rgba[20:32, 42:54, :3] = 255
+        Image.fromarray(rgba, mode="RGBA").save(directory / f"{name}.png")
+
+
+def test_batch_enhance_uses_one_pair_of_levels(tmp_path):
+    """A flash in one frame must not change the brightness of the rest of that frame."""
+    _disc_frames(tmp_path / "frames")
+    out = tmp_path / "out"
+    result = _invoke("batch", tmp_path / "frames", "-o", out, "--method", "box", "--out-height",
+                     "24", "--enhance", "1", "--outline", "none", "--denoise", "none")
+    assert result.exit_code == 0, result.output
+    header = json.loads(result.output.strip().splitlines()[0])
+    assert 0.0 <= header["enhance_black"] < header["enhance_white"] <= 1.0
+    metas = [json.loads((out / f"{name}_meta.json").read_text()) for name in ("f0", "f1")]
+    assert all(m["config"]["enhance_white"] == header["enhance_white"] for m in metas)
+    a, b = (np.asarray(Image.open(out / f"{name}.png").convert("RGBA")).astype(int)
+            for name in ("f0", "f1"))
+    assert a.shape == b.shape
+    away = np.ones(a.shape[:2], dtype=bool)
+    away[:12, :] = False                               # rows the flash can reach
+    assert (np.abs(a - b).max(axis=-1)[away] > 0).mean() < 0.05
