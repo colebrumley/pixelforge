@@ -69,9 +69,11 @@ be reversed before the phase that depends on it starts.
    functions come from the pure-Rust `libm` crate (`exp`, `expm1`, `log`, `pow`, `cbrt`,
    `sin`, `cos`, `atan2`, `hypot`); `f64::sqrt` is exact and allowed; rounding to integers
    uses `f64::round_ties_even` wherever Python used `np.round` or `round()` (half to even);
-   no FMA contraction, no `target-cpu=native`, no `powi`; sorts are stable with explicit
-   keys; no `HashMap` iteration in anything that produces a number or an order. These rules
-   go into DESIGN.md's determinism contract and `rust/README.md`.
+   no FMA contraction, no `mul_add`, no `target-cpu=native`, no `powi`; an explicit
+   `libm::fma` is allowed where a reference implementation is known to fuse (it is a pure,
+   correctly rounded software operation, identical everywhere); sorts are stable with
+   explicit keys; no `HashMap` iteration in anything that produces a number or an order.
+   These rules go into DESIGN.md's determinism contract and the crate README.
 7. **Canonical JSON must match Python byte for byte.** `Config.canonical_json()` is embedded
    in every PNG and hashed into `config_hash`. The Rust writer reproduces
    `json.dumps(sort_keys=True, separators=(",", ":"))`: sorted keys, no whitespace,
@@ -410,6 +412,28 @@ Acceptance: `test_kopf.py`, `test_gerstner.py`, `test_box.py`, `test_palette.py`
 unchanged (behavioural tests); snapshot report (expected: a few pixels on the gerstner
 cases from eigenvector and summation-order differences in the annealer); goldens
 regenerated (#3). Bench: kopf and gerstner wall time at 1 and 8 threads.
+
+Done 2026-10-11 (merges 99c5a08 box and kopf, cb15d34 gerstner). `boxfilter.rs` is bitwise.
+`kopf_run.rs` is bitwise identical to the Python control flow on every fixture at every
+size: LAPACK's 2×2 path (`dsteqr` → `dlaev2`) was reproduced including the two fused
+multiply-adds Accelerate performs in it (`libm::fma`, correctly rounded and identical on
+every platform), `1.1 ** n` as a table of the correctly rounded powers (libm's `pow` is off
+by one ulp at n = 4), and `np.hypot` as `sqrt(fma(small, small, big²))`. `annealer.rs` and
+`gerstner_run.rs` reproduce the annealer and the loop; BLAS's `centered.T @ centered` and
+`weighted.T @ points` cannot be reproduced (Accelerate matches neither sequential nor
+pairwise order), so the principal axis moves by ≤ 2.8e-13 and the palettes by ≤ 3.3e-11,
+which never changed an index, a mask cell or an 8-bit value; substituting the Rust
+values for those three routines into the Python reference makes all 42 fixture cases
+bitwise identical, so the ported logic itself is exact. The seeded perturbation uses a
+SplitMix64 draw instead of numpy's PCG64 (seeded outputs differ from the Python version's,
+still deterministic). Snapshot matrix 48 of 48 identical; goldens unchanged (regeneration
+#3 was not needed). Downscale on the portrait under load: kopf 2.61 → 1.68 s, gerstner
+5.21 → 4.49 s. 1482 tests pass. Progress lines now come from the `pixelforge.kopf` and
+`pixelforge.gerstner` loggers through the `log` bridge (`crates/pixelforge-py/src/pylog.rs`).
+Decision 6 clarified: `libm::fma` is allowed as an explicit, correctly rounded operation
+(what is forbidden is compiler contraction, `mul_add`, and platform libm); Phase 4's filters
+stay unfused because there the fused variant would match only this Mac's wheels, while in
+kopf it is what makes the 2×2 eigensolver match LAPACK bit for bit.
 
 ### Phase 6 — I/O, pipeline, library API
 
