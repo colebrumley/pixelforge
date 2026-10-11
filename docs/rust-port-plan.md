@@ -1,6 +1,6 @@
 # Rust port of the hot loops
 
-Status: planning. Branch `claude/performance-optimization-e3bbdd`.
+Status: landed on `claude/rust-port` (918abef); timings TODO. Continued by [docs/rust-migration-plan.md](rust-migration-plan.md), the plan for moving the rest of the application to Rust.
 
 ## Why
 
