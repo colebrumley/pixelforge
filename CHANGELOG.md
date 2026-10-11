@@ -69,6 +69,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Colour conversion is native (`crates/pixelforge/src/color.rs`, migration plan Phase 2):
+  `pixelforge.color`'s `rgb_to_lab`, `lab_to_rgb`, `rgb8_to_lab`, `lab_to_rgb8` and
+  `nearest_index` call `pixelforge._native` instead of scikit-image and scipy's `cKDTree`.
+  The conversions are scikit-image 0.26's formulas with `libm`'s `pow` and `cbrt` (bit-identical
+  on every platform) and agree with skimage to 1.1e-13 in LAB; `lab_to_rgb8` rounds half to
+  even like `np.round`. The nearest colour is a brute-force CIE76 search whose ties go to the
+  lowest palette index (cKDTree's tie-break was unspecified). Snapshot compare against the
+  previous version on the 48-case matrix: 1 case changed, `noisy_gradient/background/gerstner`,
+  10 of 65,536 pixels (all ΔE 4.03, palette unchanged); no other case moved and the goldens
+  are unchanged. The cause is the last-bit LAB difference: jittering skimage's own LAB by one
+  ulp moves the same 10 pixels, so this case sits on a near-tie in gerstner, not a formula
+  difference.
 - The Rust code is a Cargo workspace at the repo root (`Cargo.toml`, one `Cargo.lock`,
   `target/`) with two crates: `crates/pixelforge`, a plain Rust library without Python (the
   kopf and gerstner kernels and `parallel`, taking slices), and `crates/pixelforge-py`, the
