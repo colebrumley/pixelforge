@@ -768,13 +768,19 @@ fn version_and_usage_errors_like_click() {
     let r = invoke!("--version");
     assert_eq!(
         (r.code, r.stdout.as_str()),
-        (0, "pixelforge, version 0.1.0\n")
+        (
+            0,
+            concat!("pixelforge, version ", env!("CARGO_PKG_VERSION"), "\n")
+        )
     );
     // Eager: before the command is parsed.
     let r = invoke!("-v", "--version", "convert");
     assert_eq!(
         (r.code, r.stdout.as_str()),
-        (0, "pixelforge, version 0.1.0\n")
+        (
+            0,
+            concat!("pixelforge, version ", env!("CARGO_PKG_VERSION"), "\n")
+        )
     );
     let r = invoke!("convert", "x.png", "--version");
     assert_eq!(r.code, 2);

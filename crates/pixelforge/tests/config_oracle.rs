@@ -4,8 +4,13 @@
 //!
 //! Palette paths in the corpus are relative to the repository root, so the tests run with
 //! the working directory set there (the same directory for every test in this binary).
+//!
+//! The recorded hashes include the version they were recorded at (`versions.json`), so
+//! they are checked against the hash formula at that version, and `Config::hash()` against
+//! the same formula at the crate's version.
 
 use pixelforge::config::{Config, Value};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 fn repo_root() -> PathBuf {
@@ -83,8 +88,13 @@ fn corpus() {
             "{label}"
         );
         assert_eq!(
-            config.hash().unwrap(),
+            hash_at(&config, &recorded_version()),
             case["hash"].as_str().unwrap(),
+            "{label}"
+        );
+        assert_eq!(
+            config.hash().unwrap(),
+            hash_at(&config, env!("CARGO_PKG_VERSION")),
             "{label}"
         );
         let dict = config.to_dict();
@@ -151,8 +161,26 @@ fn errors() {
     );
 }
 
+/// The pixelforge version the oracle was recorded with (the last Python release).
+fn recorded_version() -> String {
+    load("versions.json")["pixelforge"]
+        .as_str()
+        .expect("versions.json has the pixelforge version")
+        .to_string()
+}
+
+/// `Config.hash()` as pixelforge `version` computes it: SHA-256 of the canonical JSON, the
+/// version and, with a palette, `"palette:" + palette_sha256`, newline-separated.
+fn hash_at(config: &Config, version: &str) -> String {
+    let mut payload = format!("{}\n{version}", config.canonical_json());
+    if let Some(sha) = config.palette_sha256().unwrap() {
+        payload.push_str("\npalette:");
+        payload.push_str(&sha);
+    }
+    format!("{:x}", Sha256::digest(payload.as_bytes()))
+}
+
 #[test]
-fn versions_match_the_oracle() {
-    let doc = load("versions.json");
-    assert_eq!(doc["pixelforge"].as_str(), Some(env!("CARGO_PKG_VERSION")));
+fn oracle_version_is_recorded() {
+    assert_eq!(recorded_version(), "0.1.0");
 }

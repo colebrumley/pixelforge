@@ -3,7 +3,9 @@
 //! `pipeline::run` on the fixture, save, and compare every output. Text files byte for byte;
 //! `_meta.json` without `environment` and `stats.timings`, as a structure and re-serialised
 //! (so the layout is checked too); PNGs decoded (mode, size, palette, transparency, text,
-//! indices and their SHA-256).
+//! indices and their SHA-256). `_meta.json`'s `config_hash` and `version` are the recording
+//! version's (`versions.json`): the hash is checked at that version, then both are replaced
+//! by the crate's before comparing.
 //!
 //! The first end-to-end test with no Python involved.
 
@@ -124,6 +126,22 @@ fn decode_png(path: &Path, full: bool) -> serde_json::Value {
     serde_json::Value::Object(out)
 }
 
+/// The pixelforge version the oracle was recorded with (`tests/oracle/versions.json`).
+fn recorded_version() -> String {
+    let path = repo_root().join("tests/oracle/versions.json");
+    read_json(&path)["pixelforge"].as_str().unwrap().to_string()
+}
+
+/// `Config.hash()` as pixelforge `version` computes it (see config_oracle.rs).
+fn hash_at(config: &Config, version: &str) -> String {
+    let mut payload = format!("{}\n{version}", config.canonical_json());
+    if let Some(sha) = config.palette_sha256().unwrap() {
+        payload.push_str("\npalette:");
+        payload.push_str(&sha);
+    }
+    format!("{:x}", Sha256::digest(payload.as_bytes()))
+}
+
 fn strip_meta(mut meta: serde_json::Value) -> serde_json::Value {
     let obj = meta.as_object_mut().unwrap();
     obj.remove("environment").expect("meta has environment");
@@ -169,9 +187,23 @@ fn outputs_small_match_the_python_pipeline() {
                 let got = decode_png(path, name != "preview");
                 assert_eq!(got, want, "{base}");
             } else if name == "meta" {
-                let want_text = std::fs::read_to_string(dir.join(&base)).unwrap();
+                // The recorded `config_hash` and `version` are the recording version's.
+                let recorded = std::fs::read_to_string(dir.join(&base)).unwrap();
+                let recorded_hash = read_json(&dir.join(&base))["config_hash"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+                let version = recorded_version();
+                assert_eq!(recorded_hash, hash_at(&config, &version), "{base}");
+                let want_text = recorded
+                    .replace(&recorded_hash, &config.hash().unwrap())
+                    .replace(
+                        &format!("\"version\": \"{version}\""),
+                        &format!("\"version\": \"{}\"", pipeline::VERSION),
+                    );
                 let got = strip_meta(read_json(path));
-                assert_eq!(got, read_json(&dir.join(&base)), "{base}");
+                let want: serde_json::Value = serde_json::from_str(&want_text).unwrap();
+                assert_eq!(got, want, "{base}");
                 let text = dumps(&to_json(&got), Layout::INDENT2_SORTED) + "\n";
                 assert_eq!(text, want_text, "{base} re-serialised");
                 // And the file itself: the same text with the two host-dependent keys.

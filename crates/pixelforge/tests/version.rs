@@ -1,5 +1,6 @@
 //! One version everywhere: the workspace `Cargo.toml` (the single source), the library's
-//! `pipeline::VERSION` and `pixelforge --version`.
+//! `pipeline::VERSION`, `pixelforge --version` and the Python binding's
+//! `crates/pixelforge-py/pyproject.toml` (which carries its own copy).
 
 use std::path::{Path, PathBuf};
 
@@ -32,6 +33,12 @@ fn version_is_the_workspace_version() {
     let cargo = toml_version(&root().join("Cargo.toml"), "[workspace.package]");
     assert_eq!(cargo, VERSION);
     assert_eq!(pixelforge::pipeline::VERSION, VERSION);
+}
+
+#[test]
+fn binding_pyproject_has_the_workspace_version() {
+    let path = root().join("crates/pixelforge-py/pyproject.toml");
+    assert_eq!(toml_version(&path, "[project]"), VERSION);
 }
 
 #[test]

@@ -180,6 +180,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Version 0.2.0 (single-sourced from the workspace `Cargo.toml`). The version is part of
+  `Config.hash()`, so every `config_hash` changed (all 18 in `tests/golden.json`); no output
+  pixel changed (every `pixels_sha256` in `tests/golden.json` and all 48 snapshot cases
+  identical).
 - The pipeline is native (migration plan Phase 6, part B): `pixelforge.run` / `run_loaded`
   call `crates/pixelforge/src/pipeline.rs` (`pipeline::run`, `run_loaded`) through
   `_native.pipeline_run` / `pipeline_run_loaded`, and `Result.save` writes every output file
@@ -434,6 +438,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Removed
 
+- The Python package `pixelforge/` and the Python CLI, the Python test suite (`tests/*.py`),
+  the Python scripts (`scripts/*.py`, replaced by `cargo xtask`), `pyproject.toml` and
+  `uv.lock` (migration plan Phase 8, part C). The optional Python binding lives on in
+  `crates/pixelforge-py` with its own `pyproject.toml`.
 - Duplicate `dev` optional extra; use the `dev` dependency group (`uv sync`).
 
 ### Library API
