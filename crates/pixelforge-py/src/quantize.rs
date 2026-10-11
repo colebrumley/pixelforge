@@ -231,9 +231,28 @@ fn regularize_ramps<'py>(
     Ok(palette_array(py, &out))
 }
 
-/// `palette.build` without the mcda source: pixels float64 `(N, 3)`, the Config as
-/// `to_dict()` -> palette float64 `(K, 3)` in LAB. ValueError for the mcda source, a palette
-/// that cannot be loaded, or no pixels.
+/// Standalone MCDA palette (`palette.mcda`): pixels float64 `(N, 3)`, K, the Config as
+/// `to_dict()` -> float64 `(K', 3)`, K' <= K. ValueError for no pixels or K < 1.
+#[pyfunction]
+fn mcda<'py>(
+    py: Python<'py>,
+    pixels: &Bound<'py, PyAny>,
+    k: i64,
+    config: &Bound<'py, PyDict>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    const F: &str = "mcda";
+    let (_, parr) = triples::<f64>(F, "pixels", "float64", pixels, Some(2))?;
+    let config = crate::config::build(py, config)?;
+    let p = triples_of(slice(F, "pixels", &parr)?);
+    let out = py
+        .detach(|| palette::mcda(&p, k, &config))
+        .map_err(|e| PyValueError::new_err(e.0))?;
+    Ok(palette_array(py, &out))
+}
+
+/// `palette.build`: pixels float64 `(N, 3)`, the Config as `to_dict()` -> palette float64
+/// `(K, 3)` in LAB (named palette, mcda or median cut). ValueError for a palette that
+/// cannot be loaded, or no pixels.
 #[pyfunction]
 fn palette_build<'py>(
     py: Python<'py>,
@@ -270,6 +289,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(quantize_run, m)?)?;
     m.add_function(wrap_pyfunction!(median_cut, m)?)?;
     m.add_function(wrap_pyfunction!(regularize_ramps, m)?)?;
+    m.add_function(wrap_pyfunction!(mcda, m)?)?;
     m.add_function(wrap_pyfunction!(palette_build, m)?)?;
     m.add_function(wrap_pyfunction!(palette_hex_text, m)?)?;
     Ok(())
