@@ -44,7 +44,7 @@ and an outline for sprites; backgrounds can be cut into a de-duplicated tileset 
 Timings on an Apple M1 Max, 1024×1024 → 64×64, before kopf's per-pixel loops moved into the
 native layer: kopf ≈ 36 s (50 iterations), gerstner ≈ 25 s, box well under a second. kopf is
 now much faster and also scales with the cores (timings: TODO, measure on
-an idle machine; `scripts/bench.py --compare bench/0edd462.json` gives the comparison against
+an idle machine; `cargo xtask bench --compare bench/0edd462.json` gives the comparison against
 the pure-Python baseline). Gerstner at 256×256 output with 32 colors
 is the slow corner: 5 s to 2 minutes depending on how many annealing iterations the image
 needs. Without `-v` such runs print nothing until the result; `-v` logs per-stage timings and
@@ -130,12 +130,12 @@ numpy gerstner reference.
    whether or not rembg is installed. A `remove_bg=True` run depends on the rembg model,
    which is outside this contract; `_meta.json` records the rembg and onnxruntime versions.
 6. Running the CLI twice on the same input and config produces byte-identical PNGs;
-   `pytest tests/test_determinism.py` enforces this for every method and preset, in-process
+   `cargo test` (`crates/pixelforge/tests/determinism.rs`, `cli.rs`) enforces this for every method and preset, in-process
    and across fresh interpreters with different `PYTHONHASHSEED` and BLAS/OpenMP thread
    counts (every output file; `_meta.json` minus `stats.timings` and `environment`).
-   `tests/test_golden.py` pins the decoded pixels and `config_hash` per fixture, method and
-   preset to `tests/golden.json`; after an intentional output change, regenerate it with
-   `python scripts/update_golden.py` and commit the diff with the change.
+   `crates/pixelforge/tests/golden.rs` pins the decoded pixels and `config_hash` per fixture,
+   method and preset to `tests/golden.json`; after an intentional output change, regenerate
+   it with `cargo xtask golden` and commit the diff with the change.
 
 Byte-identical output across *different machines* additionally assumes the same versions of
 numpy, scipy, scikit-image and Pillow, which only `git clone && uv sync --locked` (same Python

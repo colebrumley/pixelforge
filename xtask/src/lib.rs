@@ -1,7 +1,6 @@
 //! pixelforge developer tooling (`cargo xtask …`, Decision 9 of docs/rust-migration-plan.md):
-//! the Rust ports of `scripts/make_fixtures.py` (`fixtures`), `update_golden.py` (`golden`),
-//! `bench.py` (`bench`), `snapshot_outputs.py` (`snapshot`) and `gallery.py` (`gallery`),
-//! with the same options, tables, files and exit codes.
+//! `fixtures`, `golden`, `bench`, `snapshot` and `gallery` (ports of the Python scripts
+//! removed in 0.2.0, with their options, tables, files and exit codes) and `help-record`.
 //!
 //! Errors are reported as the scripts' `SystemExit(message)` was: the message on stderr and
 //! exit status 1; usage errors exit 2 (clap, as argparse).
@@ -11,6 +10,7 @@ pub mod cli;
 pub mod fixtures;
 pub mod gallery;
 pub mod golden;
+pub mod help;
 pub mod json;
 pub mod snapshot;
 

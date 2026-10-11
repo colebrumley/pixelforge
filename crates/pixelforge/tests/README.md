@@ -1,7 +1,11 @@
 # pixelforge integration tests
 
 `cargo test -p pixelforge` runs them; `cargo test -p pixelforge -- --include-ignored` adds
-the slow group (pytest's `slow` marker is `#[ignore]` with a `// slow` comment here).
+the slow group (each `#[ignore]` carries a `// slow` comment).
+
+The Python test suite these files were ported from was removed in 0.2.0 with the Python
+package; the tables below map it for the record (the files are in the git history up to
+1fff901).
 `common/mod.rs` holds shared helpers: fixtures read from `tests/fixtures/*.png`, Config
 construction, pipeline runs on arrays, temporary directories.
 

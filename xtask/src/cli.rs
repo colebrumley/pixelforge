@@ -1,11 +1,12 @@
-//! The `xtask` command line: `fixtures`, `golden`, `bench`, `snapshot`, `gallery`.
+//! The `xtask` command line: `fixtures`, `golden`, `bench`, `snapshot`, `gallery`,
+//! `help-record`.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 
 use clap::{Arg, ArgAction, Command};
 
-use crate::{bench, fixtures, gallery, golden, snapshot, Fail};
+use crate::{bench, fixtures, gallery, golden, help, snapshot, Fail};
 
 pub fn command() -> Command {
     Command::new("xtask")
@@ -53,6 +54,7 @@ pub fn command() -> Command {
         .subcommand(bench::command().args_override_self(true))
         .subcommand(snapshot::command())
         .subcommand(gallery::command())
+        .subcommand(help::command())
 }
 
 /// Run `xtask` with `args` (the program name first); the exit status.
@@ -91,6 +93,7 @@ where
         Some(("bench", m)) => bench::main(m).map(|()| 0),
         Some(("snapshot", m)) => snapshot::main(m),
         Some(("gallery", m)) => gallery::main(m).map(|_| 0),
+        Some(("help-record", m)) => help::main(m).map(|()| 0),
         _ => unreachable!("subcommand_required"),
     };
     match result {

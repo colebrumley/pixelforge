@@ -3,7 +3,7 @@ name = "xtask"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "pixelforge developer tooling: cargo xtask fixtures|golden|bench|snapshot|gallery"
+description = "pixelforge developer tooling: cargo xtask fixtures|golden|bench|snapshot|gallery|help-record"
 publish = false
 
 [[bin]]

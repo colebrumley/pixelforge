@@ -115,7 +115,7 @@ fn cli_output_is_byte_identical_gerstner() {
 }
 
 #[test]
-#[ignore] // slow (pytest -m slow)
+#[ignore] // slow
 fn cli_output_is_byte_identical_kopf() {
     cli_output_is_byte_identical("kopf");
 }

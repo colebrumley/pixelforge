@@ -1,5 +1,5 @@
-//! tests/test_version.py: one version everywhere. `test_version_is_single_sourced` (the
-//! installed distribution metadata) is Python-only and not ported.
+//! One version everywhere: the workspace `Cargo.toml` (the single source), the library's
+//! `pipeline::VERSION` and `pixelforge --version`.
 
 use std::path::{Path, PathBuf};
 
@@ -28,19 +28,9 @@ fn toml_version(path: &Path, section: &str) -> String {
 }
 
 #[test]
-fn version_matches_pyproject_and_cargo() {
-    let root = root();
-    let source = std::fs::read_to_string(root.join("pixelforge/version.py")).unwrap();
-    let source = source
-        .lines()
-        .find_map(|l| l.strip_prefix("__version__ = \""))
-        .and_then(|v| v.strip_suffix('"'))
-        .expect("__version__ in pixelforge/version.py");
-    let project = toml_version(&root.join("pyproject.toml"), "[project]");
-    let cargo = toml_version(&root.join("Cargo.toml"), "[workspace.package]");
+fn version_is_the_workspace_version() {
+    let cargo = toml_version(&root().join("Cargo.toml"), "[workspace.package]");
     assert_eq!(cargo, VERSION);
-    assert_eq!(project, source);
-    assert_eq!(source, VERSION);
     assert_eq!(pixelforge::pipeline::VERSION, VERSION);
 }
 

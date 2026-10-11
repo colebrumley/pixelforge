@@ -1,5 +1,5 @@
 //! tests/test_golden.py: the output regression guard. Every fixture/method/preset is run
-//! with scripts/update_golden.py's config and its pixel digest and config hash compared with
+//! with `cargo xtask golden`'s config and its pixel digest and config hash compared with
 //! tests/golden.json.
 
 mod common;
@@ -121,8 +121,8 @@ fn output_matches_golden(key: &str) {
         pixels_sha256: golden[key]["pixels_sha256"].as_str().unwrap().to_string(),
     };
     let actual = compute_entry(key);
-    let hint = "If this output change is intentional, run `uv run python \
-                scripts/update_golden.py` and commit tests/golden.json with the change.";
+    let hint = "If this output change is intentional, run `cargo xtask golden` and commit \
+                tests/golden.json with the change.";
     assert_eq!(
         actual.config_hash, expected.config_hash,
         "{key}: config hash changed (a default, a preset or the version changed). {hint}"

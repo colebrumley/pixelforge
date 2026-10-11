@@ -566,8 +566,8 @@ fn test_tileset_longest_edge_never_exceeds_the_target() {
         let (out_w, out_h, _) = layout_of(300, 200, &c);
         assert!((out_w, out_h) == (240, 168) && out_w.max(out_h) <= 256);
     }
-    // Python's `pytest.raises` wraps `Config(...)` too, which is what rejects it (tile_size
-    // must be <= 512), before `resolve_layout` runs.
+    // The Python test's `raises` block wrapped `Config(...)` too, which is what rejects it
+    // (tile_size must be <= 512), before `resolve_layout` runs.
     let err = config_err(&[("preset", s("background")), ("tile_size", int(1000))]);
     assert!(err.contains("tile_size"), "{err}");
 }

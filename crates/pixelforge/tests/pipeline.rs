@@ -17,7 +17,7 @@ use pixelforge::pyjson::{py_round, Json};
 use pixelforge::{color, palette, parallel, preprocess, quantize};
 
 // ---------------------------------------------------------------------------------------
-// Log capture (pytest's caplog): one global logger for this binary; tests run on parallel
+// Log capture: one global logger for this binary; tests run on parallel
 // threads, so each record carries its thread and a test only sees its own.
 
 struct Record {
@@ -626,7 +626,7 @@ fn tileset_fit_pad_centers_aspect_preserving_content() {
 #[test]
 fn tileset_fit_stretch_and_crop_fill_the_canvas() {
     let stretch = tile_fit("stretch");
-    // pytest.warns(UserWarning, match="aspect").
+    // The aspect warning (a `UserWarning` in Python).
     assert!(
         stretch.warnings.iter().any(|w| w.contains("aspect")),
         "{:?}",

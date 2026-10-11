@@ -739,6 +739,30 @@ fn group_help_lists_one_line_summaries() {
         .contains("Every image in INPUT_DIR is converted with ONE shared palette"));
 }
 
+/// The `--help` of the group and of each command equals its record in tests/cli_help/
+/// (rewrite the records with `cargo xtask help-record` and review the diff).
+#[test]
+fn help_texts_match_the_records() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cli_help");
+    for command in ["group", "batch", "compare", "convert", "palettes"] {
+        let r = if command == "group" {
+            invoke!("--help")
+        } else {
+            invoke!(command, "--help")
+        };
+        assert_eq!(r.code, 0, "{command}: {}", r.stderr);
+        let path = dir.join(format!("rust-{command}.txt"));
+        let recorded = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            r.stdout == recorded,
+            "`pixelforge {command} --help` differs from {}; if the change is intended, run \
+             `cargo xtask help-record` and commit the records.\n--- live ---\n{}",
+            path.display(),
+            r.stdout
+        );
+    }
+}
+
 #[test]
 fn version_and_usage_errors_like_click() {
     let r = invoke!("--version");
