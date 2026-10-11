@@ -8,6 +8,22 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Preprocessing filters and the enhance pass in Rust (Phase 4 of
+  `docs/rust-migration-plan.md`, not yet called by the pipeline): `filters.rs` ports
+  scipy's `uniform_filter1d` (any size, `nearest`/`wrap`), `gaussian_filter1d`, the 3×3
+  `median_filter` and scikit-image 0.26's `denoise_bilateral` (`mode="edge"`, its lookup
+  tables as written, including the spatial table's `-win_size // 2` grid; threaded per pixel
+  band, 0.40 s at 1 thread vs skimage's 1.39 s on a 1024² image); `enhance.rs` ports
+  `np.percentile`, the levels, `_stretch`, `_gaussian`, `_blur` and `enhance`. Uniform and
+  median filters, percentiles, `_stretch` and the running-mean blur are bitwise equal to
+  numpy/scipy; the Gaussian filter (≤ 2.2e-16), the bilateral (≤ 7.8e-16 except where
+  skimage's FMA-contracted colour distance crosses a lookup bin: 4 pixels of the 1024²
+  portrait, ≤ 5.4e-6) and `enhance` (≤ 4.2e-15) differ in the last bits only, because the
+  macOS arm64 scipy/skimage wheels fuse multiply-adds and numpy's `exp`/`expm1` are not
+  `libm`'s; no 8-bit value changes. Exposed as `_native.uniform_filter1d`,
+  `gaussian_filter1d`, `median_filter3`, `denoise`, `percentile`, `enhance_levels`,
+  `enhance` and `subject_brightness_from`, tested in `tests/test_filters_native.py` and
+  `tests/test_enhance_native.py` and, in Rust, against the oracle files.
 - The Config in Rust (`crates/pixelforge/src/config/`, Phase 2 of
   `docs/rust-migration-plan.md`): construction from presets and explicit values, Python's
   coercion and validation with byte-identical error messages, `replace`, the palette

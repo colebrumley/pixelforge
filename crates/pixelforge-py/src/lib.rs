@@ -6,6 +6,7 @@
 
 mod color;
 mod config;
+mod filters;
 mod gerstner;
 mod kopf;
 mod npsum;
@@ -53,6 +54,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(kopf::kopf_c_step, m)?)?;
     m.add_function(wrap_pyfunction!(kopf::kopf_spatial_refill, m)?)?;
     config::register(m)?;
+    filters::register(m)?;
     color::register(m)?;
     npsum::register(m)?;
     postprocess::register(m)?;
