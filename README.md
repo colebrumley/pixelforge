@@ -79,6 +79,11 @@ uv run pytest -q                    # full suite, as CI runs it
 uv run pytest -q -m "not slow"      # skip the full-size kopf cases while iterating
 ```
 
+`uv run python scripts/bench.py` times every method and preset on a few fixtures, prints the
+per-stage timings and writes `bench/<git sha>.json` (`--compare bench/OLD.json` for speedups).
+`uv run python scripts/snapshot_outputs.py save`, then `... compare` after a change, reports per
+case whether the output is identical, how many pixels differ and their ΔE (exit 1 if any differ).
+
 ## CLI
 
 ```bash
