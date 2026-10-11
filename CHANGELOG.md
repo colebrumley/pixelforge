@@ -107,6 +107,32 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Image I/O is native (migration plan Phase 6, part A): `pixelforge.io`'s `load`,
+  `open_regular`, `sha256_file`, `from_image` (arrays; PIL images are converted in Python as
+  before, then hashed natively), `from_rgba`, `indices_to_rgba`, `upscale_nearest`,
+  `save_png` and `read_png_text` call `crates/pixelforge/src/io.rs` through `_native.io_*`;
+  Pillow is no longer imported by `pixelforge.io` except for PIL-image inputs. Decoding
+  reproduces Pillow 12's `open` + `exif_transpose` + `_to_8bit` + `convert("RGBA")`
+  bitwise (pixels and sha256, checked against the old module, kept as
+  `tests/io_reference.py`, in `tests/test_io_native.py`) for PNG in every bit depth and
+  colour type (interlaced, tRNS palettes and colour keys compared as Pillow compares them,
+  16-bit RGB/RGBA/grey+alpha reduced to the high byte as Pillow's `;16B` unpackers do,
+  16-bit grey rescaled by 1/257), GIF (first frame on Pillow's canvas), BMP, TIFF (1/8/16/32-bit
+  grey, palette, LA, RGB, RGBA incl. associated alpha, CMYK; raw, LZW, deflate, packbits),
+  lossless WEBP, and EXIF/XMP orientations 1–8; frame counts come from headers only. Lossy
+  WEBP decodes identically to libwebp on the fixtures and samples. JPEG (zune-jpeg vs
+  libjpeg-turbo) does not: at quality 90 with 4:2:0 chroma the fixtures and samples differ
+  by at most 7 levels on 0–53% of pixels (2 on `checker_tiles`, 7 on `town_painted`), with
+  4:4:4 chroma by at most 3 on ≤ 1.6%, greyscale by at most 1 on ≤ 0.6%. Errors keep their
+  classes and messages (budget, Pillow's decompression-bomb limit, non-regular files,
+  unsupported content, `OSError`s); undecodable files keep the `could not decode image (`
+  prefix with the Rust decoder's reason. `save_png` writes 8-bit indexed PNGs (Pillow wrote
+  1/2/4-bit for small palettes): the bytes differ, the decoded mode, palette, transparency,
+  pixels and text are the same. `MAX_INPUT_PIXELS` moved from `layout.rs` to `io.rs`, and
+  `palette.rs` uses `io::open_regular`. New library dependencies (exact pins): `image`
+  0.25.10 (no default features; png, jpeg, gif, webp, bmp, tiff), and the decoders it
+  already pulls in, called directly where `image` hides what Pillow exposes: `png` 0.18.1,
+  `gif` 0.14.2, `tiff` 0.11.3, `miniz_oxide` 0.8.9.
 - The box and kopf downscalers are native (migration plan Phase 5, part A):
   `pixelforge.downscale.box.run` calls `_native.box_run`
   (`crates/pixelforge/src/boxfilter.rs`) and `kopf.run` calls `_native.kopf_run`
