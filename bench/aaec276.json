@@ -1,0 +1,840 @@
+{
+  "timestamp": "2026-10-11T17:36:07+00:00",
+  "git_sha": "aaec2765d1e9e1524feaa05aec08bce4c454d6a7",
+  "git_dirty": false,
+  "package_tree": "043491f74cc8be91b8bf1f535a8b8f9d2cd010d4",
+  "package_dirty": false,
+  "machine": "arm64",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "python": null,
+  "numpy": null,
+  "scipy": null,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "pixelforge": "0.2.0",
+  "env": {},
+  "repeat": 3,
+  "warmup": true,
+  "cases": [
+    {
+      "input": "tests/fixtures/line_diag.png",
+      "label": "line_diag",
+      "preset": "sprite",
+      "method": "box",
+      "config_hash": "9b554794bff99e33179cf6c6ea9b56e7e42f11873db9dbc80c2d1d1abe128c23",
+      "total_s": 0.0043,
+      "timings": {
+        "load": 0.0004,
+        "preprocess": 0.0036,
+        "downscale": 0.0001,
+        "palette_quantize": 0.0,
+        "postprocess": 0.0001
+      },
+      "iterations": 1,
+      "method_stats": {
+        "iterations": 1
+      },
+      "output_size": [
+        64,
+        64
+      ],
+      "palette_size": 1,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/line_diag.png",
+      "label": "line_diag",
+      "preset": "sprite",
+      "method": "kopf",
+      "config_hash": "a66280848fa8a94868cbce2ff3e9ee49dcceb3fc650ab1927713bcd129b7e037",
+      "total_s": 0.0064,
+      "timings": {
+        "load": 0.0004,
+        "preprocess": 0.0037,
+        "downscale": 0.0022,
+        "palette_quantize": 0.0,
+        "postprocess": 0.0001
+      },
+      "iterations": 2,
+      "method_stats": {
+        "iterations": 2,
+        "converged": true,
+        "sigma_capped": 0
+      },
+      "output_size": [
+        64,
+        64
+      ],
+      "palette_size": 1,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/line_diag.png",
+      "label": "line_diag",
+      "preset": "sprite",
+      "method": "gerstner",
+      "config_hash": "cf4d10e54036df675954ec612def5ae4b57a60becf41004c491a0749933dab91",
+      "total_s": 0.0055,
+      "timings": {
+        "load": 0.0004,
+        "preprocess": 0.0036,
+        "downscale": 0.0014,
+        "palette_quantize": 0.0,
+        "postprocess": 0.0001
+      },
+      "iterations": 1,
+      "method_stats": {
+        "iterations": 1,
+        "palette_size": 1,
+        "hit_iteration_cap": false,
+        "final_temperature": 0.7
+      },
+      "output_size": [
+        64,
+        64
+      ],
+      "palette_size": 1,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/line_diag.png",
+      "label": "line_diag",
+      "preset": "background",
+      "method": "box",
+      "config_hash": "d54657b792862b4a0e0d73598b54da4810d7617b4019f85748bf78b2cf24f7ef",
+      "total_s": 0.0173,
+      "timings": {
+        "load": 0.0004,
+        "preprocess": 0.0071,
+        "downscale": 0.0004,
+        "palette_quantize": 0.0063,
+        "postprocess": 0.0015,
+        "tiles": 0.0013
+      },
+      "iterations": 1,
+      "method_stats": {
+        "iterations": 1
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 2,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/line_diag.png",
+      "label": "line_diag",
+      "preset": "background",
+      "method": "kopf",
+      "config_hash": "2772294141c733db96db074ef9eb8d3fc7abb2078f8eb9f2378ff7a502375ab1",
+      "total_s": 0.0557,
+      "timings": {
+        "load": 0.0006,
+        "preprocess": 0.0074,
+        "downscale": 0.0384,
+        "palette_quantize": 0.0064,
+        "postprocess": 0.0014,
+        "tiles": 0.0013
+      },
+      "iterations": 4,
+      "method_stats": {
+        "iterations": 4,
+        "converged": true,
+        "sigma_capped": 0
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 2,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/line_diag.png",
+      "label": "line_diag",
+      "preset": "background",
+      "method": "gerstner",
+      "config_hash": "b3e3a35383c1f03ee299a230e223437596723642b7059e00099f9a7db4449c62",
+      "total_s": 0.1535,
+      "timings": {
+        "load": 0.0004,
+        "preprocess": 0.009,
+        "downscale": 0.1382,
+        "palette_quantize": 0.0028,
+        "postprocess": 0.0015,
+        "tiles": 0.0013
+      },
+      "iterations": 14,
+      "method_stats": {
+        "iterations": 14,
+        "palette_size": 2,
+        "hit_iteration_cap": false,
+        "final_temperature": 0.6679200554495129
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 2,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/circle_alpha.png",
+      "label": "circle_alpha",
+      "preset": "sprite",
+      "method": "box",
+      "config_hash": "9b554794bff99e33179cf6c6ea9b56e7e42f11873db9dbc80c2d1d1abe128c23",
+      "total_s": 0.0119,
+      "timings": {
+        "load": 0.0006,
+        "preprocess": 0.0105,
+        "downscale": 0.0001,
+        "palette_quantize": 0.0004,
+        "postprocess": 0.0002
+      },
+      "iterations": 1,
+      "method_stats": {
+        "iterations": 1
+      },
+      "output_size": [
+        64,
+        64
+      ],
+      "palette_size": 16,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/circle_alpha.png",
+      "label": "circle_alpha",
+      "preset": "sprite",
+      "method": "kopf",
+      "config_hash": "a66280848fa8a94868cbce2ff3e9ee49dcceb3fc650ab1927713bcd129b7e037",
+      "total_s": 0.0494,
+      "timings": {
+        "load": 0.0006,
+        "preprocess": 0.011,
+        "downscale": 0.037,
+        "palette_quantize": 0.0004,
+        "postprocess": 0.0002
+      },
+      "iterations": 13,
+      "method_stats": {
+        "iterations": 13,
+        "converged": true,
+        "sigma_capped": 0
+      },
+      "output_size": [
+        64,
+        64
+      ],
+      "palette_size": 13,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/circle_alpha.png",
+      "label": "circle_alpha",
+      "preset": "sprite",
+      "method": "gerstner",
+      "config_hash": "cf4d10e54036df675954ec612def5ae4b57a60becf41004c491a0749933dab91",
+      "total_s": 0.0278,
+      "timings": {
+        "load": 0.0006,
+        "preprocess": 0.0104,
+        "downscale": 0.0166,
+        "palette_quantize": 0.0,
+        "postprocess": 0.0002
+      },
+      "iterations": 13,
+      "method_stats": {
+        "iterations": 13,
+        "palette_size": 2,
+        "hit_iteration_cap": false,
+        "final_temperature": 0.8705416017826421
+      },
+      "output_size": [
+        64,
+        64
+      ],
+      "palette_size": 3,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/circle_alpha.png",
+      "label": "circle_alpha",
+      "preset": "background",
+      "method": "box",
+      "config_hash": "d54657b792862b4a0e0d73598b54da4810d7617b4019f85748bf78b2cf24f7ef",
+      "total_s": 0.0275,
+      "timings": {
+        "load": 0.0006,
+        "preprocess": 0.0157,
+        "downscale": 0.0003,
+        "palette_quantize": 0.0075,
+        "postprocess": 0.0017,
+        "tiles": 0.0015
+      },
+      "iterations": 1,
+      "method_stats": {
+        "iterations": 1
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 18,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/circle_alpha.png",
+      "label": "circle_alpha",
+      "preset": "background",
+      "method": "kopf",
+      "config_hash": "2772294141c733db96db074ef9eb8d3fc7abb2078f8eb9f2378ff7a502375ab1",
+      "total_s": 0.0784,
+      "timings": {
+        "load": 0.0006,
+        "preprocess": 0.0161,
+        "downscale": 0.0513,
+        "palette_quantize": 0.007,
+        "postprocess": 0.0017,
+        "tiles": 0.0014
+      },
+      "iterations": 6,
+      "method_stats": {
+        "iterations": 6,
+        "converged": true,
+        "sigma_capped": 0
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 20,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/circle_alpha.png",
+      "label": "circle_alpha",
+      "preset": "background",
+      "method": "gerstner",
+      "config_hash": "b3e3a35383c1f03ee299a230e223437596723642b7059e00099f9a7db4449c62",
+      "total_s": 0.9006,
+      "timings": {
+        "load": 0.0006,
+        "preprocess": 0.017,
+        "downscale": 0.8753,
+        "palette_quantize": 0.0038,
+        "postprocess": 0.0021,
+        "tiles": 0.0015
+      },
+      "iterations": 56,
+      "method_stats": {
+        "iterations": 56,
+        "palette_size": 32,
+        "hit_iteration_cap": false,
+        "final_temperature": 0.05018499096498175
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 32,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/noisy_gradient.png",
+      "label": "noisy_gradient",
+      "preset": "sprite",
+      "method": "box",
+      "config_hash": "9b554794bff99e33179cf6c6ea9b56e7e42f11873db9dbc80c2d1d1abe128c23",
+      "total_s": 0.0168,
+      "timings": {
+        "load": 0.0006,
+        "preprocess": 0.0147,
+        "downscale": 0.0003,
+        "palette_quantize": 0.001,
+        "postprocess": 0.0002
+      },
+      "iterations": 1,
+      "method_stats": {
+        "iterations": 1
+      },
+      "output_size": [
+        64,
+        64
+      ],
+      "palette_size": 17,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/noisy_gradient.png",
+      "label": "noisy_gradient",
+      "preset": "sprite",
+      "method": "kopf",
+      "config_hash": "a66280848fa8a94868cbce2ff3e9ee49dcceb3fc650ab1927713bcd129b7e037",
+      "total_s": 0.1354,
+      "timings": {
+        "load": 0.0007,
+        "preprocess": 0.0149,
+        "downscale": 0.1185,
+        "palette_quantize": 0.001,
+        "postprocess": 0.0002
+      },
+      "iterations": 30,
+      "method_stats": {
+        "iterations": 30,
+        "converged": true,
+        "sigma_capped": 10
+      },
+      "output_size": [
+        64,
+        64
+      ],
+      "palette_size": 17,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/noisy_gradient.png",
+      "label": "noisy_gradient",
+      "preset": "sprite",
+      "method": "gerstner",
+      "config_hash": "cf4d10e54036df675954ec612def5ae4b57a60becf41004c491a0749933dab91",
+      "total_s": 0.1252,
+      "timings": {
+        "load": 0.0007,
+        "preprocess": 0.0148,
+        "downscale": 0.1095,
+        "palette_quantize": 0.0,
+        "postprocess": 0.0002
+      },
+      "iterations": 68,
+      "method_stats": {
+        "iterations": 68,
+        "palette_size": 16,
+        "hit_iteration_cap": false,
+        "final_temperature": 0.8960548631765111
+      },
+      "output_size": [
+        64,
+        64
+      ],
+      "palette_size": 17,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/noisy_gradient.png",
+      "label": "noisy_gradient",
+      "preset": "background",
+      "method": "box",
+      "config_hash": "d54657b792862b4a0e0d73598b54da4810d7617b4019f85748bf78b2cf24f7ef",
+      "total_s": 0.0471,
+      "timings": {
+        "load": 0.0007,
+        "preprocess": 0.0159,
+        "downscale": 0.0004,
+        "palette_quantize": 0.0244,
+        "postprocess": 0.0035,
+        "tiles": 0.0018
+      },
+      "iterations": 1,
+      "method_stats": {
+        "iterations": 1
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 32,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/noisy_gradient.png",
+      "label": "noisy_gradient",
+      "preset": "background",
+      "method": "kopf",
+      "config_hash": "2772294141c733db96db074ef9eb8d3fc7abb2078f8eb9f2378ff7a502375ab1",
+      "total_s": 0.119,
+      "timings": {
+        "load": 0.0006,
+        "preprocess": 0.0155,
+        "downscale": 0.0722,
+        "palette_quantize": 0.0249,
+        "postprocess": 0.0037,
+        "tiles": 0.0017
+      },
+      "iterations": 7,
+      "method_stats": {
+        "iterations": 7,
+        "converged": true,
+        "sigma_capped": 0
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 32,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/noisy_gradient.png",
+      "label": "noisy_gradient",
+      "preset": "background",
+      "method": "gerstner",
+      "config_hash": "b3e3a35383c1f03ee299a230e223437596723642b7059e00099f9a7db4449c62",
+      "total_s": 1.9299,
+      "timings": {
+        "load": 0.0007,
+        "preprocess": 0.0144,
+        "downscale": 1.9052,
+        "palette_quantize": 0.0042,
+        "postprocess": 0.0033,
+        "tiles": 0.0017
+      },
+      "iterations": 97,
+      "method_stats": {
+        "iterations": 97,
+        "palette_size": 28,
+        "hit_iteration_cap": false,
+        "final_temperature": 0.8960548631765111
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 28,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/gradient6.png",
+      "label": "gradient6",
+      "preset": "sprite",
+      "method": "box",
+      "config_hash": "9b554794bff99e33179cf6c6ea9b56e7e42f11873db9dbc80c2d1d1abe128c23",
+      "total_s": 0.0176,
+      "timings": {
+        "load": 0.0007,
+        "preprocess": 0.0154,
+        "downscale": 0.0003,
+        "palette_quantize": 0.001,
+        "postprocess": 0.0002
+      },
+      "iterations": 1,
+      "method_stats": {
+        "iterations": 1
+      },
+      "output_size": [
+        64,
+        64
+      ],
+      "palette_size": 17,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/gradient6.png",
+      "label": "gradient6",
+      "preset": "sprite",
+      "method": "kopf",
+      "config_hash": "a66280848fa8a94868cbce2ff3e9ee49dcceb3fc650ab1927713bcd129b7e037",
+      "total_s": 0.1279,
+      "timings": {
+        "load": 0.0007,
+        "preprocess": 0.0145,
+        "downscale": 0.1114,
+        "palette_quantize": 0.001,
+        "postprocess": 0.0002
+      },
+      "iterations": 30,
+      "method_stats": {
+        "iterations": 30,
+        "converged": true,
+        "sigma_capped": 47
+      },
+      "output_size": [
+        64,
+        64
+      ],
+      "palette_size": 17,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/gradient6.png",
+      "label": "gradient6",
+      "preset": "sprite",
+      "method": "gerstner",
+      "config_hash": "cf4d10e54036df675954ec612def5ae4b57a60becf41004c491a0749933dab91",
+      "total_s": 0.19,
+      "timings": {
+        "load": 0.0007,
+        "preprocess": 0.0154,
+        "downscale": 0.1737,
+        "palette_quantize": 0.0,
+        "postprocess": 0.0002
+      },
+      "iterations": 111,
+      "method_stats": {
+        "iterations": 111,
+        "palette_size": 16,
+        "hit_iteration_cap": false,
+        "final_temperature": 0.8073771928513357
+      },
+      "output_size": [
+        64,
+        64
+      ],
+      "palette_size": 17,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/gradient6.png",
+      "label": "gradient6",
+      "preset": "background",
+      "method": "box",
+      "config_hash": "d54657b792862b4a0e0d73598b54da4810d7617b4019f85748bf78b2cf24f7ef",
+      "total_s": 0.0415,
+      "timings": {
+        "load": 0.0008,
+        "preprocess": 0.0152,
+        "downscale": 0.0005,
+        "palette_quantize": 0.0205,
+        "postprocess": 0.0024,
+        "tiles": 0.0018
+      },
+      "iterations": 1,
+      "method_stats": {
+        "iterations": 1
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 32,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/gradient6.png",
+      "label": "gradient6",
+      "preset": "background",
+      "method": "kopf",
+      "config_hash": "2772294141c733db96db074ef9eb8d3fc7abb2078f8eb9f2378ff7a502375ab1",
+      "total_s": 0.1267,
+      "timings": {
+        "load": 0.0008,
+        "preprocess": 0.0146,
+        "downscale": 0.0852,
+        "palette_quantize": 0.0215,
+        "postprocess": 0.0024,
+        "tiles": 0.0019
+      },
+      "iterations": 9,
+      "method_stats": {
+        "iterations": 9,
+        "converged": true,
+        "sigma_capped": 0
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 32,
+      "repeat": 3
+    },
+    {
+      "input": "tests/fixtures/gradient6.png",
+      "label": "gradient6",
+      "preset": "background",
+      "method": "gerstner",
+      "config_hash": "b3e3a35383c1f03ee299a230e223437596723642b7059e00099f9a7db4449c62",
+      "total_s": 7.7742,
+      "timings": {
+        "load": 0.0007,
+        "preprocess": 0.0144,
+        "downscale": 7.7496,
+        "palette_quantize": 0.0043,
+        "postprocess": 0.0027,
+        "tiles": 0.002
+      },
+      "iterations": 299,
+      "method_stats": {
+        "iterations": 299,
+        "palette_size": 32,
+        "hit_iteration_cap": false,
+        "final_temperature": 0.8073771928513357
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 32,
+      "repeat": 3
+    },
+    {
+      "input": "knight_src.png",
+      "external": true,
+      "label": "knight_src",
+      "preset": "sprite",
+      "method": "box",
+      "config_hash": "9b554794bff99e33179cf6c6ea9b56e7e42f11873db9dbc80c2d1d1abe128c23",
+      "total_s": 0.0741,
+      "timings": {
+        "load": 0.0042,
+        "preprocess": 0.0687,
+        "downscale": 0.0005,
+        "palette_quantize": 0.0004,
+        "postprocess": 0.0003
+      },
+      "iterations": 1,
+      "method_stats": {
+        "iterations": 1
+      },
+      "output_size": [
+        44,
+        64
+      ],
+      "palette_size": 17,
+      "repeat": 3
+    },
+    {
+      "input": "knight_src.png",
+      "external": true,
+      "label": "knight_src",
+      "preset": "sprite",
+      "method": "kopf",
+      "config_hash": "a66280848fa8a94868cbce2ff3e9ee49dcceb3fc650ab1927713bcd129b7e037",
+      "total_s": 0.3184,
+      "timings": {
+        "load": 0.0043,
+        "preprocess": 0.068,
+        "downscale": 0.2454,
+        "palette_quantize": 0.0004,
+        "postprocess": 0.0003
+      },
+      "iterations": 50,
+      "method_stats": {
+        "iterations": 50,
+        "converged": false,
+        "sigma_capped": 130
+      },
+      "output_size": [
+        44,
+        64
+      ],
+      "palette_size": 17,
+      "repeat": 3
+    },
+    {
+      "input": "knight_src.png",
+      "external": true,
+      "label": "knight_src",
+      "preset": "sprite",
+      "method": "gerstner",
+      "config_hash": "cf4d10e54036df675954ec612def5ae4b57a60becf41004c491a0749933dab91",
+      "total_s": 0.1905,
+      "timings": {
+        "load": 0.004,
+        "preprocess": 0.067,
+        "downscale": 0.1192,
+        "palette_quantize": 0.0,
+        "postprocess": 0.0002
+      },
+      "iterations": 61,
+      "method_stats": {
+        "iterations": 61,
+        "palette_size": 16,
+        "hit_iteration_cap": false,
+        "final_temperature": 0.8638204834757989
+      },
+      "output_size": [
+        44,
+        64
+      ],
+      "palette_size": 17,
+      "repeat": 3
+    },
+    {
+      "input": "portrait.png",
+      "external": true,
+      "label": "portrait",
+      "preset": "background",
+      "method": "box",
+      "config_hash": "d54657b792862b4a0e0d73598b54da4810d7617b4019f85748bf78b2cf24f7ef",
+      "total_s": 0.2956,
+      "timings": {
+        "load": 0.0178,
+        "preprocess": 0.2414,
+        "downscale": 0.0042,
+        "palette_quantize": 0.0259,
+        "postprocess": 0.0037,
+        "tiles": 0.0021
+      },
+      "iterations": 1,
+      "method_stats": {
+        "iterations": 1
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 32,
+      "repeat": 3
+    },
+    {
+      "input": "portrait.png",
+      "external": true,
+      "label": "portrait",
+      "preset": "background",
+      "method": "kopf",
+      "config_hash": "2772294141c733db96db074ef9eb8d3fc7abb2078f8eb9f2378ff7a502375ab1",
+      "total_s": 1.6973,
+      "timings": {
+        "load": 0.0181,
+        "preprocess": 0.2374,
+        "downscale": 1.4107,
+        "palette_quantize": 0.025,
+        "postprocess": 0.0035,
+        "tiles": 0.0022
+      },
+      "iterations": 24,
+      "method_stats": {
+        "iterations": 24,
+        "converged": true,
+        "sigma_capped": 22
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 32,
+      "repeat": 3
+    },
+    {
+      "input": "portrait.png",
+      "external": true,
+      "label": "portrait",
+      "preset": "background",
+      "method": "gerstner",
+      "config_hash": "b3e3a35383c1f03ee299a230e223437596723642b7059e00099f9a7db4449c62",
+      "total_s": 3.815,
+      "timings": {
+        "load": 0.018,
+        "preprocess": 0.2376,
+        "downscale": 3.5492,
+        "palette_quantize": 0.0044,
+        "postprocess": 0.0033,
+        "tiles": 0.002
+      },
+      "iterations": 139,
+      "method_stats": {
+        "iterations": 139,
+        "palette_size": 32,
+        "hit_iteration_cap": false,
+        "final_temperature": 0.9251062652610866
+      },
+      "output_size": [
+        256,
+        256
+      ],
+      "palette_size": 32,
+      "repeat": 3
+    }
+  ]
+}

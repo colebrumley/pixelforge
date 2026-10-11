@@ -1,0 +1,22 @@
+[package]
+name = "pixelforge-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Python binding of the pixelforge library (extension module pixelforge._native)"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+name = "pixelforge_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29.3", features = ["extension-module", "abi3-py311"] }
+numpy = "0.29.0"
+# The library only: without the default "cli" feature, so no clap in the extension module.
+pixelforge = { path = "../pixelforge", default-features = false }
+# The library's progress records, forwarded to Python's logging (src/pylog.rs).
+log = "0.4"

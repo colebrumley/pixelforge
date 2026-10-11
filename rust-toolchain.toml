@@ -1,0 +1,6 @@
+# One toolchain for every machine and for CI, so clippy, rustfmt and codegen agree.
+# Bump deliberately; the determinism contract does not depend on the compiler version,
+# but the lint set and formatting do.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]

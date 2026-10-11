@@ -1,0 +1,49 @@
+[package]
+name = "pixelforge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Deterministic conversion of raster images into 16-bit-style pixel art (library)"
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+# The command-line program (src/main.rs, src/cli/). The Python binding builds the library
+# without it (default-features = false), so clap never reaches the extension module.
+default = ["cli"]
+cli = ["dep:clap"]
+
+[[bin]]
+name = "pixelforge"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[dependencies]
+# Pure-Rust exp: bit-identical on every platform, unlike f64::exp (platform libm).
+libm = "0.2.16"
+# Progress lines (kopf/gerstner iterations); the binding forwards them to Python's logging.
+log = "0.4"
+# Config.hash() and palette_sha256 (SHA-256).
+sha2 = "0.10.9"
+# JPEG, WEBP and BMP decoding (io::load); no default features, so no other format (and no
+# rayon) is reachable.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+# The decoders below are the ones `image` already uses, called directly where Pillow's
+# result needs what `image` hides: raw PNG samples and indexed output with PLTE/tRNS/tEXt
+# (io::save_png), GIF frame indices, TIFF palette and 32-bit grey samples.
+png = "=0.18.1"
+gif = "=0.14.2"
+tiff = "=0.11.3"
+# zTXt/iTXt values with Pillow's 1 MiB limit (io::read_png_text, EXIF in text chunks).
+miniz_oxide = "=0.8.9"
+# The CLI's argument parser (builder API: the flags are generated from the field table).
+clap = { version = "=4.5.61", features = ["string"], optional = true }
+
+[dev-dependencies]
+# Reads the oracle files in tests/oracle (float_roundtrip: exact float parsing).
+serde_json = { version = "1.0.152", features = ["float_roundtrip"] }
+# CLI integration tests (tests/cli.rs).
+assert_cmd = "=2.2.2"
+predicates = "=3.1.4"

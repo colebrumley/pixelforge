@@ -1,0 +1,7 @@
+# `cargo xtask <command>`: the developer tooling in xtask/ (fixtures, golden, bench,
+# snapshot, gallery). Built in release mode because bench, snapshot, golden and gallery run
+# the pipeline, which is many times slower unoptimised; the release profile is the
+# workspace's (Cargo.toml), so bench measures the code the shipped binary runs.
+# Determinism: no rustflags here (no target-cpu=native, no fast-math); see Cargo.toml.
+[alias]
+xtask = "run --quiet --release --package xtask --"
