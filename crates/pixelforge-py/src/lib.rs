@@ -8,6 +8,7 @@ mod color;
 mod config;
 mod gerstner;
 mod kopf;
+mod npsum;
 
 use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
@@ -51,5 +52,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(kopf::kopf_spatial_refill, m)?)?;
     config::register(m)?;
     color::register(m)?;
+    npsum::register(m)?;
     Ok(())
 }
