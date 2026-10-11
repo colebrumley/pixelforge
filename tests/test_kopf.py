@@ -4,6 +4,7 @@ from scipy import ndimage
 
 from pixelforge import Config, color
 from pixelforge.downscale import box, kopf
+from pixelforge.downscale._reference import kopf as kopf_ref
 
 DARK_L = 50.0   # "dark" = closer to black than to white
 
@@ -151,7 +152,7 @@ def test_silhouette_does_not_saturate_sigma(preprocessed):
 @pytest.mark.parametrize("n_in, n_out", [(1024, 256), (1000, 37), (64, 64), (5, 3), (300, 299)])
 def test_axis_selections_are_slices_when_downscaling(n_in, n_out):
     # reduce() relies on every slot's runs and kernels being contiguous ranges (slices).
-    axis = kopf._Axis(n_in, n_out)
+    axis = kopf_ref._Axis(n_in, n_out)
     for runs, kernels in axis.sel:
         assert isinstance(runs, slice) and isinstance(kernels, slice)
         assert runs.stop - runs.start == kernels.stop - kernels.start
@@ -160,9 +161,9 @@ def test_axis_selections_are_slices_when_downscaling(n_in, n_out):
 @pytest.mark.parametrize("ufunc", [np.add, np.maximum])
 def test_reduce_slices_match_fancy_indexing(ufunc):
     rng = np.random.default_rng(3)
-    layout = kopf._Layout(97, 83, 23, 19)
+    layout = kopf_ref._Layout(97, 83, 23, 19)
     # The same layout with index-array selections exercises the np.ix_ fallback.
-    fallback = kopf._Layout(97, 83, 23, 19)
+    fallback = kopf_ref._Layout(97, 83, 23, 19)
     for axis in (fallback.y, fallback.x):
         axis.sel = [(np.arange(len(axis.starts))[r], np.arange(axis.n_out)[k]) for r, k in axis.sel]
     for jy, jx in layout.slots:
@@ -175,5 +176,5 @@ def test_reduce_slices_match_fancy_indexing(ufunc):
 
 
 def test_contiguity_fallback_for_gapped_kernels():
-    runs, kernels = kopf._as_slices(np.array([0, 1, 2]), np.array([0, 2, 3]))
+    runs, kernels = kopf_ref._as_slices(np.array([0, 1, 2]), np.array([0, 2, 3]))
     assert isinstance(runs, np.ndarray) and isinstance(kernels, np.ndarray)

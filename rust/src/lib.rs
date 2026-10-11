@@ -5,6 +5,8 @@
 //! crate, and reductions in a fixed order that does not depend on the thread count.
 
 mod gerstner;
+mod kopf;
+mod parallel;
 
 use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
@@ -35,5 +37,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(native_version, m)?)?;
     m.add_function(wrap_pyfunction!(sum_f64, m)?)?;
     gerstner::register(m)?;
+    m.add_function(wrap_pyfunction!(kopf::kopf_em_step, m)?)?;
+    m.add_function(wrap_pyfunction!(kopf::kopf_c_step, m)?)?;
+    m.add_function(wrap_pyfunction!(kopf::kopf_spatial_refill, m)?)?;
     Ok(())
 }

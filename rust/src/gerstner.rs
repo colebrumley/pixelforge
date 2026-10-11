@@ -5,6 +5,7 @@
 //! output. Each pixel replays the operations of the numpy reference
 //! (`pixelforge/downscale/_reference/gerstner.py`) in the same order.
 
+use crate::parallel::thread_count;
 use numpy::ndarray::{Array2, Array3};
 use numpy::{
     IntoPyArray, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3,
@@ -15,19 +16,6 @@ use pyo3::prelude::*;
 
 /// Rows per band. Fixed, so the partition never depends on the thread count.
 const BAND_ROWS: usize = 8;
-
-/// Worker threads: `PIXELFORGE_THREADS` if set to an integer ≥ 1, else the available
-/// parallelism. Affects speed only.
-fn thread_count() -> usize {
-    if let Ok(value) = std::env::var("PIXELFORGE_THREADS") {
-        if let Ok(n) = value.trim().parse::<usize>() {
-            if n >= 1 {
-                return n;
-            }
-        }
-    }
-    std::thread::available_parallelism().map_or(1, |n| n.get())
-}
 
 /// Run `fill(first_row, band)` over consecutive bands of `BAND_ROWS` rows of `out` (rows of
 /// `row_len` elements). The bands are fixed by the shape alone and band b goes to thread

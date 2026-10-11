@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.29.3", features = ["extension-module", "abi3-py311"] }
 numpy = "0.29.0"
+# Pure-Rust exp: bit-identical on every platform, unlike f64::exp (platform libm).
 libm = "0.2.16"
 
 # Determinism: no fast-math and no target-cpu=native, here or in any .cargo/config.toml.
