@@ -605,9 +605,34 @@ pub fn build_named(config: &crate::config::Config) -> Result<Option<Vec<[f64; 3]
     ))
 }
 
+/// The palette half of Section 7 applied directly to pixel colors (no superpixels):
+/// `palette.mcda`. The annealer runs on the pixels with the uniform prior 1/n for at most
+/// `g_max_iters` steps. Error for no pixels or `k` < 1.
+pub fn mcda(
+    lab_pixels: &[[f64; 3]],
+    k: i64,
+    config: &crate::config::Config,
+) -> Result<Vec<[f64; 3]>, PaletteError> {
+    if lab_pixels.is_empty() {
+        return Err(PaletteError("mcda needs at least one pixel".to_string()));
+    }
+    let k = usize::try_from(k)
+        .ok()
+        .filter(|&k| k >= 1)
+        .ok_or_else(|| PaletteError(format!("mcda needs K >= 1, got {k}")))?;
+    let mut annealer = crate::annealer::PaletteAnnealer::new(lab_pixels, k, config);
+    let weights = vec![1.0 / lab_pixels.len() as f64; lab_pixels.len()];
+    for _ in 0..config.g_max_iters.max(0) {
+        annealer.step(lab_pixels, &weights);
+        if annealer.done {
+            break;
+        }
+    }
+    Ok(annealer.colors())
+}
+
 /// Palette `(K, 3)` in LAB for the given pixels according to the config: the named palette,
-/// else median cut. The mcda source is not ported yet (the Python pipeline keeps it) and is
-/// an error here.
+/// else mcda or median cut (`resolve_source`).
 pub fn build(
     lab_pixels: &[[f64; 3]],
     config: &crate::config::Config,
@@ -616,9 +641,7 @@ pub fn build(
         return Ok(named);
     }
     if resolve_source(config) == "mcda" {
-        return Err(PaletteError(
-            "palette source 'mcda' is not available in the Rust library yet".to_string(),
-        ));
+        return mcda(lab_pixels, config.palette_size, config);
     }
     median_cut(lab_pixels, config.palette_size)
 }
