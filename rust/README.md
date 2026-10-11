@@ -1,15 +1,26 @@
 # pixelforge_native
 
 The Rust extension module `pixelforge._native` (PyO3 + the `numpy` crate). It holds the
-per-pixel hot loops of the downscalers (so far kopf: `src/kopf.rs`); orchestration, config
-and I/O stay in Python. See `docs/rust-port-plan.md`.
+per-pixel hot loops of the downscalers (kopf: `src/kopf.rs`, gerstner: `src/gerstner.rs`);
+orchestration, config and I/O stay in Python. See `docs/rust-port-plan.md`.
 
 Functions:
 
+- `src/lib.rs`: `native_version`, `sum_f64` (sequential sum, a smoke test) and
+  `thread_count` (the worker-thread count from `PIXELFORGE_THREADS`, recorded in
+  `_meta.json`).
+- `src/kopf.rs`: `kopf_em_step` (fused E-step + M-step sums), `kopf_c_step` (directional
+  and overlap sums) and `kopf_spatial_refill` (spatial-only recoloring of starved kernels).
+  They reduce over bands of `BAND_ROWS` (32) rows merged in band order; the bands are part
+  of the numerics. The numpy versions are kept in `pixelforge/downscale/_reference/kopf.py`.
 - `src/gerstner.rs`: `slic_assign` (one modified-SLIC assignment pass, bitwise equal to the
-  numpy `_assign`) and `bilateral_filter` (the superpixel bilateral filter, `libm::exp`).
-  Both run over fixed row bands on `PIXELFORGE_THREADS` threads (default: available
-  parallelism); the thread count never changes the output. The numpy versions they replace
+  numpy `_assign`), `bilateral_filter` (the superpixel bilateral filter, `libm::exp`) and
+  `superpixel_stats` (count, mass, colour and centre sums per superpixel, bitwise equal to
+  the seven `np.bincount` calls it replaces). `slic_assign` and `bilateral_filter` are
+  per-pixel independent and run over fixed 8-row bands on `PIXELFORGE_THREADS` threads
+  (default: available parallelism); those bands are not part of the numerics.
+  `superpixel_stats` is single-threaded on purpose: it sums in row-major pixel order like
+  `np.bincount`, and per-band partial sums would change the rounding. The numpy versions
   are kept in `pixelforge/downscale/_reference/gerstner.py` for tests and benchmarks.
 
 Build: maturin is the package's build backend, so `uv sync --locked` (or any `pip install`)

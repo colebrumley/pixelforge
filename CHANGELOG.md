@@ -38,7 +38,9 @@ All notable changes to this project are documented here. The format follows
   `pixelforge/downscale/_reference/kopf.py` for tests and benchmarks only.
 - New environment variable `PIXELFORGE_THREADS`: worker threads for the native kernels
   (default: the available parallelism). It affects speed only; results are bitwise
-  identical for any thread count (fixed 32-row bands merged in a fixed order).
+  identical for any thread count (fixed 32-row bands merged in a fixed order). `_meta.json`
+  records the thread count used as `environment.threads` (recorded, never hashed, like the
+  library versions); `pixelforge._native.thread_count()` returns it.
 - The native sums accumulate in a different order than numpy's block sums and use `libm`'s
   `exp`, so kopf's internal values differ from the numpy version at ~1e-15 relative. No
   output changed: every case of `scripts/snapshot_outputs.py compare` against the
@@ -123,6 +125,12 @@ All notable changes to this project are documented here. The format follows
   numpy's `exp` at rounding level, so a few output pixels can change (10 of 65,536 on
   noisy_gradient at the background size, none on the other fixtures). The goldens were
   regenerated and are unchanged. Timings: TODO, measure on an idle machine.
+- gerstner: the per-iteration superpixel statistics (pixel count, mass, colour sums and
+  centre sums, seven `np.bincount` calls) are one native pass, `_native.superpixel_stats`.
+  It sums each superpixel in pixel order like `np.bincount`, so the results are bitwise
+  identical: every case of `scripts/snapshot_outputs.py compare` is unchanged and the goldens
+  did not change. The pass is single-threaded on purpose (per-band partial sums would change
+  the rounding). Timings: TODO, measure on an idle machine.
 
 - Inputs much larger than the output are box-reduced by an integer factor to at most
   `prereduce_max_ratio` (8) times the output size before denoising and downscaling (nearly
