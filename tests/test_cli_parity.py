@@ -5,6 +5,9 @@ transparency and text chunks must decode equal, `_palette.json`, `_palette.hex`,
 `_tilemap.*`, `.tmj` and `shared_palette.hex` must be byte-identical, `_meta.json` equal
 without `environment` and `stats.timings`, the stdout JSON lines equal after the same drops
 (output directories masked), and the `-v` stderr lines equal with the stage timings masked.
+`compare`'s proof sheets are labelled in different fonts, so only their cells are compared.
+The `--help` texts must list the same options with the same defaults, and are recorded in
+tests/cli_help/ (`python scripts/cli_help.py`).
 
 The Rust binary is ``$PIXELFORGE_BIN`` when set, else ``cargo run --quiet --bin pixelforge``
 from the workspace; the tests skip when neither is available.
@@ -20,12 +23,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import cli_help
 import numpy as np
 import pytest
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures"
+HELP_RECORDS = ROOT / "tests" / "cli_help"
 FIXTURE_NAMES = sorted(p.stem for p in FIXTURES.glob("*.png"))
 TIMING = re.compile(r"\b\d+\.\d\d s\b")
 BYTE_IDENTICAL = ("_palette.json", "_palette.hex", "_tilemap.json", "_tilemap.csv", ".tmj",
@@ -255,6 +260,33 @@ def test_compare_proof_sheet_matches_python(rust, tmp_path, extra):
     assert len(py_cells) == len(rs_cells) == len(py_json["cells"])
     for i, (a, b) in enumerate(zip(py_cells, rs_cells)):
         assert a == b, f"cell {i} ({py_json['cells'][i]['column']})"
+
+
+@pytest.mark.parametrize("command", cli_help.COMMANDS)
+def test_help_options_and_defaults_match_python(rust, command):
+    """Every option of the click help is in the Rust help, with the same [default: ...] text,
+    and the Rust help has no other options. The layouts differ (see scripts/cli_help.py); the
+    negative halves of on/off pairs are hidden in the Rust help, which names them once."""
+    py_help, rs_help = cli_help.python_help(command), cli_help.rust_help(rust, command)
+    py, rs = cli_help.options(py_help), cli_help.options(rs_help)
+    assert py, py_help
+    hidden = {name for name in py if name.startswith("--no-") and name not in rs}
+    for name in hidden:
+        positive = "--" + name.removeprefix("--no-")
+        assert positive in py and positive in rs, name
+        assert py[name] == py[positive], name
+    if hidden:
+        assert "also has a --no- form" in rs_help
+    assert set(rs) == set(py) - hidden
+    assert {name: rs[name] for name in rs} == {name: py[name] for name in rs}
+
+
+@pytest.mark.parametrize("command", cli_help.COMMANDS)
+def test_help_records_are_current(rust, command):
+    """tests/cli_help/ holds both helps as they are now (`python scripts/cli_help.py`)."""
+    assert (HELP_RECORDS / f"python-{command}.txt").read_text() == cli_help.python_help(command)
+    assert (HELP_RECORDS / f"rust-{command}.txt").read_text() == cli_help.rust_help(rust,
+                                                                                    command)
 
 
 @pytest.mark.parametrize("args", [

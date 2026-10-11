@@ -1,0 +1,19 @@
+Usage: pixelforge [OPTIONS] COMMAND [ARGS]...
+
+  Deterministic conversion of images into 16-bit-style pixel art.
+
+  Results go to stdout (JSON lines); progress (-v), warnings and errors go to
+  stderr.
+
+Options:
+  --version      Show the version and exit.
+  --debug        Print full tracebacks on errors (also: PIXELFORGE_DEBUG=1).
+  -v, --verbose  Progress on stderr: -v per stage, -vv every iteration.
+  -q, --quiet    Only errors on stderr (no warnings or hints).
+  --help         Show this message and exit.
+
+Commands:
+  batch     Convert a directory's images with a shared palette.
+  compare   Compare box, kopf and gerstner side by side.
+  convert   Convert one image.
+  palettes  List the bundled palettes.
