@@ -14,3 +14,4 @@ rust/target/
 *.abi3.so
 *.pyd
 *.dylib
+bench/snapshots/

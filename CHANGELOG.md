@@ -11,6 +11,10 @@ All notable changes to this project are documented here. The format follows
 - The package now builds a Rust extension, `pixelforge._native`, with maturin (crate in
   `rust/`), so installing from the repo requires a stable Rust toolchain alongside Python
   3.11+. The extension carries no numerics yet; outputs are unchanged.
+- `scripts/bench.py` (per-stage timings per input/preset/method, JSON with git sha and
+  environment, `--compare OLD.json`) and `scripts/snapshot_outputs.py` (`save`/`compare` of
+  output pixels and palettes with differing-pixel counts and ΔE). `bench/0edd462.json` is the
+  pure-Python baseline on an Apple M1 Max for the Rust port (`docs/rust-port-plan.md`).
 - `--enhance` (with `--enhance-radius`, `--enhance-black`, `--enhance-white`) and `--ink`: an
   opt-in pre-pass before downscaling for photos. `enhance` stretches the subject's brightness
   and adds local contrast at about two output pixels, so eyes, mouths and other sub-pixel
