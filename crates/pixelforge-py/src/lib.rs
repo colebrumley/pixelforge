@@ -10,6 +10,7 @@ mod config;
 mod downscale;
 mod filters;
 mod gerstner;
+mod io;
 mod kopf;
 mod mask;
 mod npsum;
@@ -73,5 +74,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     quantize::register(m)?;
     mask::register(m)?;
     preprocess::register(m)?;
+    io::register(m)?;
     Ok(())
 }
