@@ -1,5 +1,5 @@
-//! The whole Rust pipeline against the Python oracle (tests/oracle/outputs_small, recorded by
-//! tests/oracle/record_oracles.py with `Result.save`): for each `<name>_config.json`, run
+//! The whole Rust pipeline against the Python oracle (tests/oracle/outputs_small, recorded from
+//! the Python version with `Result.save`): for each `<name>_config.json`, run
 //! `pipeline::run` on the fixture, save, and compare every output. Text files byte for byte;
 //! `_meta.json` without `environment` and `stats.timings`, as a structure and re-serialised
 //! (so the layout is checked too); PNGs decoded (mode, size, palette, transparency, text,

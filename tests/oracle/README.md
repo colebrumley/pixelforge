@@ -2,14 +2,13 @@
 
 Reference outputs recorded from the Python implementation (numpy, scipy, scikit-image,
 Pillow) before it was removed (0.2.0), read by the Rust tests in `crates/pixelforge/tests/`
-(`*_oracle.rs`; docs/rust-migration-plan.md, Sections 4.5 and 5, Phase 1). Do not edit by
-hand.
+(`*_oracle.rs`). Do not edit by hand.
 
-They were recorded by `tests/oracle/record_oracles.py`, kept here to document how. It no
-longer runs in this repository: it needs the Python package (removed in 0.2.0; in the git
-history up to 1fff901) and the Python stack at the versions in `versions.json`. The recorder
-is deterministic (fixed inputs, `numpy.random.default_rng` with fixed seeds), and the
-directory stays under 2 MB.
+They were recorded by `tests/oracle/record_oracles.py`, which is in the git history up to
+227b1df. It needs the Python package (removed in 0.2.0; in the git history up to 1fff901)
+and the Python stack at the versions in `versions.json`, so the files cannot be re-recorded
+from this tree. The recorder was deterministic (fixed inputs, `numpy.random.default_rng`
+with fixed seeds).
 
 The recording version (`versions.json`, `pixelforge`) is part of every recorded
 `config_hash`; the Rust tests check those hashes at that version and the canonical JSON as
@@ -55,7 +54,7 @@ whose items are all scalars is written on one line. Conventions:
   `UPPER_BOUNDS` (2^63 already fails the 64-bit check in `_coerce`).
 - `lab_lattice.json`: `axis` = `np.linspace(0, 1, 10)`; `rgb`, the 1,000 lattice colours (r
   outermost, then g, then b); `lab` = skimage `rgb2lab(rgb)` (D65). The three LAB files
-  are recorded from scikit-image itself, not from `pixelforge.color` (native since Phase 2),
+  are recorded from scikit-image itself, not from `pixelforge.color`,
   which is tested against them.
 - `lab_roundtrip.json`: `lab`, 200 inputs: L in `linspace(0, 100, 8)` × a and b in
   `linspace(-128, 127, 5)` (L outermost; many are out of gamut); `lab_to_rgb` (floats

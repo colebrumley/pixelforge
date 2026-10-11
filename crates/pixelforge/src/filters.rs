@@ -1,6 +1,5 @@
 //! scipy.ndimage's 1-D filters, its 3×3 median filter and scikit-image's bilateral denoise,
-//! ported operation for operation for the preprocessing stage (`pixelforge/preprocess.py`,
-//! docs/rust-migration-plan.md Decision 4 and Section 4.2).
+//! ported operation for operation for the preprocessing stage (`pixelforge/preprocess.py`).
 //!
 //! Arrays are row-major `(h, w)` slices (images `(h, w, 3)`). The sources reproduced:
 //!

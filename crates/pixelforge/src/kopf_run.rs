@@ -8,7 +8,7 @@
 //! spatial-only refill) are `kopf::em_step`, `kopf::c_step` and `kopf::spatial_refill`.
 //! Everything per kernel, i.e. the M-step and C-step algebra on (ho, wo) arrays, the
 //! constraints, convergence and logging, is here, ported operation for operation from the
-//! numpy code (docs/rust-migration-plan.md, Decisions 3 and 6):
+//! numpy code:
 //!
 //! - elementwise expressions are evaluated in numpy's order, one rounding per ufunc;
 //! - `np.mean` over the fed kernels is numpy's pairwise sum (`npsum`);

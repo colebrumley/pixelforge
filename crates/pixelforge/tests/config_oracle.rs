@@ -1,5 +1,5 @@
 //! The Rust Config against the Python oracle (tests/oracle/config_corpus.json and
-//! config_errors.json, recorded by tests/oracle/record_oracles.py): canonical JSON, hash,
+//! config_errors.json, recorded from the Python version): canonical JSON, hash,
 //! to_dict, palette and every ConfigError message, byte for byte.
 //!
 //! Palette paths in the corpus are relative to the repository root, so the tests run with

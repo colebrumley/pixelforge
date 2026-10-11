@@ -751,7 +751,7 @@ fn help_texts_match_the_records() {
             invoke!(command, "--help")
         };
         assert_eq!(r.code, 0, "{command}: {}", r.stderr);
-        let path = dir.join(format!("rust-{command}.txt"));
+        let path = dir.join(format!("{command}.txt"));
         let recorded = std::fs::read_to_string(&path).unwrap();
         assert!(
             r.stdout == recorded,

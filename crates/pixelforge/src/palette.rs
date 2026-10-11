@@ -477,7 +477,7 @@ fn np_sign(x: f64) -> f64 {
 /// angle (30° bins, achromatic ones separately); within a bin a colour's hue moves toward
 /// 270° if darker than the bin's mean L and toward 90° if lighter, by
 /// 6°·min(1, |L − mean L| / 30), never past the target. L and chroma are kept. Every
-/// operation is numpy's; only `libm`'s transcendentals (Decision 6) can move the last bit of
+/// operation is numpy's; only `libm`'s transcendentals can move the last bit of
 /// a moved colour's a and b.
 pub fn regularize_ramps(palette: &[[f64; 3]]) -> Vec<[f64; 3]> {
     let deg = 180.0 / std::f64::consts::PI; // npy_rad2deg

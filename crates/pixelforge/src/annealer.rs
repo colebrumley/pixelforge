@@ -3,7 +3,7 @@
 //! [`principal_axis`], used by `gerstner::run` on superpixel colours and by `palette::mcda`
 //! directly on pixel colours.
 //!
-//! Ported operation for operation from `pixelforge/downscale/gerstner.py` (Phase 5). The
+//! Ported operation for operation from `pixelforge/downscale/gerstner.py`. The
 //! reductions follow numpy's order (`npsum`): sums over the points (`axis=0`, `np.bincount`)
 //! are sequential in point order, sums along a row (`axis=1`, `.sum()` of a 1-D array) are
 //! numpy's pairwise sum. `exp` and `log` come from `libm`. Three routines numpy hands to
@@ -54,10 +54,10 @@ impl Default for Tunables {
 
 /// The seeded perturbation's generator: SplitMix64 (Steele, Lea, Flood 2014) over the seed.
 ///
-/// DEVIATION: Phase 5 — the Python version drew from `numpy.random.default_rng(seed)`
-/// (PCG64 behind numpy's SeedSequence). The plan (docs/rust-migration-plan.md §4.2) does not
-/// require that stream: a seeded run stays deterministic and still differs from the unseeded
-/// one, but its output differs from the Python version's for the same seed.
+/// DEVIATION: the Python version drew from `numpy.random.default_rng(seed)` (PCG64 behind
+/// numpy's SeedSequence). That stream is not reproduced: a seeded run stays deterministic and
+/// still differs from the unseeded one, but its output differs from the Python version's for
+/// the same seed.
 #[derive(Clone, Debug)]
 pub struct SplitMix64 {
     state: u64,

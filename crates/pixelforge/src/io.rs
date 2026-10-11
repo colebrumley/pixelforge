@@ -28,7 +28,7 @@
 //!   how they become RGBA (palette TIFFs are read as grey indices and mapped through the
 //!   `ColorMap` here, since the crate does not expand palettes).
 //! - JPEG, WEBP, BMP: the `image` crate. JPEG and lossy WEBP are not bit-identical to
-//!   libjpeg/libwebp (docs/rust-migration-plan.md, Section 6); everything else is.
+//!   libjpeg/libwebp; everything else is.
 //!
 //! Palette lookups out of the palette's range give black, as in Pillow's "P" images.
 //! EXIF orientation is read as `Image.getexif()` reads it (IFD0 tag 274 of the `eXIf` /

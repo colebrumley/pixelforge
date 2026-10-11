@@ -1,6 +1,6 @@
 //! The box (area-mean) downscaler in CIELAB, `pixelforge/downscale/box.py`.
 //!
-//! Exact stage (docs/rust-migration-plan.md, Section 4.2): bitwise identical to the Python
+//! Exact stage: bitwise identical to the Python
 //! version. `np.bincount(..., weights=...)` adds the weights of each bin sequentially in
 //! pixel order, starting from 0.0, which is what the per-cell accumulators below do; the
 //! colour sums are offsets from the first opaque pixel's colour (so a solid image averages

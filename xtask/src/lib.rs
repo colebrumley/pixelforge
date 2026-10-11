@@ -1,4 +1,4 @@
-//! pixelforge developer tooling (`cargo xtask …`, Decision 9 of docs/rust-migration-plan.md):
+//! pixelforge developer tooling (`cargo xtask …`):
 //! `fixtures`, `golden`, `bench`, `snapshot` and `gallery` (ports of the Python scripts
 //! removed in 0.2.0, with their options, tables, files and exit codes) and `help-record`.
 //!

@@ -1,5 +1,5 @@
 //! `xtask help-record [--bin PATH] [OUTDIR]`: record the `--help` text of the `pixelforge`
-//! group and of each command in `tests/cli_help/rust-<command>.txt` (`<command>` = `group`
+//! group and of each command in `tests/cli_help/<command>.txt` (`<command>` = `group`
 //! for the group itself). `crates/pixelforge/tests/cli.rs` asserts the live help equals
 //! these records, so rerun this after changing a flag, a default or a help text, and review
 //! the diff.
@@ -20,10 +20,10 @@ pub const COMMANDS: &[&str] = &["group", "batch", "compare", "convert", "palette
 
 pub fn command() -> Command {
     Command::new("help-record")
-        .about("Record the pixelforge --help texts in tests/cli_help/rust-<command>.txt.")
+        .about("Record the pixelforge --help texts in tests/cli_help/<command>.txt.")
         .long_about(
             "Record the --help text of the pixelforge group and of each command in \
-             OUTDIR/rust-<command>.txt (default OUTDIR: tests/cli_help). The program is \
+             OUTDIR/<command>.txt (default OUTDIR: tests/cli_help). The program is \
              --bin, else $PIXELFORGE_BIN, else target/release/pixelforge, built first.",
         )
         .arg(
@@ -113,7 +113,7 @@ pub fn main(m: &ArgMatches) -> Result<(), Fail> {
         .unwrap_or_else(default_dir);
     std::fs::create_dir_all(&dir).map_err(|e| fail(1, format!("{}: {e}", dir.display())))?;
     for command in COMMANDS {
-        let path = dir.join(format!("rust-{command}.txt"));
+        let path = dir.join(format!("{command}.txt"));
         std::fs::write(&path, help_text(&binary, command)?)
             .map_err(|e| fail(1, format!("{}: {e}", path.display())))?;
         println!("{}", path.display());

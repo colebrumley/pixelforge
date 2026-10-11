@@ -2,8 +2,7 @@
 //! labelling, 8-neighbour dilation, flat-background keying with fringe unmixing, and the
 //! subject mask, weight and crop box. Ported from `pixelforge/preprocess.py`
 //! (`_fill_transparent`, `flat_background`, `_unmix_fringe`, `_subject`) and from the scipy
-//! routines it calls; every function here is bitwise identical to the Python version
-//! (docs/rust-migration-plan.md, Section 4.2, "exact" stages).
+//! routines it calls; every function here is bitwise identical to the Python version.
 //!
 //! Images are row-major slices with explicit `(h, w)`: masks `h * w`, RGB `h * w * 3`.
 

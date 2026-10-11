@@ -1,5 +1,4 @@
-//! `pixelforge::color` against the scikit-image outputs recorded in tests/oracle
-//! (docs/rust-migration-plan.md, Phase 1 oracles, Phase 2 colour).
+//! `pixelforge::color` against the scikit-image outputs recorded in tests/oracle.
 //!
 //! The conversions use `libm`'s `pow`/`cbrt` where numpy uses the platform's, and a plain
 //! left-to-right dot product where skimage uses a BLAS matrix product, so floats may differ in

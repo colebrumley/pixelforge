@@ -20,6 +20,13 @@ All notable changes to this project are documented here. The format follows
   `f64::`/`f32::` forms; `xtask gallery` no longer overwrites the images of two inputs with
   the same stem; `xtask snapshot compare --tolerance-pixels` refuses a negative value.
 
+### Removed
+
+- The two port plans in `docs/`, the Python-to-Rust test mapping in
+  `crates/pixelforge/tests/README.md` and `tests/oracle/record_oracles.py` (the recorded
+  oracle files stay; the recorder is in the git history up to 227b1df). The `--help` records
+  in `tests/cli_help/` lost their `rust-` prefix.
+
 ## [0.2.0] - 2026-10-11
 
 pixelforge is now a single Rust program, installed with `cargo install --git`, with no
@@ -27,10 +34,9 @@ Python at runtime; the Python library API lives on as an optional binding. The p
 stage by stage against the last Python version (9f53516, which still reported 0.1.0), and
 its outputs are pixel-identical on the whole 48-case snapshot matrix and every golden case,
 except one gerstner case that sits on a near-tie (10 of 65,536 pixels) and outputs from JPEG
-inputs (a different decoder). Every `config_hash` changed with the version.
-`docs/rust-migration-plan.md` records the port phase by phase. This release also carries
-the Python improvements made since the 0.1.0 prototype (the photo pre-pass, proof sheets,
-Tiled output, the algorithm fixes below), which do change outputs against 0.1.0.
+inputs (a different decoder). Every `config_hash` changed with the version. This release also carries the Python
+improvements made since the 0.1.0 prototype (the photo pre-pass, proof sheets, Tiled output,
+the algorithm fixes below), which do change outputs against 0.1.0.
 
 ### Added
 
@@ -64,9 +70,8 @@ Tiled output, the algorithm fixes below), which do change outputs against 0.1.0.
   command's `--help` in `tests/cli_help/`, which the CLI tests compare with the live output.
   `bench/0edd462.json` (pure Python) and `bench/9f53516.json` (Python with the Rust hot
   loops) are the baselines.
-- The Rust test suite: 434 tests (3 ignored as slow), replacing the Python suite, with a
-  file-by-file mapping in `crates/pixelforge/tests/README.md`: per-module behavioural
-  tests, CLI integration tests (`assert_cmd`), determinism in-process and across fresh
+- The Rust test suite: 434 tests (3 ignored as slow), replacing the Python suite: per-module
+  behavioural tests, CLI integration tests (`assert_cmd`), determinism in-process and across fresh
   processes at 1, 2, 3 and 8 threads, `tests/golden.json` consumed by `golden.rs`, and
   `tests/oracle/` (1.7 MB of reference outputs recorded from Python: config canonical JSON,
   hashes and all 104 error messages, sRGB↔LAB, distance-transform indices, scipy's filters,
