@@ -3,6 +3,10 @@
 The input is segmented into exactly wo·ho superpixels (one per output pixel) while a K-color
 palette is grown by mass-constrained deterministic annealing (MCDA). `PaletteAnnealer` is the
 palette half on its own; `palette.mcda` reuses it directly on pixel colors.
+
+The two per-pixel hot loops, the SLIC assignment pass and the bilateral filter, run in the
+native extension (`pixelforge._native`, rust/src/gerstner.rs); the numpy versions they replace
+are kept in `_reference/gerstner.py` for tests and benchmarks.
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ import math
 
 import numpy as np
 
+from .. import _native
 from ..errors import PixelforgeError
 from . import Downscaled, neighbor_mean4
 from .box import cell_index
@@ -222,51 +227,14 @@ def _laplacian_smooth(grid: np.ndarray, fraction: float) -> np.ndarray:
 
 def bilateral_filter(image: np.ndarray, active: np.ndarray, sigma_color: float,
                      sigma_spatial: float) -> np.ndarray:
-    """Bilateral filter of an (H, W, 3) LAB image; pixels with active == False are excluded."""
-    h, w = active.shape
-    radius = int(math.ceil(2.0 * sigma_spatial))
-    padded = np.zeros((h + 2 * radius, w + 2 * radius, 3))
-    padded[radius:radius + h, radius:radius + w] = image
-    padded_active = np.zeros((h + 2 * radius, w + 2 * radius))
-    padded_active[radius:radius + h, radius:radius + w] = active
-    num = np.zeros((h, w, 3))
-    den = np.zeros((h, w))
-    inv_color = 1.0 / (2.0 * sigma_color * sigma_color)
-    inv_spatial = 1.0 / (2.0 * sigma_spatial * sigma_spatial)
-    # The unmasked weight is symmetric: w(p, p + d) = w(p + d, p). Bitwise so, not just
-    # mathematically: (a − b)² == (b − a)² exactly in IEEE arithmetic, the channel sum runs in
-    # the same order, and the spatial term depends on dx² + dy² only. So the weight of offset
-    # d at pixel p is the weight of offset −d at pixel p + d, and the exp() is needed for only
-    # one offset of each ± pair. The loop visits offsets in lexicographic order, so every d
-    # before (0, 0) comes before its mirror: it computes its weights and parks them, zero-
-    # padded, under the mirror's key; the mirror reads them back shifted by d. Shifted-in
-    # padding (p + d outside the image) is 0 where the direct formula gives some finite
-    # value, but padded_active is 0 there too, so both masked weights are +0.
-    # The accumulation below is unchanged (same offsets, same order, same operations), so
-    # the output is bitwise identical to computing every exp() directly.
-    mirrored: dict[tuple[int, int], np.ndarray] = {}
-    for dy in range(-radius, radius + 1):
-        for dx in range(-radius, radius + 1):
-            ys = slice(radius + dy, radius + dy + h)
-            xs = slice(radius + dx, radius + dx + w)
-            neighbor = padded[ys, xs]
-            if (dy, dx) in mirrored:
-                weight = mirrored.pop((dy, dx))[ys, xs] * padded_active[ys, xs]
-            else:
-                diff = neighbor - image
-                d2 = (diff * diff).sum(axis=-1)
-                weight = np.exp(-d2 * inv_color - (dx * dx + dy * dy) * inv_spatial)
-                if (dy, dx) != (0, 0):
-                    parked = np.zeros(padded_active.shape)
-                    parked[radius:radius + h, radius:radius + w] = weight
-                    mirrored[(-dy, -dx)] = parked
-                weight *= padded_active[ys, xs]
-            num += weight[..., None] * neighbor
-            den += weight
-    out = image.copy()
-    ok = den > 0
-    out[ok] = num[ok] / den[ok][:, None]
-    return out
+    """Bilateral filter of an (H, W, 3) LAB image; pixels with active == False are excluded.
+
+    radius = ceil(2·σ_s), zero padding, weight = exp(−ΔE²/(2σ_c²) − |d|²/(2σ_s²))·active;
+    pixels whose weights sum to 0 keep their value. Native (`_native.bilateral_filter`).
+    """
+    return _native.bilateral_filter(np.ascontiguousarray(image, dtype=np.float64),
+                                    np.ascontiguousarray(active), float(sigma_color),
+                                    float(sigma_spatial))
 
 
 class _Grid:
@@ -303,78 +271,23 @@ def _assign(grid: _Grid, cx, cy, radius: int, candidate_ok=None, channels=None, 
     grid cells around the pixel's home cell, visited in ascending s with a strict '<', so ties
     resolve to the lowest s. (Offsets falling off the grid are clipped to the border cell,
     which merely revisits a candidate.) With channels=None only the spatial term is used.
-    Returns the superpixel index per pixel, -1 where no candidate qualified.
+    `channels` is the (3, hi, wi) LAB image. Returns the superpixel index per pixel, -1 where
+    no candidate qualified. Native (`_native.slic_assign`), bitwise equal to the numpy
+    reference in `_reference/gerstner.py`.
     """
-    hi, wi, ho, wo = grid.hi, grid.wi, grid.ho, grid.wo
-    rx, ry = grid.rx, grid.ry
+    ho, wo = grid.ho, grid.wo
     center_x = cx.reshape(ho, wo)
-    center_y = cy.reshape(ho, wo)
     if candidate_ok is not None:
         # An infinitely distant center fails the window test and never wins.
         center_x = np.where(candidate_ok.reshape(ho, wo), center_x, np.inf)
-    planes = [center_x, center_y]
     if channels is not None:
-        planes += [np.ascontiguousarray(sp_color[:, c]).reshape(ho, wo) for c in range(3)]
-    cell_y, cell_x = np.arange(ho)[:, None], np.arange(wo)[None, :]
-
-    best_d = np.full((hi, wi), np.inf)
-    best_s = np.full((hi, wi), -1, dtype=np.int64)
-    for dy in range(-radius, radius + 1):
-        for dx in range(-radius, radius + 1):
-            y0, y1, x0, x1 = 0, hi, 0, wi
-            if windowed:
-                # Superpixel (sy, sx) is a candidate at this offset for the pixels of home cell
-                # (sy − dy, sx − dx). Restrict the pass to the pixel rectangle covering the
-                # cells whose candidate's center can lie inside the window at all.
-                home_y, home_x = cell_y - dy, cell_x - dx
-                reach = ((home_y >= 0) & (home_y < ho) & (home_x >= 0) & (home_x < wo)
-                         & (center_x >= (home_x - 1) * rx - 1) & (center_x <= (home_x + 2) * rx + 1)
-                         & (center_y >= (home_y - 1) * ry - 1) & (center_y <= (home_y + 2) * ry + 1))
-                if not reach.any():
-                    continue
-                sy, sx = np.nonzero(reach)
-                y0 = int(np.searchsorted(grid.home_y, sy.min() - dy, side="left"))
-                y1 = int(np.searchsorted(grid.home_y, sy.max() - dy, side="right"))
-                x0 = int(np.searchsorted(grid.home_x, sx.min() - dx, side="left"))
-                x1 = int(np.searchsorted(grid.home_x, sx.max() - dx, side="right"))
-            gy = np.clip(grid.home_y[y0:y1] + dy, 0, ho - 1)
-            gx = np.clip(grid.home_x[x0:x1] + dx, 0, wo - 1)
-            repeats = np.bincount(gx, minlength=wo)   # gx is non-decreasing: runs per cell
-
-            def spread(plane):
-                """(ho, wo) per-superpixel values → the candidate's value at every pixel."""
-                return np.repeat(plane[gy], repeats, axis=1)
-
-            ddx = spread(planes[0])
-            np.subtract(grid.px[None, x0:x1], ddx, out=ddx)
-            ddy = spread(planes[1])
-            np.subtract(grid.py[y0:y1, None], ddy, out=ddy)
-            d = ddx * ddx
-            d += ddy * ddy
-            np.sqrt(d, out=d)
-            d *= coef
-            if channels is not None:
-                acc = None
-                for c in range(3):
-                    diff = spread(planes[2 + c])
-                    np.subtract(channels[c][y0:y1, x0:x1], diff, out=diff)
-                    np.multiply(diff, diff, out=diff)
-                    if acc is None:
-                        acc = diff
-                    else:
-                        acc += diff
-                np.sqrt(acc, out=acc)
-                d += acc
-            sub_d, sub_s = best_d[y0:y1, x0:x1], best_s[y0:y1, x0:x1]
-            better = d < sub_d
-            if windowed:
-                np.abs(ddx, out=ddx)
-                better &= ddx <= rx
-                np.abs(ddy, out=ddy)
-                better &= ddy <= ry
-            np.copyto(sub_d, d, where=better)
-            np.copyto(sub_s, (gy * wo)[:, None] + gx[None, :], where=better)
-    return best_s
+        channels = np.ascontiguousarray(channels, dtype=np.float64)
+        sp_color = np.ascontiguousarray(sp_color, dtype=np.float64).reshape(ho, wo, 3)
+    return _native.slic_assign(grid.home_y, grid.home_x, grid.px, grid.py,
+                               np.ascontiguousarray(center_x, dtype=np.float64),
+                               np.ascontiguousarray(cy, dtype=np.float64).reshape(ho, wo),
+                               int(radius), float(grid.rx), float(grid.ry), float(coef),
+                               bool(windowed), channels, sp_color)
 
 
 def _weighted(values: np.ndarray, w: np.ndarray | None) -> np.ndarray:
@@ -409,7 +322,7 @@ def run(lab: np.ndarray, mask: np.ndarray, out_width: int, out_height: int, conf
     ys, xs = np.nonzero(mask)
     px, py = xs + 0.5, ys + 0.5
     col = np.ascontiguousarray(lab[ys, xs], dtype=np.float64)
-    channels = [np.ascontiguousarray(lab[..., c], dtype=np.float64) for c in range(3)]
+    channels = np.ascontiguousarray(np.moveaxis(lab, -1, 0), dtype=np.float64)   # (3, hi, wi)
     all_opaque = bool(mask.all())
     # Pixel weight (alpha) of the opaque pixels: superpixel means and centers are weighted by
     # it, and so is each superpixel's share of the palette prior. None when it is all ones.

@@ -184,7 +184,7 @@ def test_shared_grid_helpers():
 
 
 def _bilateral_reference(image, active, sigma_color, sigma_spatial):
-    """bilateral_filter before the symmetric-weight sharing: one exp() per offset."""
+    """The numpy bilateral_filter before the symmetric-weight sharing: one exp() per offset."""
     h, w = active.shape
     radius = int(np.ceil(2.0 * sigma_spatial))
     padded = np.zeros((h + 2 * radius, w + 2 * radius, 3))
@@ -213,11 +213,14 @@ def _bilateral_reference(image, active, sigma_color, sigma_spatial):
 
 
 @pytest.mark.parametrize("sigma_spatial", [0.4, 1.0, 1.5, 2.3])
-def test_bilateral_filter_matches_reference_bitwise(sigma_spatial):
+def test_reference_bilateral_filter_weight_sharing_is_bitwise(sigma_spatial):
+    # The numpy reference (tests/test_gerstner_native.py compares the native filter to it).
+    from pixelforge.downscale._reference import gerstner as reference
+
     rng = np.random.default_rng(7)
     h, w = 41, 37
     image = rng.random((h, w, 3)) * np.array([100.0, 160.0, 160.0]) - np.array([0.0, 80.0, 80.0])
     active = rng.random((h, w)) > 0.2
     expected = _bilateral_reference(image, active, 12.0, sigma_spatial)
-    got = gerstner.bilateral_filter(image, active, 12.0, sigma_spatial)
+    got = reference.bilateral_filter(image, active, 12.0, sigma_spatial)
     assert np.array_equal(got, expected)

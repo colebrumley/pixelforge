@@ -4,6 +4,8 @@
 //! no `target-cpu=native`, no `mul_add` unless used unconditionally, `exp` from the `libm`
 //! crate, and reductions in a fixed order that does not depend on the thread count.
 
+mod gerstner;
+
 use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
 
@@ -32,5 +34,6 @@ fn sum_f64(arr: PyReadonlyArray1<'_, f64>) -> f64 {
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(native_version, m)?)?;
     m.add_function(wrap_pyfunction!(sum_f64, m)?)?;
+    gerstner::register(m)?;
     Ok(())
 }
