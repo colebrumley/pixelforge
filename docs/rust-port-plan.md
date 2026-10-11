@@ -128,6 +128,16 @@ Same test pattern as Phase 2; regenerate goldens.
 
 Acceptance: portrait gerstner ≤ 5 s single thread, ≤ 2 s at 8 threads.
 
+### Phase 3b — gerstner per-iteration statistics (added after Phase 3)
+
+Phase 3 landed `slic_assign` (bitwise identical to numpy) and `bilateral_filter`. A profile
+on the loaded machine put the remaining gerstner time in Python: the per-iteration
+`np.bincount` statistics (counts, mass, colour sums, centre sums; ≈4 s on the portrait) and
+`PaletteAnnealer.step` (≈2.4 s), against ≈1.4 s for both native kernels threaded. To reach
+the Phase 3 targets, port the statistics as one fused pass over pixels that sums in pixel
+order, which matches `np.bincount` bit for bit (so no golden change). The annealer stays in
+Python unless a clean measurement still shows it dominating.
+
 ### Phase 4 — Threading and hardening
 
 - Fixed-band parallelism (Decision 3) in every kernel; a test asserts bitwise equality of
@@ -150,6 +160,13 @@ Acceptance: portrait gerstner ≤ 5 s single thread, ≤ 2 s at 8 threads.
 - Replace skimage's `denoise_bilateral` (1.35 s on 1024², now the floor) with the Rust
   bilateral filter. It changes output relative to skimage and swaps a dependency's numerics,
   so it is a product decision, not part of this port.
+
+- gerstner on smooth gradients (gradient6 at 256 px: 299 iterations vs 139 for the
+  portrait). Traced in Phase 3: after the palette reaches 29 of 32 colours on a continuous
+  ramp, the 29 sub-cluster pairs drift apart slowly and the convergence test (summed cluster
+  movement < `g_eps_palette`, a threshold that does not scale with the cluster count) takes
+  143 iterations to fire. Candidate fixes, both behaviour-changing: scale the threshold per
+  cluster, or cap iterations per temperature. Separate decision.
 
 ## Risks
 

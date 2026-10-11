@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The package now builds a Rust extension, `pixelforge._native`, with maturin (crate in
+  `rust/`), so installing from the repo requires a stable Rust toolchain alongside Python
+  3.11+. The extension holds the kopf and gerstner per-pixel loops (see Changed).
+- `scripts/bench.py` (per-stage timings per input/preset/method, JSON with git sha and
+  environment, `--compare OLD.json`) and `scripts/snapshot_outputs.py` (`save`/`compare` of
+  output pixels and palettes with differing-pixel counts and ΔE). `bench/0edd462.json` is the
+  pure-Python baseline on an Apple M1 Max for the Rust port (`docs/rust-port-plan.md`).
 - `--enhance` (with `--enhance-radius`, `--enhance-black`, `--enhance-white`) and `--ink`: an
   opt-in pre-pass before downscaling for photos. `enhance` stretches the subject's brightness
   and adds local contrast at about two output pixels, so eyes, mouths and other sub-pixel
@@ -20,6 +27,108 @@ All notable changes to this project are documented here. The format follows
   sheet to one row. Each cell also reports its full config. Plain `compare` is unchanged.
 - README: a photo sample (`docs/sample_photo.png`, from an AI-generated portrait) and guidance
   on source photos.
+- MIT `LICENSE` and package metadata (license expression, author, classifiers, project URLs).
+- Ruff configuration and `ruff` in the `dev` dependency group.
+- GitHub Actions CI: lint job plus tests on Ubuntu (Python 3.11/3.12/3.13) and macOS arm64 (3.12).
+- This changelog.
+- `fit` (`--fit pad|stretch|crop`) for tileset sizes; the default `pad` keeps the aspect ratio
+  instead of stretching to a tile multiple, the longest edge never exceeds the target, and a
+  `tile_size` above it is an error.
+
+- `Config.provenance()`; PNG `tEXt` chunks `pixelforge:palette_sha256` and `pixelforge:palette`.
+- `_meta.json` fields `palette_sha256`, `palette`, `environment` and, with `--remove-bg`,
+  `remove_bg_versions`.
+- Inline palettes: `--palette-name hex:rrggbb,rrggbb,...`.
+- Logging: a `pixelforge` logger (silent by default) with one INFO line per pipeline stage and
+  kopf/gerstner iteration progress (DEBUG each, INFO every 10th).
+- CLI `-v/--verbose` (`-v` stages, `-vv` iterations) and `-q/--quiet`; messages go to stderr
+  as `pixelforge: ...`, stdout stays JSON-only.
+- A warning when `key_bg` finds no flat background on an opaque input, suggesting
+  `--remove-bg` or an alpha channel.
+- `--help` text, per-preset defaults and allowed values for every flag (`config.FIELD_HELP`).
+- Tests: determinism across fresh processes with varied `PYTHONHASHSEED` and BLAS/OpenMP
+  threads, comparing every output file; golden pixel hashes in `tests/golden.json`
+  (regenerate with `scripts/update_golden.py` after an intentional output change); coverage
+  of mcda with box/kopf, the RGBA PNG fallback, median denoise, missing rembg, seamless
+  gerstner, empty batch directories, bayer8 and zero dither strength, tile size errors and
+  every config validation message; a seed test that can fail; committed fixtures checked
+  against `scripts/make_fixtures.py`.
+- A `slow` pytest marker on the full-size kopf cases; `pytest -m "not slow"` skips them.
+
+### Changed
+
+- kopf's per-pixel loops run natively (`pixelforge._native`, `rust/src/kopf.rs`): the E-step
+  fused with the M-step sums, the C-step's directional and overlap sums, and the final
+  spatial-only recoloring of starved kernels. The per-kernel algebra, constraints and
+  convergence stay in Python. kopf is much faster, and multithreaded (timings: TODO, measure
+  on an idle machine). The numpy implementation is kept in
+  `pixelforge/downscale/_reference/kopf.py` for tests and benchmarks only.
+- New environment variable `PIXELFORGE_THREADS`: worker threads for the native kernels
+  (default: the available parallelism). It affects speed only; results are bitwise
+  identical for any thread count (fixed 32-row bands merged in a fixed order). `_meta.json`
+  records the thread count used as `environment.threads` (recorded, never hashed, like the
+  library versions); `pixelforge._native.thread_count()` returns it.
+- The native sums accumulate in a different order than numpy's block sums and use `libm`'s
+  `exp`, so kopf's internal values differ from the numpy version at ~1e-15 relative. No
+  output changed: every case of `scripts/snapshot_outputs.py compare` against the
+  pure-Python baseline is pixel-identical, and `scripts/update_golden.py` regenerated
+  `tests/golden.json` unchanged.
+- gerstner: the SLIC assignment pass and the superpixel bilateral filter run in the native
+  extension (`_native.slic_assign`, `_native.bilateral_filter`, `rust/src/gerstner.rs`) on
+  `PIXELFORGE_THREADS` threads (default: available parallelism; the thread count never
+  changes the output). The palette annealer, Laplacian smoothing and control flow stay in
+  Python; the numpy kernels are kept in
+  `pixelforge/downscale/_reference/gerstner.py` for tests and benchmarks. The assignment is
+  bitwise identical to numpy; the bilateral filter uses `libm::exp`, which differs from
+  numpy's `exp` at rounding level, so a few output pixels can change (10 of 65,536 on
+  noisy_gradient at the background size, none on the other fixtures). The goldens were
+  regenerated and are unchanged. Timings: TODO, measure on an idle machine.
+- gerstner: the per-iteration superpixel statistics (pixel count, mass, colour sums and
+  centre sums, seven `np.bincount` calls) are one native pass, `_native.superpixel_stats`.
+  It sums each superpixel in pixel order like `np.bincount`, so the results are bitwise
+  identical: every case of `scripts/snapshot_outputs.py compare` is unchanged and the goldens
+  did not change. The pass is single-threaded on purpose (per-band partial sums would change
+  the rounding). Timings: TODO, measure on an idle machine.
+
+- Inputs much larger than the output are box-reduced by an integer factor to at most
+  `prereduce_max_ratio` (8) times the output size before denoising and downscaling (nearly
+  lossless at these ratios); kopf drops its per-slot offset arrays and reuses buffers. Kopf
+  1024²→64² went from ≈200 s and 550 MiB to ≈27 s and 67 MiB here.
+- Tilesets also write `NAME.tmj` (Tiled JSON with GID flip bits and an embedded tileset) and
+  `NAME_tilemap.csv`; the sheet is `tileset_columns` wide (default `ceil(sqrt(n))`, was 16);
+  `transparent_index="first"` puts the transparent entry at PNG index 0; `_palette.json`
+  marks `"used"` entries and `stats.colors_unused` counts the rest.
+- Image loading only enables the PNG, JPEG, GIF, WEBP, BMP and TIFF decoders, refuses
+  non-regular files, hashes inputs in a stream, and enforces a pixel budget
+  (`--max-input-pixels`, default 24 Mpx); Pillow's decompression-bomb warning is an error.
+- `Config` has upper bounds on sizes, iteration caps, `scale_preview`, `denoise_sigma_spatial`
+  and `saturation_beta`, rejects NaN/Infinity (also in `--config` JSON), and lowercases
+  `outline`. Palette files must be `.hex`/`.gpl`, under 64 KiB; errors name the line number,
+  never the line.
+- `--g-T-final` is now `--g-t-final`; the old spelling remains as a hidden alias.
+- The test suite fails with a pointer to `scripts/make_fixtures.py` when a fixture is missing
+  instead of regenerating it inside the repository.
+- gerstner uses the shared `downscale.neighbor_mean4` and `box.cell_index` helpers (output
+  unchanged); the remaining spec deviations carry `# DEVIATION:` comments.
+- Kopf folds per-kernel block sums into place through slices instead of `np.ix_` gathers
+  and scatters (output bitwise unchanged): portrait background 39.4 s → 35.2 s here.
+- gerstner's bilateral filter computes the symmetric colour/spatial weight once per ± offset
+  pair and shifts it for the mirror offset (output bitwise unchanged): 67 → 50 ms per call
+  on 256×256.
+
+- Downscalers weight colors by input alpha; semi-transparent fringes pull less (opaque
+  inputs are unchanged).
+- `Config.hash()` covers the palette's colors, so editing a palette file changes the hash.
+- `batch` passes its shared palette to frames inline; frame metadata no longer holds `--outdir`.
+- The sprite preset no longer enables `remove_bg` when rembg is installed; use `--remove-bg`.
+- `_palette.json` LAB values are rounded to 6 decimals.
+- The package version lives in `pixelforge/version.py`, mirrored in `pyproject.toml` and
+  `rust/Cargo.toml`; `tests/test_version.py` keeps the three equal.
+- README: byte identity across machines requires `git clone && uv sync --locked`.
+- Kopf no longer grows σ for kernels cut by the alpha silhouette or the image border, which
+  blurred features near sprite edges below the box filter's sharpness, and kernels whose
+  cell is mostly transparent no longer claim (and then drop) pixels near the silhouette, which
+  erased lines 2–3 px inside it. Kopf's alpha mask is now the box filter's cell rule.
 
 ### Fixed
 
@@ -56,78 +165,6 @@ All notable changes to this project are documented here. The format follows
 - 16-bit grayscale inputs are rescaled instead of clipped to white; EXIF orientation is
   applied; animations use the first frame with a warning.
 
-### Added
-
-- MIT `LICENSE` and package metadata (license expression, author, classifiers, project URLs).
-- `MANIFEST.in` so the sdist ships tests, fixtures, scripts, DESIGN.md and REQUIREMENTS.md.
-- Ruff configuration and `ruff` in the `dev` dependency group.
-- GitHub Actions CI: lint job plus tests on Ubuntu (Python 3.11/3.12/3.13) and macOS arm64 (3.12).
-- This changelog.
-- `fit` (`--fit pad|stretch|crop`) for tileset sizes; the default `pad` keeps the aspect ratio
-  instead of stretching to a tile multiple, the longest edge never exceeds the target, and a
-  `tile_size` above it is an error.
-
-- `Config.provenance()`; PNG `tEXt` chunks `pixelforge:palette_sha256` and `pixelforge:palette`.
-- `_meta.json` fields `palette_sha256`, `palette`, `environment` and, with `--remove-bg`,
-  `remove_bg_versions`.
-- Inline palettes: `--palette-name hex:rrggbb,rrggbb,...`.
-- Logging: a `pixelforge` logger (silent by default) with one INFO line per pipeline stage and
-  kopf/gerstner iteration progress (DEBUG each, INFO every 10th).
-- CLI `-v/--verbose` (`-v` stages, `-vv` iterations) and `-q/--quiet`; messages go to stderr
-  as `pixelforge: ...`, stdout stays JSON-only.
-- A warning when `key_bg` finds no flat background on an opaque input, suggesting
-  `--remove-bg` or an alpha channel.
-- `--help` text, per-preset defaults and allowed values for every flag (`config.FIELD_HELP`).
-- Tests: determinism across fresh processes with varied `PYTHONHASHSEED` and BLAS/OpenMP
-  threads, comparing every output file; golden pixel hashes in `tests/golden.json`
-  (regenerate with `scripts/update_golden.py` after an intentional output change); coverage
-  of mcda with box/kopf, the RGBA PNG fallback, median denoise, missing rembg, seamless
-  gerstner, empty batch directories, bayer8 and zero dither strength, tile size errors and
-  every config validation message; a seed test that can fail; committed fixtures checked
-  against `scripts/make_fixtures.py`.
-- A `slow` pytest marker on the full-size kopf cases; `pytest -m "not slow"` skips them.
-
-### Changed
-
-- Inputs much larger than the output are box-reduced by an integer factor to at most
-  `prereduce_max_ratio` (8) times the output size before denoising and downscaling (nearly
-  lossless at these ratios); kopf drops its per-slot offset arrays and reuses buffers. Kopf
-  1024²→64² went from ≈200 s and 550 MiB to ≈27 s and 67 MiB here.
-- Tilesets also write `NAME.tmj` (Tiled JSON with GID flip bits and an embedded tileset) and
-  `NAME_tilemap.csv`; the sheet is `tileset_columns` wide (default `ceil(sqrt(n))`, was 16);
-  `transparent_index="first"` puts the transparent entry at PNG index 0; `_palette.json`
-  marks `"used"` entries and `stats.colors_unused` counts the rest.
-- Image loading only enables the PNG, JPEG, GIF, WEBP, BMP and TIFF decoders, refuses
-  non-regular files, hashes inputs in a stream, and enforces a pixel budget
-  (`--max-input-pixels`, default 24 Mpx); Pillow's decompression-bomb warning is an error.
-- `Config` has upper bounds on sizes, iteration caps, `scale_preview`, `denoise_sigma_spatial`
-  and `saturation_beta`, rejects NaN/Infinity (also in `--config` JSON), and lowercases
-  `outline`. Palette files must be `.hex`/`.gpl`, under 64 KiB; errors name the line number,
-  never the line.
-- `--g-T-final` is now `--g-t-final`; the old spelling remains as a hidden alias.
-- The test suite fails with a pointer to `scripts/make_fixtures.py` when a fixture is missing
-  instead of regenerating it inside the repository.
-- gerstner uses the shared `downscale.neighbor_mean4` and `box.cell_index` helpers (output
-  unchanged); the remaining spec deviations carry `# DEVIATION:` comments.
-- Kopf folds per-kernel block sums into place through slices instead of `np.ix_` gathers
-  and scatters (output bitwise unchanged): portrait background 39.4 s → 35.2 s here.
-- gerstner's bilateral filter computes the symmetric colour/spatial weight once per ± offset
-  pair and shifts it for the mirror offset (output bitwise unchanged): 67 → 50 ms per call
-  on 256×256.
-
-- Downscalers weight colors by input alpha; semi-transparent fringes pull less (opaque
-  inputs are unchanged).
-- `Config.hash()` covers the palette's colors, so editing a palette file changes the hash.
-- `batch` passes its shared palette to frames inline; frame metadata no longer holds `--outdir`.
-- The sprite preset no longer enables `remove_bg` when rembg is installed; use `--remove-bg`.
-- `_palette.json` LAB values are rounded to 6 decimals.
-- The package version is single-sourced from `pixelforge/version.py`.
-- README: byte identity across machines requires `git clone && uv sync --locked`.
-- Kopf no longer grows σ for kernels cut by the alpha silhouette or the image border, which
-  blurred features near sprite edges below the box filter's sharpness, and kernels whose
-  cell is mostly transparent no longer claim (and then drop) pixels near the silhouette, which
-  erased lines 2–3 px inside it. Kopf's alpha mask is now the box filter's cell rule.
-
 ### Removed
 
 - Duplicate `dev` optional extra; use the `dev` dependency group (`uv sync`).
@@ -144,7 +181,6 @@ All notable changes to this project are documented here. The format follows
 - `PRESETS` and `PRESET_LONGEST_EDGE` are read-only mappings.
 - `box.run` and `gerstner.run` raise `PixelforgeError` on an all-transparent mask.
 - `--debug` / `PIXELFORGE_DEBUG=1` prints the full traceback on CLI errors.
-
 
 ## [0.1.0]
 

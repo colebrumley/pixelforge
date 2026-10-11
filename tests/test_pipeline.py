@@ -468,14 +468,16 @@ def test_meta_records_matting_versions_only_with_remove_bg(fixture_path, tmp_pat
     assert all(v is None or isinstance(v, str) for v in versions.values())
 
 
-def test_meta_environment_and_rounded_palette_lab(fixture_path, tmp_path):
+def test_meta_environment_and_rounded_palette_lab(fixture_path, tmp_path, monkeypatch):
+    monkeypatch.setenv("PIXELFORGE_THREADS", "3")
     config = Config(method="box", out_height=16, palette_size=4)
     result = run(fixture_path("circle_alpha"), config)
     result.save(tmp_path / "a")
     meta = json.loads((tmp_path / "a_meta.json").read_text())
     assert set(meta["environment"]) == {"python", "numpy", "scipy", "scikit_image", "pillow",
-                                        "platform"}
+                                        "platform", "threads"}
     assert meta["environment"]["numpy"] == np.__version__
+    assert meta["environment"]["threads"] == 3
     assert meta["config_hash"] == config.hash()     # environment is not hashed
     for entry in json.loads((tmp_path / "a_palette.json").read_text()):
         assert all(v == round(v, 6) for v in entry["lab"])

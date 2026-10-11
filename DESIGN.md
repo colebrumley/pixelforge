@@ -41,9 +41,11 @@ After downscaling, the image is quantized (optionally with selective ordered dit
 post-processed: hue-shifted palette ramps, saturation, orphan-pixel removal, jaggy cleanup
 and an outline for sprites; backgrounds can be cut into a de-duplicated tileset + tilemap.
 
-Timings on an Apple M1 Max, 1024×1024 → 64×64: kopf ≈ 36 s (50 iterations), gerstner ≈ 25 s,
-box well under a second. `pixelforge convert … --preset background` on a 256×256 input
-(256×256 output, 65 536 kernels) takes about 30 s. Gerstner at 256×256 output with 32 colors
+Timings on an Apple M1 Max, 1024×1024 → 64×64, before kopf's per-pixel loops moved into the
+native layer: kopf ≈ 36 s (50 iterations), gerstner ≈ 25 s, box well under a second. kopf is
+now much faster and also scales with the cores (timings: TODO, measure on
+an idle machine; `scripts/bench.py --compare bench/0edd462.json` gives the comparison against
+the pure-Python baseline). Gerstner at 256×256 output with 32 colors
 is the slow corner: 5 s to 2 minutes depending on how many annealing iterations the image
 needs. Without `-v` such runs print nothing until the result; `-v` logs per-stage timings and
 `-vv` each iteration (logging only reads values, it never changes an output).
@@ -54,6 +56,49 @@ once the per-slot offset arrays were dropped and the convergence test fixed; 102
 went from 204 s + 5 s preprocessing (50 × 4.1 s, 554 MiB) to 27 s + 1.6 s (31 × 0.88 s,
 67 MiB) with the 2× pre-reduction, at a mean ΔE of 1.1 from the old output.
 
+## Native layer
+
+The per-pixel hot loops live in a Rust extension, `pixelforge._native` (crate `rust/`,
+PyO3 + maturin, built on install):
+
+- kopf (`rust/src/kopf.rs`): the fused E-step + M-step sums (`kopf_em_step`), the C-step's
+  directional and overlap sums (`kopf_c_step`), and the spatial-only recoloring of starved
+  kernels (`kopf_spatial_refill`). Everything per kernel stays in Python
+  (`downscale/kopf.py`): the M-step and C-step algebra on (ho, wo) arrays, the constraints,
+  convergence, logging and the DEVIATION notes.
+- gerstner (`rust/src/gerstner.rs`): the modified-SLIC assignment pass (`slic_assign`), the
+  superpixel bilateral filter (`bilateral_filter`) and the per-iteration superpixel
+  statistics (`superpixel_stats`: pixel count, mass, colour and centre sums). The palette
+  annealer, Laplacian smoothing, the means and centres (sums / mass) and the control flow
+  stay in Python (`downscale/gerstner.py`).
+
+The native code uses float64 only, `exp` from the pure-Rust `libm` crate (the platform `exp`
+can differ in the last bit between macOS and Linux), no fast-math or FMA contraction, and the
+thread-count-independent partition of contract item 2. Threading per kernel:
+
+- kopf's kernels reduce across pixels into per-kernel sums, so their bands of `BAND_ROWS`
+  (32) input-pixel rows (`rust/src/parallel.rs`) are part of the numerics: each band sums
+  into its own buffer, the buffers are merged in band order, and changing the band height
+  changes the rounding of the sums.
+- gerstner's `slic_assign` and `bilateral_filter` are per-pixel independent (each output
+  element is computed from the inputs alone, no reduction across pixels), so their bands of
+  8 rows only split the work between threads and are not part of the numerics.
+- gerstner's `superpixel_stats` is single-threaded on purpose. It sums each superpixel's
+  pixels in row-major order, exactly the order `np.bincount` uses, which makes it bitwise
+  equal to the numpy reference; a banded parallel version would sum per-band partial sums
+  instead, changing the rounding and thus the output pixels.
+
+`PIXELFORGE_THREADS` sets the thread count (default: the available parallelism); it is
+recorded in `*_meta.json` as `environment.threads` and never hashed.
+
+There is no pure-Python fallback at runtime: two implementations cannot be bit-identical
+(summation order, `exp`), and the contract is byte-identical PNGs. The numpy implementation
+the native code replaced is kept in `pixelforge/downscale/_reference/` for tests and
+benchmarks only; `tests/test_kopf_native.py` checks every kopf function against loops
+lifted from it to 1e-12 relative per quantity, and `tests/test_gerstner_native.py` checks
+`slic_assign` and `superpixel_stats` bitwise and `bilateral_filter` to 1e-9 against the
+numpy gerstner reference.
+
 ## Determinism contract
 
 1. No unseeded randomness anywhere. `random`, `numpy.random` and `os.urandom` are not
@@ -61,8 +106,13 @@ went from 204 s + 5 s preprocessing (50 × 4.1 s, 554 MiB) to 27 s + 1.6 s (31 �
    (the MCDA sub-cluster perturbation in `downscale/gerstner.py`) and only when `config.seed`
    is set; the default perturbation is deterministic without an RNG.
 2. No dependence on dict/set iteration order of unordered inputs, thread scheduling or
-   wall-clock time. No multithreading inside numerical kernels. (Timings are recorded in
-   `*_meta.json` only; they never influence a result.)
+   wall-clock time. Numerical kernels may run on several threads only when the result does
+   not depend on the thread count: the work is split into a fixed partition (bands of 32
+   input-pixel rows, independent of how many threads there are), each part accumulates into
+   its own buffer, and the buffers are merged in partition order after all parts finish.
+   `PIXELFORGE_THREADS` (default: the available parallelism) sets the thread count and
+   affects speed only; `tests/test_kopf_native.py` and `tests/test_gerstner_native.py`
+   check bitwise equality across thread counts (1, 2, 3, 8). (Timings are recorded in `*_meta.json` only; they never influence a result.)
 3. All arrays are `float64` internally. A given quantity is always reduced by the same numpy
    routine. Final color conversion rounds with `np.round(...).astype(np.uint8)` after
    clipping to [0, 255], never truncation.

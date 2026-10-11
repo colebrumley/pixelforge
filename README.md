@@ -45,13 +45,24 @@ The source photo is AI-generated.
 
 ## Install
 
-Python 3.11+. Not published to PyPI; install straight from GitHub:
+Python 3.11+ and a stable Rust toolchain: pixelforge includes a compiled extension
+(`pixelforge._native`) that is built from source on install. Get Rust with
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # or: brew install rustup
+```
+
+The compiled kernels use every core by default; set `PIXELFORGE_THREADS=N` to limit them
+(it changes speed only, never the output).
+
+Not published to PyPI; install straight from GitHub:
 
 ```bash
 uv tool install git+https://github.com/colebrumley/pixelforge
 ```
 
-or `pip install git+https://github.com/colebrumley/pixelforge`. Both resolve the dependency
+or `pip install git+https://github.com/colebrumley/pixelforge`. The first install compiles
+the extension, which takes a minute or two. Both resolve the dependency
 ranges in `pyproject.toml`, not `uv.lock`, so they can pick other numpy/scipy versions; for
 output that matches someone else's byte for byte, use the locked checkout below.
 
@@ -74,10 +85,15 @@ To work on it, or to reproduce outputs exactly:
 
 ```bash
 git clone https://github.com/colebrumley/pixelforge && cd pixelforge
-uv sync --locked
+uv sync --locked                    # also builds the Rust extension (rebuilt when rust/ changes)
 uv run pytest -q                    # full suite, as CI runs it
 uv run pytest -q -m "not slow"      # skip the full-size kopf cases while iterating
 ```
+
+`uv run python scripts/bench.py` times every method and preset on a few fixtures, prints the
+per-stage timings and writes `bench/<git sha>.json` (`--compare bench/OLD.json` for speedups).
+`uv run python scripts/snapshot_outputs.py save`, then `... compare` after a change, reports per
+case whether the output is identical, how many pixels differ and their ΔE (exit 1 if any differ).
 
 ## CLI
 

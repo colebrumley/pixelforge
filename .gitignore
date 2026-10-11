@@ -9,3 +9,9 @@ build/
 gallery/
 out/
 samples/
+rust/target/
+*.so
+*.abi3.so
+*.pyd
+*.dylib
+bench/snapshots/

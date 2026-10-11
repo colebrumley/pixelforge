@@ -1,10 +1,11 @@
 [build-system]
-requires = ["setuptools>=77"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
 
 [project]
 name = "pixelforge"
-dynamic = ["version"]
+# Keep equal to pixelforge/version.py and rust/Cargo.toml (tests/test_version.py checks).
+version = "0.1.0"
 description = "Deterministic conversion of raster images into 16-bit-style pixel art"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -39,14 +40,15 @@ Repository = "https://github.com/colebrumley/pixelforge"
 [project.scripts]
 pixelforge = "pixelforge.cli:main"
 
-[tool.setuptools.packages.find]
-include = ["pixelforge*"]
+[tool.maturin]
+manifest-path = "rust/Cargo.toml"
+python-source = "."
+module-name = "pixelforge._native"
+features = ["pyo3/extension-module"]
 
-[tool.setuptools.dynamic]
-version = {attr = "pixelforge.version.__version__"}
-
-[tool.setuptools.package-data]
-pixelforge = ["palettes/*.hex"]
+[tool.uv]
+# Rebuild the extension on `uv sync` / `uv run` when the Rust sources change.
+cache-keys = [{file = "pyproject.toml"}, {file = "rust/Cargo.toml"}, {file = "rust/Cargo.lock"}, {file = "rust/src/**/*.rs"}]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
