@@ -89,10 +89,11 @@ be reversed before the phase that depends on it starts.
 10. **Distribution stays "from the repo".** `cargo install --git …` replaces
     `uv tool install git+…`; the README's one-liner for rustup stays and the Python
     requirement goes. Prebuilt binaries on GitHub Releases are a later, separate addition.
-11. **Arrays.** Stage code uses `ndarray` (already a dependency via the `numpy` crate) for
-    `(H, W)` and `(H, W, 3)` arrays; hot loops keep plain slices as they do now. No other
-    numerical crate (no nalgebra, no rayon): the 2×2 and 3×3 eigenproblems are closed-form
-    and Jacobi, and parallelism stays `parallel::run_bands`.
+11. **Arrays.** Plain slices with explicit `(height, width)` dimensions everywhere, as the
+    hot loops already do (amended in Phase 3: `ndarray` was planned but the ported stages did
+    not need it, and the library stays free of array crates). No other numerical crate (no
+    nalgebra, no rayon): the 2×2 and 3×3 eigenproblems are closed-form and Jacobi, and
+    parallelism stays `parallel::run_bands`.
 12. **Version 0.2.0 at the end**, single-sourced from the workspace `Cargo.toml`
     (`pixelforge --version`, `_meta.json`, `Config.hash()`); the bump changes every
     config hash, which is why the final golden regeneration happens anyway.
@@ -340,6 +341,23 @@ tests pass; `cargo tree -e normal` shows `libm` and `sha2`.
 Acceptance: postprocess, tiles and quantize indices bitwise identical to Python on the
 snapshot matrix and on `test_postprocess.py`/`test_tiles.py` inputs; ramps and local_std
 within 1e-9; goldens regenerated only if a pixel moved (not expected).
+
+Done 2026-10-10 (merges be2b3ef and 2dacb1e). Preceded by `crates/pixelforge/src/npsum.rs`,
+numpy's pairwise float64 summation reproduced bit for bit (sequential below 8 elements, eight
+accumulators to 128, recursive split above; leading-axis reductions are sequential), verified
+against `np.sum` on 620 arrays: median cut's box errors, ramp bins' mean L and the tile
+de-duplication means all depend on it. `quantize.rs` (Bayer, scipy's `uniform_filter(size=3,
+mode="nearest")` with its running-sum update, `local_std`, dither, `run`), `palette.rs`
+(median cut, ramps, `build` minus mcda, hex text), `postprocess.rs` (own 8-connected
+labelling; the merge decisions were shown to be independent of label numbering) and
+`tiles.rs` (extraction with the pruning screens, reconstruction, sheet, Tiled map, CSV).
+Everything bitwise identical to the numpy versions except `regularize_ramps`, whose moved
+a/b values differ by up to 7e-14 because libm's `hypot`/`atan2`/`cos`/`sin` differ from
+numpy's by one ulp on a few percent of arguments (bitwise equal once libm's values are
+substituted into the numpy formula). Snapshot matrix 48 of 48 identical to the Phase 3
+start; goldens unchanged. 1132 tests pass. Decision 11 amended: the stages use plain slices
+with explicit dimensions, no `ndarray` dependency (the library still depends on `libm` and
+`sha2` only). `preprocess.py` is now the only production module using scipy or skimage.
 
 ### Phase 4 — Preprocessing
 
