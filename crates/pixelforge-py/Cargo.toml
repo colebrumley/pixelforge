@@ -6,6 +6,9 @@ license.workspace = true
 description = "Python binding of the pixelforge library (extension module pixelforge._native)"
 publish = false
 
+[lints]
+workspace = true
+
 [lib]
 name = "pixelforge_native"
 crate-type = ["cdylib"]

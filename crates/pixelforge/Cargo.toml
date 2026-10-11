@@ -6,6 +6,9 @@ license.workspace = true
 description = "Deterministic conversion of raster images into 16-bit-style pixel art (library)"
 publish = false
 
+[lints]
+workspace = true
+
 [features]
 # The command-line program (src/main.rs, src/cli/). The Python binding builds the library
 # without it (default-features = false), so clap never reaches the extension module.

@@ -15,3 +15,7 @@ license = "MIT"
 opt-level = 3
 codegen-units = 1
 lto = "fat"
+
+[workspace.lints.clippy]
+# chunks_exact(3) over interleaved triples reads better than as_chunks::<3>() in numeric code.
+chunks_exact_to_as_chunks = "allow"

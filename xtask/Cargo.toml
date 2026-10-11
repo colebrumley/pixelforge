@@ -6,6 +6,9 @@ license.workspace = true
 description = "pixelforge developer tooling: cargo xtask fixtures|golden|bench|snapshot|gallery|help-record"
 publish = false
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "xtask"
 path = "src/main.rs"
