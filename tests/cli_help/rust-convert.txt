@@ -25,7 +25,7 @@ Options:
       --canvas <TEXT>
           Fit the subject centered inside a WxH canvas (outline drawn inside).
       --remove-bg
-          Remove the background with rembg AI matting (opt-in, needs the extra).  [default: off]
+          Remove the background with the external rembg command (opt-in, needs rembg on PATH).  [default: off]
       --key-bg
           Key out a flat opaque background color.  [default: on (sprite), off (background)]
       --key-bg-tolerance <FLOAT>

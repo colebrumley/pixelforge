@@ -424,7 +424,7 @@ mod tests {
         );
         assert_eq!(
             help("remove_bg"),
-            "Remove the background with rembg AI matting (opt-in, needs the extra).  \
+            "Remove the background with the external rembg command (opt-in, needs rembg on PATH).  \
              [default: off]"
         );
         assert_eq!(

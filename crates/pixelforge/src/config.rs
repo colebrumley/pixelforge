@@ -153,7 +153,7 @@ pub const FIELDS: &[FieldSpec] = &[
         kind: FieldKind::Bool,
         optional: false,
         default: FieldValue::Bool(false),
-        help: "Remove the background with rembg AI matting (opt-in, needs the extra).",
+        help: "Remove the background with the external rembg command (opt-in, needs rembg on PATH).",
         choices: None,
         upper_bound: None,
     },

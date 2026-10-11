@@ -1,15 +1,19 @@
 //! pixelforge: deterministic conversion of raster images into 16-bit-style pixel art.
 //!
-//! This crate is the Rust library, with no Python dependency. It holds the downscalers'
-//! per-pixel kernels (`kopf`, `gerstner`), the thread-count-independent parallelism they use
-//! (`parallel`), the Config with its field table and canonical JSON (`config`), the palette
-//! file parsers (`palette`) and the Python text forms those reproduce byte for byte
-//! (`pyrepr`, `pyunicode`). The Python package reaches it through the binding crate
-//! `pixelforge-py` (module `pixelforge._native`).
+//! The whole application lives in this crate: `config` (the Config, its field table and the
+//! canonical JSON), `io` (decoding, indexed PNG output), `preprocess` with `mask`, `layout`,
+//! `filters` and `enhance`, the downscalers (`boxfilter`, `kopf` + `kopf_run`, `gerstner` +
+//! `gerstner_run` + `annealer`), `palette`, `quantize`, `postprocess`, `tiles`, the
+//! `pipeline` that orchestrates them and writes every output file, and, behind the `cli`
+//! feature, the `pixelforge` binary (`cli`, `sheet`). `npsum`, `pyjson`, `pyrepr` and
+//! `pyunicode` reproduce the numpy and Python text forms the outputs were defined by, so
+//! files stay byte-identical to the version this crate replaced. The optional Python
+//! binding (`crates/pixelforge-py`) wraps `pipeline` and `config`.
 //!
-//! Determinism rules (see docs/rust-port-plan.md, Decision 3): float64 only, no fast-math,
-//! no `target-cpu=native`, no `mul_add` unless used unconditionally, `exp` from the `libm`
-//! crate, and reductions in a fixed order that does not depend on the thread count.
+//! Determinism rules (DESIGN.md, "Implementation"): float64 only, every transcendental from
+//! the `libm` crate, `round_ties_even`, no fast-math or `target-cpu=native`, no `mul_add`
+//! (an explicit `libm::fma` only where a reference implementation fuses), and reductions in a
+//! fixed order that does not depend on the thread count (`parallel`).
 
 pub mod annealer;
 pub mod boxfilter;

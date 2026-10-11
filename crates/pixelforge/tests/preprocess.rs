@@ -1257,8 +1257,8 @@ fn test_remove_bg_missing_dependency_message() {
         preprocess::remove_background_external(&[0.5; 8 * 8 * 3], &[255; 64], 8, 8).unwrap_err();
     assert_eq!(
         err.to_string(),
-        "--remove-bg requires the optional 'rembg' dependency; install it with: pip install \
-         'pixelforge[bg]'"
+        "--remove-bg requires the rembg command on PATH; install it with: pipx install \
+         'rembg[cli]'"
     );
     assert!(matches!(err, preprocess::Error::Config(_)));
 }

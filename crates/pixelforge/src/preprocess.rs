@@ -216,10 +216,10 @@ pub fn denoise(rgb: Vec<f64>, h: usize, w: usize, config: &Config) -> Vec<f64> {
     }
 }
 
-/// The message of the `ConfigError` raised when `remove_bg` is set and no matting is
-/// available (Python's, unchanged).
-pub const REMBG_MISSING: &str = "--remove-bg requires the optional 'rembg' dependency; \
-                                 install it with: pip install 'pixelforge[bg]'";
+/// The message of the `ConfigError` raised when `remove_bg` is set and the `rembg`
+/// command is not on `PATH`.
+pub const REMBG_MISSING: &str = "--remove-bg requires the rembg command on PATH; \
+                                 install it with: pipx install 'rembg[cli]'";
 
 /// The external matting command `remove_bg` runs: `rembg i INPUT OUTPUT`, found on `PATH`.
 pub const REMBG_COMMAND: &str = "rembg";
