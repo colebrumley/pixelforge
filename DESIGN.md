@@ -104,9 +104,10 @@ never what it computes.
   superpixel's pixels in row-major order, as `np.bincount` did, and per-band partial sums would
   change the rounding. Everything else is single-threaded.
 
-**Numerics.** Every float routine was ported formula for formula from the Python version
-(0.1.0) and compared with it on the fixtures, the samples and a 48-case snapshot matrix
-before the Python code was removed (`docs/rust-migration-plan.md` has the per-stage record).
+**Numerics.** Every float routine was ported formula for formula from the last Python
+version (9f53516, which reported 0.1.0) and compared with it on the fixtures, the samples
+and a 48-case snapshot matrix before the Python code was removed
+(`docs/rust-migration-plan.md` has the per-stage record).
 The rules that make the results the same on every machine:
 
 - float64 throughout. Every transcendental function (`exp`, `expm1`, `log`, `pow`, `cbrt`,
@@ -131,7 +132,7 @@ The rules that make the results the same on every machine:
   reproduced as written, lookup tables and padding modes included.
 - The only random numbers are a SplitMix64 stream seeded with `config.seed`.
 
-Where the output differs from the Python version (0.1.0):
+Where the output differs from that Python version:
 
 - Colour conversion agrees with scikit-image to 5.7e-14 in LAB. That moved one case of the
   48-case snapshot matrix: `noisy_gradient`, background preset, gerstner, 10 of 65,536

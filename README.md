@@ -294,12 +294,12 @@ different thread counts.
   covers the config, the version and the palette's colors, so editing a palette file changes it.
 - `_meta.json` also records the platform, the thread count and the pixelforge version (not
   hashed), to tell which of these differ when two outputs do.
-- Against the Python version (0.1.0): outputs from PNG, BMP, TIFF, GIF and WEBP inputs are
-  pixel-identical, except one gerstner case that sits on a near-tie (10 pixels of one
-  256×256 test output). JPEG inputs decode within a few levels of Pillow's libjpeg, so
-  outputs from JPEG sources differ. Seeded gerstner runs (`--seed`) draw from a different
-  random stream. Every config hash changed with the version. [DESIGN.md](DESIGN.md#implementation)
-  has the details.
+- Against the last Python version (which still reported 0.1.0): outputs from PNG, BMP, TIFF,
+  GIF and WEBP inputs are pixel-identical, except one gerstner case that sits on a near-tie
+  (10 pixels of one 256×256 test output). JPEG inputs decode within a few levels of Pillow's
+  libjpeg, so outputs from JPEG sources differ. Seeded gerstner runs (`--seed`) draw from a
+  different random stream. Every config hash changed with the version.
+  [DESIGN.md](DESIGN.md#implementation) has the details.
 
 ## Development
 
