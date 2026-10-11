@@ -450,6 +450,24 @@ Acceptance: all 576 tests pass against the Rust pipeline; snapshot identical to 
 PNG files decode to the same pixels and carry the same text chunks (bytes differ from
 Pillow's and that is fine); `test_determinism.py` across processes passes.
 
+Done 2026-10-11 (merges 1da8cfd I/O, 1d3a7b4 pipeline), preceded by `pyjson.rs` (Python's
+`json.dumps` layouts and `round(x, n)`, verified against Python). `io.rs` decodes every
+allowed format with the `image` crate (0.25.10, no default features) plus `gif`, `tiff` and
+`miniz_oxide` directly where `image` hides what Pillow exposes; bit-identical to Pillow on
+every fixture, sample and synthetic mode (Pillow takes the high byte of 16-bit RGB, and
+rescales only integer greyscale by 1/257), lossless and lossy WEBP identical, JPEG within 7
+levels on up to half the pixels (chroma upsampling; accepted); frame counts read from headers
+only; Pillow's decompression-bomb limit kept; indexed PNGs written with the `png` crate (PLTE,
+tRNS, sorted tEXt). `pipeline.rs` orchestrates the stages and writes every output file
+byte-identically (except `_meta.json`'s environment and timings); `environment()` records
+platform, threads and the crate version, with the Python wrapper adding its library versions
+until Phase 8; `remove_bg` runs an external `rembg i` command on the Rust side and the rembg
+package on the Python side (`alpha_matted` hands the result over). First end-to-end
+Rust-only test: `crates/pixelforge/tests/pipeline_oracle.rs` against `tests/oracle/outputs_small`.
+Snapshot matrix 48 of 48 identical; goldens unchanged. 1817 tests pass. Python left in the
+package: `cli.py` (612 lines), the `Config` class (424, parity-tested against its Rust twin),
+and thin wrappers (`pipeline.py` 154, `io.py` 139, the stage modules).
+
 ### Phase 7 — CLI
 
 - `clap` builder from the field table: `convert`, `batch`, `compare`, `palettes`,
