@@ -1,4 +1,5 @@
-//! `json.loads(text, parse_constant=_reject_json_constant)` as the Python CLI reads `--config`.
+//! `json.loads(text, parse_constant=_reject_json_constant)` as the Python CLI reads `--config`;
+//! also the reader of the editor's files (the edit log, `_meta.json`, the config text chunk).
 //!
 //! A port of CPython 3.11's C scanner (`Modules/_json.c`) and `json.decoder`, so that the
 //! values and every error message are Python's: positions count code points, messages are

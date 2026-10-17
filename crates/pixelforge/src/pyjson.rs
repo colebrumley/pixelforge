@@ -7,6 +7,11 @@
 //! `","` followed by a newline and `indent` spaces per level, the key separator stays
 //! `": "`, and empty containers are written as `[]` / `{}`. Compact mode is
 //! `separators=(",", ":")`. Strings use `ensure_ascii` escaping, floats Python's `repr`.
+//!
+//! [`loads`] is the reader: Python's `json.loads`, for `--config`, the edit log and the files
+//! the editor reads back.
+
+pub mod loads;
 
 use crate::pyrepr::{float_repr, json_string};
 

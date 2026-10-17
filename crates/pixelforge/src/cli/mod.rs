@@ -10,7 +10,6 @@
 mod args;
 mod commands;
 mod config_load;
-mod json;
 mod logging;
 mod paths;
 
@@ -24,6 +23,9 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use crate::config::ConfigError;
 use crate::io::{os_error_message, IoError};
 use crate::pipeline;
+/// The JSON reader (`json.loads`) lives in the library, which the edit log needs without the
+/// CLI.
+use crate::pyjson::loads as json;
 use crate::pyjson::{dumps, Json, Layout};
 
 pub use args::{config_args, config_args_from, field_help, flag_name, py_int, ConfigArgs};
