@@ -1,5 +1,5 @@
 //! The palette half of gerstner (mass-constrained deterministic annealing, Algorithm 1 of
-//! Gerstner et al. 2013, REQUIREMENTS.md Section 7): [`PaletteAnnealer`] and
+//! Gerstner et al. 2013, docs/design/requirements.md Section 7): [`PaletteAnnealer`] and
 //! [`principal_axis`], used by `gerstner::run` on superpixel colours and by `palette::mcda`
 //! directly on pixel colours.
 //!

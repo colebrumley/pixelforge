@@ -12,10 +12,11 @@
 //! files stay byte-identical to the version this crate replaced. The optional Python
 //! binding (`crates/pixelforge-py`) wraps `pipeline` and `config`.
 //!
-//! Determinism rules (DESIGN.md, "Implementation"): float64 only, every transcendental from
-//! the `libm` crate, `round_ties_even`, no fast-math or `target-cpu=native`, no `mul_add`
-//! (an explicit `libm::fma` only where a reference implementation fuses), and reductions in a
-//! fixed order that does not depend on the thread count (`parallel`).
+//! Determinism rules (docs/design/implementation.md, "Implementation"): float64 only, every
+//! transcendental from the `libm` crate, `round_ties_even`, no fast-math or
+//! `target-cpu=native`, no `mul_add` (an explicit `libm::fma` only where a reference
+//! implementation fuses), and reductions in a fixed order that does not depend on the thread
+//! count (`parallel`).
 
 pub mod annealer;
 pub mod boxfilter;

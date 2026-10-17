@@ -1,4 +1,4 @@
-//! An editing session (docs/editor.md, Sections 3.1 and 3.10): one [`Document`], its
+//! An editing session (docs/design/editor.md, Sections 3.1 and 3.10): one [`Document`], its
 //! [`History`], the selection and the prefix saves go to. The GUI owns one session and turns
 //! pointer and keyboard input into calls here; everything a session does is headless and
 //! tested without a window (N6).
@@ -270,7 +270,7 @@ impl Session {
     }
 }
 
-/// What the tiles panel shows (R24, docs/editor.md Section 3.9).
+/// What the tiles panel shows (R24, docs/design/editor.md Section 3.9).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TilesSummary {
     /// Tiles after de-duplication.

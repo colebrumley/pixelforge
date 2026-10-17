@@ -1,5 +1,5 @@
 //! The GUI's tools: which tool is active, the brush size, the primary and secondary colors,
-//! and the translation of canvas pointer events into edits (docs/editor.md, Sections 3.4 and
+//! and the translation of canvas pointer events into edits (docs/design/editor.md, Sections 3.4 and
 //! 3.12).
 //!
 //! The canvas reports [`Pointer`] events in image pixels; [`ToolBox::pointer`] turns each into

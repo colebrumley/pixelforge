@@ -1,4 +1,4 @@
-//! The editor's worker thread (docs/editor.md, Section 3.13): slow computations (tile
+//! The editor's worker thread (docs/design/editor.md, Section 3.13): slow computations (tile
 //! re-extraction, adjust previews of large selections) each run on a thread of their own so they
 //! never block a frame.
 //!

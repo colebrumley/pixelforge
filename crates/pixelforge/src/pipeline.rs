@@ -379,7 +379,7 @@ pub fn source_reference_factor(pre: &Preprocessed, out_w: usize) -> usize {
         .clamp(1, 8)
 }
 
-/// The input image aligned with the output for the editor's reference panel (docs/editor.md,
+/// The input image aligned with the output for the editor's reference panel (docs/design/editor.md,
 /// Section 3.8): the part of the input the pipeline used (`pre.crop`), resampled (nearest
 /// neighbor, integer arithmetic) to `factor` times the inner output size and padded with
 /// transparency as the output is (canvas layout, outline margin), so output pixel `(x, y)`

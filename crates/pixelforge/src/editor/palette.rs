@@ -1,4 +1,4 @@
-//! Palette entry edits and their rules (docs/editor.md, Section 3.6): recolor, add, remove
+//! Palette entry edits and their rules (docs/design/editor.md, Section 3.6): recolor, add, remove
 //! with a remap to the nearest remaining entry, merge. With a named palette (`fixed`) an
 //! entry can only take one of that palette's colors. `palette_size` from the config is
 //! informational ([`over_budget`]).

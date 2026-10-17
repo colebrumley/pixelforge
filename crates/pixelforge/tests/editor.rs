@@ -1,4 +1,4 @@
-//! The editor core end to end (docs/editor.md, Section 3.14): opening pixelforge outputs and
+//! The editor core end to end (docs/design/editor.md, Section 3.14): opening pixelforge outputs and
 //! plain PNGs, the save round trip, the tileset path, and the replay golden: the recorded
 //! logs in tests/edits/ replayed on their conversions must give the PNGs whose SHA-256
 //! tests/edits/replay.json records.

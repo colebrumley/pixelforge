@@ -1,4 +1,4 @@
-//! The editor window driven headlessly with egui_kittest (docs/editor.md, Section 3.14): the
+//! The editor window driven headlessly with egui_kittest (docs/design/editor.md, Section 3.14): the
 //! application opens a conversion, renders frames, paints through synthetic pointer input,
 //! undoes and saves with shortcuts, and the document shows every change.
 

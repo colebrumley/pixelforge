@@ -1,4 +1,4 @@
-//! The edit log, `NAME_edits.json` (docs/editor.md, Section 3.3): the applied ops as pixel
+//! The edit log, `NAME_edits.json` (docs/design/editor.md, Section 3.3): the applied ops as pixel
 //! and palette changes, with the tool name as an annotation.
 //!
 //! ```json

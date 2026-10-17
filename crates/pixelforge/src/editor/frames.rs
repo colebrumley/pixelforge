@@ -1,6 +1,7 @@
-//! The frames of a batch edited in one window (`batch --edit`, docs/editor.md R4). Each frame
-//! is its own [`Session`]: its own document, history, selection and save prefix. The caller
-//! holds the current frame's session; [`Frames`] keeps the others and swaps them in.
+//! The frames of a batch edited in one window (`batch --edit`, docs/design/editor.md R4).
+//! Each frame is its own [`Session`]: its own document, history, selection and save prefix.
+//! The caller holds the current frame's session; [`Frames`] keeps the others and swaps them
+//! in.
 //!
 //! `batch` converts every frame with one palette. While the frames still share it, a palette
 //! edit applies to every frame as one undo step in each history (a removal remaps each

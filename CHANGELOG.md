@@ -10,7 +10,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- A pixel editor for touching up a conversion in place (docs/editor.md):
+- A pixel editor for touching up a conversion in place (docs/design/editor.md):
   `pixelforge edit OUTPUT.png` opens a pixelforge output (or any PNG with at most 256
   colors), and `convert ... --edit` opens the editor on the result with the input aligned
   for reference. Pencil, eraser, eyedropper, fill, line, rectangle, rectangular selection

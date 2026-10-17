@@ -1,5 +1,5 @@
 //! The canvas view: zoom and pan, and the mapping between screen positions and image pixels
-//! (docs/editor.md, Section 3.7). Everything is integer: the zoom is a power of two from
+//! (docs/design/editor.md, Section 3.7). Everything is integer: the zoom is a power of two from
 //! [`MIN_ZOOM`] to [`MAX_ZOOM`] screen points per image pixel, the pan is whole points, and
 //! a pointer position maps to a pixel by floor division. Nothing here enters the edit
 //! numerics; it only decides which pixel a pointer is over.

@@ -1,4 +1,4 @@
-//! The editor window (docs/editor.md, Section 3.12): menus, the toolbar, the canvas, the
+//! The editor window (docs/design/editor.md, Section 3.12): menus, the toolbar, the canvas, the
 //! palette, adjust, tiles and source panels and the status bar around one [`Session`].
 //!
 //! Every command, whether from a menu, a toolbar button or a shortcut, is an [`Action`] run

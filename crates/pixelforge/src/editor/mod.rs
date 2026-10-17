@@ -1,4 +1,4 @@
-//! The pixel editor's core (docs/editor.md, Section 3): the document, its operations and
+//! The pixel editor's core (docs/design/editor.md, Section 3): the document, its operations and
 //! history, the tools, adjust and cleanup, the edit log and saving. No GUI dependency; the
 //! GUI (`crate::gui`, behind the `gui` feature) owns one [`Session`] and calls into this.
 //!

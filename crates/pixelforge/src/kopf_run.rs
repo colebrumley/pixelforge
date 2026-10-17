@@ -1,5 +1,6 @@
-//! Content-adaptive downscaling (Kopf, Shamir, Peers 2013), REQUIREMENTS.md Section 6: the
-//! control flow of `pixelforge/downscale/kopf.py` around the per-pixel loops in `kopf.rs`.
+//! Content-adaptive downscaling (Kopf, Shamir, Peers 2013), docs/design/requirements.md
+//! Section 6: the control flow of `pixelforge/downscale/kopf.py` around the per-pixel loops
+//! in `kopf.rs`.
 //!
 //! A constrained EM over one anisotropic Gaussian kernel per output pixel. All spatial
 //! quantities are in output-pixel units. Every input pixel is covered by at most 4 × 4

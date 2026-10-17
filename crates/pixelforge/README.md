@@ -75,7 +75,7 @@ Modules:
   `preprocess.rs`, `layout.rs`, `mask.rs`, `filters.rs`, `enhance.rs`, `downscale.rs`,
   `boxfilter.rs`, `quantize.rs`, `postprocess.rs`, `tiles.rs`; `sheet.rs` draws the
   `compare` sheets.
-- `src/editor/`: the pixel editor's core (docs/editor.md): `Document`, `Op`, `History`,
+- `src/editor/`: the pixel editor's core (docs/design/editor.md): `Document`, `Op`, `History`,
   the tools, adjust and cleanup, the edit log and its replay (`convert --edits`), saving,
   and `Session` (a document with its history and save prefix). No GUI dependency.
 - `src/gui/`: the editor window (`pixelforge edit`, `convert --edit`): the eframe app, the

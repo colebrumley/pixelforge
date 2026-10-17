@@ -1,4 +1,4 @@
-//! The pixel editor's window (docs/editor.md, Sections 3.7 and 3.11 to 3.13), behind the
+//! The pixel editor's window (docs/design/editor.md, Sections 3.7 and 3.11 to 3.13), behind the
 //! `gui` feature: an eframe (egui, OpenGL) application around one [`Session`]. The editing
 //! itself is the headless `editor` module; this layer maps input to it and draws.
 //!

@@ -1845,7 +1845,7 @@ fn stdout_contains_predicate_smoke() {
 }
 
 // ---------------------------------------------------------------------------------------
-// convert --edits (the editor's edit log, docs/editor.md R28)
+// convert --edits (the editor's edit log, docs/design/editor.md R28)
 
 /// Convert `two_color` (FAST), edit the PNG in the library and save it to `edited/`.
 fn edited_output(tmp: &TempDir, extra: &[&str]) -> PathBuf {
@@ -1980,7 +1980,7 @@ fn convert_edits_refuses_a_mismatching_log() {
 }
 
 // ---------------------------------------------------------------------------------------
-// edit and convert --edit (docs/editor.md R1 to R3). A window cannot open in a test, so the
+// edit and convert --edit (docs/design/editor.md R1 to R3). A window cannot open in a test, so the
 // default build checks what happens before it would; the headless build checks the whole
 // command.
 

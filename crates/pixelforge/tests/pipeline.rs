@@ -947,7 +947,7 @@ fn mcda_palette_source_with_box_and_kopf() {
 }
 
 // ---------------------------------------------------------------------------------------
-// The editor's source reference (docs/editor.md, Section 3.8)
+// The editor's source reference (docs/design/editor.md, Section 3.8)
 
 #[test]
 fn run_keeping_returns_runs_output_and_an_aligned_source_reference() {
