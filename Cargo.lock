@@ -1978,7 +1978,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pixelforge"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -1999,7 +1999,7 @@ dependencies = [
 
 [[package]]
 name = "pixelforge-py"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "log",
  "numpy",
@@ -3472,7 +3472,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "libm",

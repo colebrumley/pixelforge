@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-17
+
 ### Added
 
 - A pixel editor for touching up a conversion in place (docs/editor.md):
@@ -27,8 +29,8 @@ All notable changes to this project are documented here. The format follows
   `--no-default-features --features cli` builds the command-line-only program as before;
   `--edits` works there too. The library without default features, and with it the Python
   binding, compiles no GUI dependency.
-- `convert`, `batch` and `compare` without `--edit` or `--edits` write the same bytes as
-  before.
+- `convert`, `batch` and `compare` without `--edit` or `--edits` write the same pixels as
+  0.2.0. Every `config_hash` changed with the version, as in every release.
 
 ### Fixed
 

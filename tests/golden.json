@@ -1,74 +1,74 @@
 {
   "circle_alpha/box/background": {
-    "config_hash": "02a03d0adc5df44a24dc4e1f5a72b1d03743117280465f646cc242b797cd3daf",
+    "config_hash": "56dca7ed0b2f8a377728060fa38e2e9e2e14b64a8f0c24f74b4caf556bd2d56d",
     "pixels_sha256": "5ce258873f364fe1f8a40fc2421100cab9efa5f6177d3c2afe5a10fb08dd4725"
   },
   "circle_alpha/box/sprite": {
-    "config_hash": "cc4cba2105b089f4e09a99d350ebff72a77c1b616c99f5e68098917f0a975988",
+    "config_hash": "892759b1c0c963ae8008abcc02ac7d370838b14fb7db457a2f1aba8f730d3b80",
     "pixels_sha256": "4568805cdcb9a46d6170ff5343c129d85c14d44bb9b0a38b16a42398cf77c236"
   },
   "circle_alpha/gerstner/background": {
-    "config_hash": "c77786891abdc54617ab8afd0b51ad06313693144d9c30d66e73b79ad7117c75",
+    "config_hash": "2decd74e4a5b0936f16844e50ba19251e02b6f5c7025a72a4b440dc8b83f6c2f",
     "pixels_sha256": "a8d6bd244f421100434291c8998ace2e80d200b38354da45b6992cf0d87e2e76"
   },
   "circle_alpha/gerstner/sprite": {
-    "config_hash": "da2c4c877456f0d0d070104e255c5e662f5708c0efc7495e023c57662066a5d7",
+    "config_hash": "4a42a7581bed647244e384865df11c09c9db0dd3a141ba7204cc280c1d0fc7da",
     "pixels_sha256": "5c51de6a3746b164176c83344d06850b9436923fb43d266ef64f1d5a73558292"
   },
   "circle_alpha/kopf/background": {
-    "config_hash": "f355006d4236151f6c3b2ad6dafa588c451052de1127b46dfbf5bd131f9f2751",
+    "config_hash": "d973534b1d50a008f824d468002b24f0926f932edab164e122aecc2a776c5698",
     "pixels_sha256": "f1f42662643cb18e092596830916ef10baf64c0dcef2a70e045f317d8260882c"
   },
   "circle_alpha/kopf/sprite": {
-    "config_hash": "aa0035dbfcdfc097526f56db1ee311f917bb1b3e621c2f986352d466f85f6011",
+    "config_hash": "0f394b85a8bf6079ee040fba0f02c0321193024ed101bff90c3112f629c16698",
     "pixels_sha256": "405c16ab6fd4224553fca7b19ed504f003ed4542af8301843c75bd7007dee4cc"
   },
   "gradient6/box/background": {
-    "config_hash": "02a03d0adc5df44a24dc4e1f5a72b1d03743117280465f646cc242b797cd3daf",
+    "config_hash": "56dca7ed0b2f8a377728060fa38e2e9e2e14b64a8f0c24f74b4caf556bd2d56d",
     "pixels_sha256": "2c6e23b60c27e1e12e0316595beaba509389fe9031d1dca322ad0fd5fdf521f9"
   },
   "gradient6/box/sprite": {
-    "config_hash": "cc4cba2105b089f4e09a99d350ebff72a77c1b616c99f5e68098917f0a975988",
+    "config_hash": "892759b1c0c963ae8008abcc02ac7d370838b14fb7db457a2f1aba8f730d3b80",
     "pixels_sha256": "cf4a478ec4af0d1215765aa373e4695f0bf057c0e7d895eea984e2baad9be453"
   },
   "gradient6/gerstner/background": {
-    "config_hash": "c77786891abdc54617ab8afd0b51ad06313693144d9c30d66e73b79ad7117c75",
+    "config_hash": "2decd74e4a5b0936f16844e50ba19251e02b6f5c7025a72a4b440dc8b83f6c2f",
     "pixels_sha256": "526f5197a24f48c820e53344c2be3f94c222c35a1b9de68f7cc91149fb34e4e7"
   },
   "gradient6/gerstner/sprite": {
-    "config_hash": "da2c4c877456f0d0d070104e255c5e662f5708c0efc7495e023c57662066a5d7",
+    "config_hash": "4a42a7581bed647244e384865df11c09c9db0dd3a141ba7204cc280c1d0fc7da",
     "pixels_sha256": "23003a0f2c542b247bb32f805e1440ee762d33876687cf0a53fcd889db1bfdd9"
   },
   "gradient6/kopf/background": {
-    "config_hash": "f355006d4236151f6c3b2ad6dafa588c451052de1127b46dfbf5bd131f9f2751",
+    "config_hash": "d973534b1d50a008f824d468002b24f0926f932edab164e122aecc2a776c5698",
     "pixels_sha256": "af56d57719ed4de00aa452746219a79e436ef8711a2c40e5b1e691da6311f92d"
   },
   "gradient6/kopf/sprite": {
-    "config_hash": "aa0035dbfcdfc097526f56db1ee311f917bb1b3e621c2f986352d466f85f6011",
+    "config_hash": "0f394b85a8bf6079ee040fba0f02c0321193024ed101bff90c3112f629c16698",
     "pixels_sha256": "0602b9231913779100846600729a5f012852bf1024c12a8f1dc6fb04106d47ff"
   },
   "two_color/box/background": {
-    "config_hash": "02a03d0adc5df44a24dc4e1f5a72b1d03743117280465f646cc242b797cd3daf",
+    "config_hash": "56dca7ed0b2f8a377728060fa38e2e9e2e14b64a8f0c24f74b4caf556bd2d56d",
     "pixels_sha256": "2f9eb903999be96e2c10f14558c4ecd2f3b6fe175290904b1d1efb47db2bc3a6"
   },
   "two_color/box/sprite": {
-    "config_hash": "cc4cba2105b089f4e09a99d350ebff72a77c1b616c99f5e68098917f0a975988",
+    "config_hash": "892759b1c0c963ae8008abcc02ac7d370838b14fb7db457a2f1aba8f730d3b80",
     "pixels_sha256": "1d9f9b11292370aece3c63a17acd843cbc3590997b0af20625a586c64280944e"
   },
   "two_color/gerstner/background": {
-    "config_hash": "c77786891abdc54617ab8afd0b51ad06313693144d9c30d66e73b79ad7117c75",
+    "config_hash": "2decd74e4a5b0936f16844e50ba19251e02b6f5c7025a72a4b440dc8b83f6c2f",
     "pixels_sha256": "4a86fbaecd3e70cda598ea25910a95f7d8aa74f0114064fcc68c651a335ed2c9"
   },
   "two_color/gerstner/sprite": {
-    "config_hash": "da2c4c877456f0d0d070104e255c5e662f5708c0efc7495e023c57662066a5d7",
+    "config_hash": "4a42a7581bed647244e384865df11c09c9db0dd3a141ba7204cc280c1d0fc7da",
     "pixels_sha256": "1a5d60b683c73bcf457627b0fdf71d6bb95d3f8db2634821206a6843a954751b"
   },
   "two_color/kopf/background": {
-    "config_hash": "f355006d4236151f6c3b2ad6dafa588c451052de1127b46dfbf5bd131f9f2751",
+    "config_hash": "d973534b1d50a008f824d468002b24f0926f932edab164e122aecc2a776c5698",
     "pixels_sha256": "2f9eb903999be96e2c10f14558c4ecd2f3b6fe175290904b1d1efb47db2bc3a6"
   },
   "two_color/kopf/sprite": {
-    "config_hash": "aa0035dbfcdfc097526f56db1ee311f917bb1b3e621c2f986352d466f85f6011",
+    "config_hash": "0f394b85a8bf6079ee040fba0f02c0321193024ed101bff90c3112f629c16698",
     "pixels_sha256": "1d9f9b11292370aece3c63a17acd843cbc3590997b0af20625a586c64280944e"
   }
 }
