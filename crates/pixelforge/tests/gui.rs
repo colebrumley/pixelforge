@@ -749,6 +749,14 @@ fn tab_toggles_the_aligned_source_overlay() {
     h.key_press(Key::Tab);
     h.run();
     assert!(h.state().canvas.show_source);
+    // Tab is the overlay shortcut, not focus navigation: no widget (the File menu first)
+    // is left holding keyboard focus, which Space or Enter would then activate.
+    h.key_press(Key::Tab);
+    h.run();
+    h.key_press(Key::Tab);
+    h.run();
+    assert!(h.state().canvas.show_source);
+    assert_eq!(h.ctx.memory(|m| m.focused()), None);
     // The panel's checkbox is the same switch.
     h.get_by_label("Overlay (Tab)").click();
     h.run();

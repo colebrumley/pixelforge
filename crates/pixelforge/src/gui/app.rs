@@ -1200,6 +1200,17 @@ impl EditorApp {
             }
             pressed
         });
+        if pressed.contains(&Action::ToggleSourceOverlay) {
+            // egui reads Tab as "focus the next widget" and applies it while the widgets
+            // below are drawn. Tab is a shortcut here: cancel that move and drop any focus,
+            // so no widget is left for Space or Enter to activate.
+            ctx.memory_mut(|m| {
+                m.move_focus(egui::FocusDirection::None);
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+            });
+        }
         for action in pressed {
             self.perform(action, ctx);
         }
