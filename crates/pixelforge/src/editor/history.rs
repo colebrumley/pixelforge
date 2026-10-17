@@ -65,6 +65,16 @@ impl History {
         true
     }
 
+    /// The op [`undo`](Self::undo) would revert.
+    pub fn next_undo(&self) -> Option<&Op> {
+        self.pointer.checked_sub(1).map(|i| &self.ops[i])
+    }
+
+    /// The op [`redo`](Self::redo) would apply.
+    pub fn next_redo(&self) -> Option<&Op> {
+        self.ops.get(self.pointer)
+    }
+
     pub fn can_undo(&self) -> bool {
         self.pointer > 0
     }
@@ -114,7 +124,11 @@ mod tests {
         assert_eq!(rows(&d), ["110"]);
         assert!(h.is_dirty());
         h.mark_saved();
+        let last = h.next_undo().cloned();
+        assert_eq!(last.as_ref(), h.applied().last());
+        assert!(h.next_redo().is_none());
         assert!(h.undo(&mut d));
+        assert_eq!(h.next_redo(), last.as_ref());
         assert_eq!(rows(&d), ["100"]);
         assert!(h.is_dirty());
         assert!(h.redo(&mut d));

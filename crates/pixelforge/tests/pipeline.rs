@@ -945,3 +945,64 @@ fn mcda_palette_source_with_box_and_kopf() {
         mcda_palette_source_with(method);
     }
 }
+
+// ---------------------------------------------------------------------------------------
+// The editor's source reference (docs/editor.md, Section 3.8)
+
+#[test]
+fn run_keeping_returns_runs_output_and_an_aligned_source_reference() {
+    for extra in [("out_width", int(16)), ("canvas", s("40x24"))] {
+        let cfg = config(&[
+            ("preset", s("sprite")),
+            ("method", s("box")),
+            ("denoise", s("none")),
+            extra,
+        ]);
+        let path = fixture_path("circle_alpha");
+        let plain = pipeline::run(Input::Path(&path), &cfg, None).unwrap();
+        let (out, loaded, pre) = pipeline::run_keeping(Input::Path(&path), &cfg, None).unwrap();
+        assert_eq!(out.indices, plain.indices);
+        assert_eq!(out.palette, plain.palette);
+        let factor = 3;
+        let r = pipeline::source_reference(&loaded, &pre, factor);
+        let (w, h) = (out.indices.w, out.indices.h);
+        assert_eq!((r.w, r.h, r.factor), (w * factor, h * factor, Some(factor)));
+        assert_eq!(r.rgba.len(), r.w * r.h * 4);
+        // The padding (outline margin, canvas) is transparent; the first pixel inside it
+        // is the first pixel of the input's crop.
+        let ((top, _), (left, _)) = pre.geometry.canvas_pad();
+        let (top, left) = (top as usize * factor, left as usize * factor);
+        assert!(top > 0 && left > 0);
+        for x in 0..r.w {
+            assert_eq!(r.rgba[x * 4 + 3], 0, "row 0, x {x}");
+        }
+        let (y0, _, x0, _) = pre.crop;
+        let s = y0 * loaded.w + x0;
+        let d = (top * r.w + left) * 4;
+        assert_eq!(r.rgba[d + 3], loaded.alpha[s]);
+        let byte = |v: f64| (v * 255.0).round_ties_even() as u8;
+        assert_eq!(r.rgba[d], byte(loaded.rgb[s * 3]));
+        // Output pixels that are opaque mostly cover opaque source blocks.
+        let (mut both, mut opaque) = (0, 0);
+        for y in 0..h {
+            for x in 0..w {
+                if out.indices.indices[y * w + x] >= 0 {
+                    opaque += 1;
+                    let c = ((y * factor + factor / 2) * r.w + x * factor + factor / 2) * 4;
+                    both += usize::from(r.rgba[c + 3] > 0);
+                }
+            }
+        }
+        assert!(both * 10 >= opaque * 8, "{both} of {opaque}");
+    }
+    // The factor is limited so the reference stays bounded.
+    let cfg = config(&[
+        ("preset", s("sprite")),
+        ("method", s("box")),
+        ("out_width", int(16)),
+    ]);
+    let (_, loaded, pre) =
+        pipeline::run_keeping(Input::Path(&fixture_path("circle_alpha")), &cfg, None).unwrap();
+    let r = pipeline::source_reference(&loaded, &pre, 100_000);
+    assert!(r.w.max(r.h) <= pipeline::SOURCE_REFERENCE_MAX_SIDE);
+}

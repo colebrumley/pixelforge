@@ -12,7 +12,7 @@ use common::*;
 use pixelforge::config::Config;
 use pixelforge::editor::adjust::{self, Adjust};
 use pixelforge::editor::{palette, save, tools};
-use pixelforge::editor::{Document, EditLog, History, Op, Selection};
+use pixelforge::editor::{Document, EditLog, History, Op, Selection, Session};
 use pixelforge::io;
 use pixelforge::pyjson::Json;
 use sha2::{Digest, Sha256};
@@ -392,4 +392,37 @@ fn tileset_rerender_is_recorded_and_reopens_as_edited() {
     assert!(!opened.origin.prior_log_missing);
     assert_eq!(opened.indices, doc.indices);
     assert_eq!(opened.get(x, y), k);
+}
+
+/// `pixelforge edit PLAIN.png --source INPUT -o OUTDIR` without the window: a PNG that is not
+/// a pixelforge output opens with its colors as the palette, the source as an unaligned
+/// reference, and saves under OUTDIR; saving refuses to overwrite the source.
+#[test]
+fn session_opens_a_plain_png_with_a_source() {
+    let tmp = TempDir::new("session-plain");
+    let plain = fixture_path("two_color");
+    let session = Session::open(&plain, Some(&plain), Some(tmp.path())).unwrap();
+    let doc = &session.doc;
+    assert_eq!((doc.width(), doc.height()), (128, 128));
+    assert_eq!(doc.palette.len(), 2);
+    let source = doc.origin.source.as_ref().unwrap();
+    assert_eq!((source.w, source.h, source.factor), (128, 128, None));
+    assert_eq!(session.prefix, tmp.join("two_color"));
+    assert_eq!(session.image_path(), tmp.join("two_color.png"));
+    assert!(!session.is_dirty());
+
+    let mut session = session;
+    let op = Op::pixels("pencil", tools::pencil(&session.doc, None, &[(0, 0)], 1, 1));
+    session.apply(op).unwrap();
+    session.save().unwrap();
+    assert!(!session.is_dirty());
+    let reopened = Document::open(&tmp.join("two_color.png")).unwrap();
+    assert_eq!(reopened.indices, session.doc.indices);
+    // Saving next to the source would overwrite it.
+    let err = session
+        .save_as(plain.with_extension(""))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("would overwrite input"), "{err}");
+    assert_eq!(session.prefix, tmp.join("two_color"));
 }

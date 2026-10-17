@@ -32,6 +32,23 @@ pub struct SourceRef {
     pub factor: Option<usize>,
 }
 
+impl SourceRef {
+    /// An image file as an unaligned reference (`edit --source`: the geometry that would
+    /// align it with the output is not known).
+    pub fn load(path: &Path) -> Result<SourceRef, EditError> {
+        let bytes = io::read_regular(path).map_err(|e| EditError(e.to_string()))?;
+        let name = path.display().to_string();
+        let image =
+            io::decode_bytes(&name, &bytes, io::MAX_INPUT_PIXELS).map_err(|e| EditError(e.0))?;
+        Ok(SourceRef {
+            rgba: image.rgba,
+            h: image.h,
+            w: image.w,
+            factor: None,
+        })
+    }
+}
+
 /// What a document was opened from.
 #[derive(Clone, Debug)]
 pub struct Origin {

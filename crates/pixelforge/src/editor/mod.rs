@@ -1,6 +1,6 @@
 //! The pixel editor's core (docs/editor.md, Section 3): the document, its operations and
 //! history, the tools, adjust and cleanup, the edit log and saving. No GUI dependency; the
-//! GUI (a later milestone) owns one [`Document`] and one [`History`] and calls into this.
+//! GUI (`crate::gui`, behind the `gui` feature) owns one [`Session`] and calls into this.
 //!
 //! Every edit is a pure function of the document and the operation (N3): tools reduce to a
 //! change list ([`PixelChange`]) applied as one [`Op`], and colors use `color.rs` only
@@ -19,6 +19,8 @@
 //! - `palette`: palette entry edits and the named-palette rules.
 //! - `log`: [`EditLog`], its JSON form, hash and replay.
 //! - `save`: the output files of `convert` written from a document.
+//! - `session`: [`Session`], a document with its history and save prefix, as the GUI uses
+//!   it (every change reports the [`Dirty`] part of the image).
 
 use std::fmt;
 
@@ -30,6 +32,7 @@ pub mod op;
 pub mod palette;
 pub mod save;
 pub mod selection;
+pub mod session;
 pub mod tools;
 
 pub use document::{Document, Origin, SourceRef};
@@ -37,6 +40,7 @@ pub use history::History;
 pub use log::EditLog;
 pub use op::{Op, PixelChange};
 pub use selection::Selection;
+pub use session::{Dirty, Session};
 
 /// An edit that cannot be applied, a log that does not fit the document, or a file the
 /// editor cannot open. The CLI reports it as a config error (exit 2).

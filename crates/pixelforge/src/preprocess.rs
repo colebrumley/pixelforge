@@ -80,6 +80,9 @@ pub struct Preprocessed {
     pub fit: Option<String>,
     /// The integer box pre-reduction applied to the input (1 = none).
     pub prereduce_factor: usize,
+    /// The part of the input the image was cut from, `(y0, y1, x0, x1)` (end excluded): the
+    /// subject crop and, with `fit="crop"`, the fit crop inside it.
+    pub crop: (usize, usize, usize, usize),
     /// The texts of the `UserWarning`s Python emits (from `resolve_layout`).
     pub warnings: Vec<String>,
 }
@@ -380,6 +383,7 @@ pub fn run(
     let subject = mask::subject(rgb, alpha, h, w, config)?;
     let background_keyed = subject.background_keyed;
     let (y0, y1, x0, x1) = subject.crop;
+    let mut crop = (y0, y1, x0, x1);
     let mut p = if (y0, y1, x0, x1) == (0, h, 0, w) {
         Planes {
             rgb: rgb.to_vec(),
@@ -400,6 +404,7 @@ pub fn run(
         // removed from the input instead (centered, to the canvas aspect).
         let (cy0, cy1, cx0, cx1) = layout::fit_crop(p.w as i64, p.h as i64, out_w, out_h);
         let (cy0, cy1, cx0, cx1) = (cy0 as usize, cy1 as usize, cx0 as usize, cx1 as usize);
+        crop = (y0 + cy0, y0 + cy1, x0 + cx0, x0 + cx1);
         p = crop_planes(&p.rgb, &p.mask, &p.weight, p.w, cy0, cy1, cx0, cx1);
         if !p.mask.iter().any(|&m| m) {
             return Err(PixelforgeError("no opaque pixels left after fit='crop'".into()).into());
@@ -508,6 +513,7 @@ pub fn run(
         background_keyed,
         fit,
         prereduce_factor: reduce_by,
+        crop,
         warnings: resolved.warnings,
     })
 }

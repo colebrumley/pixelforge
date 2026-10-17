@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use super::log::EDITS_SUFFIX;
 use super::{Document, EditLog};
-use crate::config::ConfigError;
+use crate::config::{Config, ConfigError};
 use crate::io;
 use crate::pipeline::{self, Error, IndexImage, MetaExtras, Output, VERSION};
 use crate::pyjson::Json;
@@ -47,16 +47,24 @@ fn set(pairs: &mut Vec<(String, Json)>, key: &str, value: Json) {
 /// With `config.tileset`: the tileset extracted from the document and the image it draws
 /// (what a save writes, and the tiles panel shows); `None` without a tileset.
 pub fn rerender(doc: &Document) -> Result<Option<(Tiles, IndexImage)>, Error> {
-    let config = &doc.origin.config;
+    rerender_indices(&doc.indices, &doc.palette_lab, &doc.origin.config)
+}
+
+/// [`rerender`] of an index image and LAB palette under `config` (what the editor's worker
+/// thread runs on a snapshot).
+pub fn rerender_indices(
+    idx: &IndexImage,
+    palette_lab: &[f64],
+    config: &Config,
+) -> Result<Option<(Tiles, IndexImage)>, Error> {
     if !config.tileset {
         return Ok(None);
     }
-    let idx = &doc.indices;
     let extracted = tiles::extract(
         &idx.indices,
         idx.h,
         idx.w,
-        &doc.palette_lab,
+        palette_lab,
         &TileConfig::from(config),
     )
     .map_err(Error::Value)?;
