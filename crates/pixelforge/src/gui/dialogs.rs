@@ -1,6 +1,7 @@
 //! The editor's modal dialogs: a palette entry's color (edit or add, R7, R8), the
-//! confirmation of removing a used entry (R7), and unsaved changes on close (R29). A dialog
-//! only reports the user's answer ([`Outcome`]); the app acts on it.
+//! confirmation of removing a used entry (R7), replace color (R14), merge entries (R9), and
+//! unsaved changes on close (R29). A dialog only reports the user's answer ([`Outcome`]);
+//! the app acts on it.
 
 use eframe::egui;
 use egui::color_picker::{color_picker_color32, Alpha};
@@ -48,6 +49,20 @@ pub enum Dialog {
     },
     /// The window is closing with unsaved changes.
     Unsaved,
+    /// Replace every pixel of `from` with `to` (`-1` transparent), in the selection when
+    /// `in_selection`, else in the whole image. `palette` lists the choices.
+    Replace {
+        from: i64,
+        to: i64,
+        in_selection: bool,
+        palette: Vec<[u8; 3]>,
+    },
+    /// Merge entry `from` into `into`: its pixels move to `into` and it is removed.
+    Merge {
+        from: usize,
+        into: usize,
+        palette: Vec<[u8; 3]>,
+    },
 }
 
 /// The user's answer.
@@ -59,6 +74,48 @@ pub enum Outcome {
     Remove(usize),
     SaveAndClose,
     DiscardAndClose,
+    Replace(i64, i64),
+    Merge(usize, usize),
+}
+
+/// An entry's name in a list: its index and hex, or "transparent" for `-1`.
+fn entry_name(palette: &[[u8; 3]], index: i64) -> String {
+    match usize::try_from(index).ok().and_then(|i| palette.get(i)) {
+        Some(&rgb) => format!("{index}  {}", color::rgb8_to_hex(rgb)),
+        None => "transparent".to_string(),
+    }
+}
+
+/// A drop-down of the palette's entries (and the transparent slot with `transparent`).
+fn entry_picker(
+    ui: &mut egui::Ui,
+    id: &str,
+    palette: &[[u8; 3]],
+    value: &mut i64,
+    transparent: bool,
+) {
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(entry_name(palette, *value))
+        .show_ui(ui, |ui| {
+            let first = if transparent { -1 } else { 0 };
+            for i in first..palette.len() as i64 {
+                ui.selectable_value(value, i, entry_name(palette, i));
+            }
+        });
+}
+
+/// Two buttons, OK (named `ok`) and Cancel; `ok_outcome` when OK is clicked.
+fn buttons(ui: &mut egui::Ui, ok: &str, enabled: bool, ok_outcome: Outcome) -> Option<Outcome> {
+    let mut out = None;
+    ui.horizontal(|ui| {
+        if ui.add_enabled(enabled, egui::Button::new(ok)).clicked() {
+            out = Some(ok_outcome);
+        }
+        if ui.button("Cancel").clicked() {
+            out = Some(Outcome::Cancel);
+        }
+    });
+    out
 }
 
 fn swatch(ui: &mut egui::Ui, rgb: [u8; 3], selected: bool, used: bool) -> egui::Response {
@@ -94,7 +151,11 @@ fn color_body(ui: &mut egui::Ui, d: &mut ColorDialog) -> Option<Outcome> {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
                 for &(rgb, used) in choices {
-                    if swatch(ui, rgb, rgb == d.color, used).clicked() {
+                    // A new entry takes one of the unused colors (R8).
+                    let offered = !(used && d.entry.is_none());
+                    let resp =
+                        ui.add_enabled_ui(offered, |ui| swatch(ui, rgb, rgb == d.color, used));
+                    if resp.inner.clicked() {
                         d.color = rgb;
                         d.hex = color::rgb8_to_hex(rgb);
                     }
@@ -119,16 +180,15 @@ fn color_body(ui: &mut egui::Ui, d: &mut ColorDialog) -> Option<Outcome> {
         }
     }
     ui.separator();
-    let mut out = None;
-    ui.horizontal(|ui| {
-        if ui.button("Apply").clicked() {
-            out = Some(Outcome::Color(d.entry, d.color));
-        }
-        if ui.button("Cancel").clicked() {
-            out = Some(Outcome::Cancel);
-        }
-    });
-    out
+    // Adding a color a named palette's entries already use would only duplicate it.
+    let duplicate = d.entry.is_none()
+        && d.choices
+            .as_ref()
+            .is_some_and(|c| c.iter().any(|&(rgb, used)| used && rgb == d.color));
+    if duplicate {
+        ui.weak("Every color of the palette is in use.");
+    }
+    buttons(ui, "Apply", !duplicate, Outcome::Color(d.entry, d.color))
 }
 
 /// Show `dialog`; returns the answer once the user gives one.
@@ -179,6 +239,52 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog) -> Option<Outcome> {
                     }
                 });
                 out
+            }
+            Dialog::Replace {
+                from,
+                to,
+                in_selection,
+                palette,
+            } => {
+                ui.heading("Replace color");
+                ui.label(if *in_selection {
+                    "Every pixel of one entry inside the selection becomes another."
+                } else {
+                    "Every pixel of one entry in the image becomes another."
+                });
+                egui::Grid::new("pixelforge-replace").show(ui, |ui| {
+                    ui.label("Pixels of");
+                    entry_picker(ui, "pixelforge-replace-from", palette, from, true);
+                    ui.end_row();
+                    ui.label("become");
+                    entry_picker(ui, "pixelforge-replace-to", palette, to, true);
+                    ui.end_row();
+                });
+                ui.separator();
+                buttons(ui, "Replace", from != to, Outcome::Replace(*from, *to))
+            }
+            Dialog::Merge {
+                from,
+                into,
+                palette,
+            } => {
+                ui.heading("Merge palette entries");
+                ui.label(
+                    "Every pixel of the first entry moves to the second, and the first entry \
+                     is removed (entries above it shift down by one).",
+                );
+                let (mut a, mut b) = (*from as i64, *into as i64);
+                egui::Grid::new("pixelforge-merge").show(ui, |ui| {
+                    ui.label("Entry");
+                    entry_picker(ui, "pixelforge-merge-from", palette, &mut a, false);
+                    ui.end_row();
+                    ui.label("into");
+                    entry_picker(ui, "pixelforge-merge-into", palette, &mut b, false);
+                    ui.end_row();
+                });
+                (*from, *into) = (a as usize, b as usize);
+                ui.separator();
+                buttons(ui, "Merge", from != into, Outcome::Merge(*from, *into))
             }
         }
     });

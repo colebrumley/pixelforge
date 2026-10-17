@@ -1,27 +1,36 @@
 //! The editor window (docs/editor.md, Section 3.12): menus, the toolbar, the canvas, the
-//! palette panel and the status bar around one [`Session`].
+//! palette, adjust, tiles and source panels and the status bar around one [`Session`].
 //!
 //! Every command, whether from a menu, a toolbar button or a shortcut, is an [`Action`] run
 //! by [`EditorApp::perform`]; the shortcut table is [`SHORTCUTS`]. Canvas pointer events go
 //! to the [`ToolBox`], whose [`Effect`]s become ops on the session. A change reports the part
 //! of the image it touched, and the canvas re-uploads only that.
 //!
-//! Adding a command: an `Action` variant, its arm in `perform`, and its menu entry and
-//! shortcut. Adding a panel: a `Panel` in [`EditorApp::show`] before the central canvas.
+//! The adjust panel's preview (R15) is the change list of the current slider values drawn on
+//! the canvas, not applied; it is recomputed when the sliders, the selection or the document
+//! change, on the worker thread for selections above [`ADJUST_SYNC_PIXELS`] (the canvas keeps
+//! the latest finished preview meanwhile). Apply recomputes it and applies it as one op.
+//!
+//! Adding a command: an `Action` variant, its arms in `perform` and `Action::describe`, and
+//! its menu entry and shortcut. Adding a panel: a `Panel` in [`EditorApp::show`] before the central canvas.
 
 use eframe::egui;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, Panel, Ui, ViewportCommand};
 
-use super::canvas::{index_color, Canvas, CanvasInput};
+use super::canvas::{index_color, Canvas, CanvasInput, Overlay};
 use super::dialogs::{self, ColorDialog, Dialog, Outcome};
 use super::palette_panel::{self, PaletteAction};
+use super::panels::{self, AdjustRequest};
 use super::tools::{Effect, Tool, ToolBox, BRUSH_SIZES};
 use super::worker::Worker;
 use crate::color;
 use crate::config::Config;
-use crate::editor::{palette, Dirty, Op, Session};
+use crate::editor::adjust::{self, Adjust, AdjustInput, Cleanup};
+use crate::editor::tools::{self as edit_tools, Clip};
+use crate::editor::{palette, Dirty, Op, PixelChange, Selection, Session, TilesSummary};
 use crate::pipeline::IndexImage;
 
 /// A command of the editor.
@@ -44,8 +53,81 @@ pub enum Action {
     ZoomFit,
     ToggleGrid,
     ToggleTileGrid,
-    /// Esc: drop the stroke in progress.
+    /// Esc: drop the stroke in progress, or else clear the selection.
     Cancel,
+    SelectAll,
+    SelectNone,
+    /// Copy the selection (or the image) to the editor's clipboard (R30).
+    Copy,
+    /// Paste the clipboard at the selection's top-left corner (or the image's), as a new
+    /// selection.
+    Paste,
+    /// Ramp shift (R16): every selected pixel one step darker or lighter.
+    RampDarker,
+    RampLighter,
+    /// Cleanup on the selection (R17).
+    RemoveOrphans,
+    FixJaggies,
+    /// Open the replace color dialog (R14).
+    ReplaceColor,
+    /// Open the merge entries dialog (R9).
+    MergeEntries,
+    /// Apply or drop the adjust preview (R15).
+    AdjustApply,
+    AdjustCancel,
+    /// The diff overlay (R23).
+    ToggleDiff,
+    /// The aligned source over the canvas (R22).
+    ToggleSourceOverlay,
+    /// The source reference panel (R22).
+    ToggleSourcePanel,
+    /// Draw the image the tilemap draws instead of the document (R24).
+    ToggleReconstructed,
+    /// The keyboard shortcuts window.
+    Shortcuts,
+}
+
+impl Action {
+    /// What the action does, for the shortcuts sheet.
+    pub fn describe(self) -> String {
+        let text = match self {
+            Action::Save => "Save",
+            Action::SaveAs => "Save as",
+            Action::Close => "Close the window",
+            Action::Undo => "Undo",
+            Action::Redo => "Redo",
+            Action::Tool(tool) => return format!("{} tool", tool.label()),
+            Action::BrushSize(n) => return format!("Brush size {n}"),
+            Action::BrushSmaller => "Smaller brush",
+            Action::BrushLarger => "Larger brush",
+            Action::SwapColors => "Swap primary and secondary color",
+            Action::PickEntry(n) => return format!("Palette entry {n} as primary color"),
+            Action::ZoomIn => "Zoom in",
+            Action::ZoomOut => "Zoom out",
+            Action::ZoomFit => "Zoom to fit",
+            Action::ToggleGrid => "Pixel grid",
+            Action::ToggleTileGrid => "Tile grid",
+            Action::Cancel => "Cancel the drag, or clear the selection",
+            Action::SelectAll => "Select all",
+            Action::SelectNone => "Select none",
+            Action::Copy => "Copy the selection",
+            Action::Paste => "Paste as a new selection",
+            Action::RampDarker => "Ramp shift darker",
+            Action::RampLighter => "Ramp shift lighter",
+            Action::RemoveOrphans => "Remove orphan pixels",
+            Action::FixJaggies => "Fix jaggies",
+            Action::ReplaceColor => "Replace color",
+            Action::MergeEntries => "Merge palette entries",
+            Action::AdjustApply => "Apply the adjustment",
+            Action::AdjustCancel => "Cancel the adjustment",
+            Action::ToggleDiff => "Diff overlay",
+            Action::ToggleSourceOverlay => "Source overlay",
+            Action::ToggleSourcePanel => "Source panel",
+            Action::ToggleReconstructed => "Show what the tilemap draws",
+            Action::Shortcuts => "Keyboard shortcuts",
+        };
+        text.to_string()
+    }
 }
 
 const fn key(modifiers: Modifiers, key: Key) -> KeyboardShortcut {
@@ -65,11 +147,22 @@ pub const SHORTCUTS: &[(KeyboardShortcut, Action)] = &[
     (key(CMD, Key::Y), Action::Redo),
     (key(CMD, Key::S), Action::Save),
     (key(CMD, Key::W), Action::Close),
+    (key(CMD, Key::A), Action::SelectAll),
+    (key(CMD, Key::D), Action::SelectNone),
+    (key(CMD, Key::C), Action::Copy),
+    (key(CMD, Key::V), Action::Paste),
     (key(NONE, Key::B), Action::Tool(Tool::Pencil)),
     (key(NONE, Key::E), Action::Tool(Tool::Eraser)),
     (key(NONE, Key::I), Action::Tool(Tool::Eyedropper)),
     (key(NONE, Key::G), Action::Tool(Tool::Fill)),
+    (key(NONE, Key::L), Action::Tool(Tool::Line)),
+    (key(NONE, Key::R), Action::Tool(Tool::Rectangle)),
+    (key(NONE, Key::M), Action::Tool(Tool::Select)),
     (key(NONE, Key::X), Action::SwapColors),
+    (key(NONE, Key::Comma), Action::RampDarker),
+    (key(NONE, Key::Period), Action::RampLighter),
+    (key(NONE, Key::D), Action::ToggleDiff),
+    (key(NONE, Key::Tab), Action::ToggleSourceOverlay),
     (key(NONE, Key::OpenBracket), Action::BrushSmaller),
     (key(NONE, Key::CloseBracket), Action::BrushLarger),
     (key(NONE, Key::Plus), Action::ZoomIn),
@@ -88,15 +181,110 @@ pub const SHORTCUTS: &[(KeyboardShortcut, Action)] = &[
     (key(NONE, Key::Escape), Action::Cancel),
 ];
 
+/// The shortcuts sheet's rows: every action of [`SHORTCUTS`] once, in table order, with all
+/// of its keys.
+pub fn shortcut_sheet(ctx: &egui::Context) -> Vec<(String, String)> {
+    let mut rows: Vec<(Action, Vec<String>)> = Vec::new();
+    for (shortcut, action) in SHORTCUTS {
+        let keys = ctx.format_shortcut(shortcut);
+        match rows.iter_mut().find(|(a, _)| a == action) {
+            Some((_, all)) => all.push(keys),
+            None => rows.push((*action, vec![keys])),
+        }
+    }
+    rows.into_iter()
+        .map(|(action, keys)| (keys.join(", "), action.describe()))
+        .collect()
+}
+
 /// The first shortcut of `action`, for the menus.
 fn shortcut_of(action: Action) -> Option<&'static KeyboardShortcut> {
     SHORTCUTS.iter().find(|(_, a)| *a == action).map(|(s, _)| s)
 }
 
+/// Inputs the canvas handles itself, listed in the shortcuts sheet after [`SHORTCUTS`].
+pub const POINTER_HELP: &[(&str, &str)] = &[
+    ("Alt+click", "Pick the color under the pointer (any tool)"),
+    ("Shift+fill", "Fill every pixel of that color"),
+    ("Shift+rectangle", "Filled rectangle"),
+    ("Right button", "Paint with the secondary color"),
+    ("Space+drag, middle drag, scroll", "Pan"),
+    ("Cmd/Ctrl+scroll, pinch", "Zoom"),
+];
+
+/// The start of the text copying puts on the system clipboard, so that the window backend
+/// reports Cmd/Ctrl+V; pasting other text does nothing. The pixels stay in the editor.
+pub const CLIP_MARKER: &str = "pixelforge selection";
+
 /// The tile re-extraction job of the worker: a snapshot of the image and LAB palette.
 type TilesJob = (IndexImage, Vec<f64>, Config);
-/// Its result: `(tile count, pixels de-duplication changes)`, `None` without a tileset.
-type TilesResult = Result<Option<(usize, usize)>, String>;
+/// Its result, `None` without a tileset.
+type TilesResult = Result<Option<TilesSummary>, String>;
+
+/// The adjust preview job: the document revision and selection it is for, the snapshot and
+/// the slider values.
+type AdjustJob = (u64, Option<Selection>, Arc<AdjustInput>, Adjust);
+/// Its result: the job's revision, selection and values with the change list.
+type AdjustResult = (u64, Option<Selection>, Adjust, Vec<PixelChange>);
+
+/// Selections up to this many pixels preview within the frame; larger ones on the worker
+/// thread (N5).
+pub const ADJUST_SYNC_PIXELS: usize = 200_000;
+
+/// The adjust panel's state (R15): the sliders and the preview drawn on the canvas.
+pub struct AdjustState {
+    pub params: Adjust,
+    /// The changes the canvas shows as the preview (not applied).
+    preview: Vec<PixelChange>,
+    /// The revision, selection and values the preview was last requested for.
+    requested: Option<(u64, Option<Selection>, Adjust)>,
+    /// The snapshot of the last revision and selection.
+    snapshot: Option<(u64, Option<Selection>, Arc<AdjustInput>)>,
+    worker: Worker<AdjustJob, AdjustResult>,
+}
+
+impl AdjustState {
+    fn new(ctx: &egui::Context) -> AdjustState {
+        let ctx = ctx.clone();
+        AdjustState {
+            params: Adjust::default(),
+            preview: Vec::new(),
+            requested: None,
+            snapshot: None,
+            worker: Worker::spawn(
+                "pixelforge-adjust",
+                |(revision, sel, input, params): AdjustJob| {
+                    let changes = adjust::adjust_input(&input, &params);
+                    (revision, sel, params, changes)
+                },
+                move || ctx.request_repaint(),
+            ),
+        }
+    }
+
+    /// The identity of the current "only colors in selection" choice.
+    fn identity(&self) -> Adjust {
+        Adjust {
+            only_selection_colors: self.params.only_selection_colors,
+            ..Adjust::default()
+        }
+    }
+
+    /// Whether the sliders are away from the identity.
+    pub fn active(&self) -> bool {
+        self.params != self.identity()
+    }
+
+    /// The changes the canvas shows as the preview.
+    pub fn preview(&self) -> &[PixelChange] {
+        &self.preview
+    }
+
+    /// Whether a preview is being computed on the worker.
+    pub fn busy(&self) -> bool {
+        self.worker.busy()
+    }
+}
 
 /// A status-bar message.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,6 +306,17 @@ pub struct EditorApp {
     tiles: Option<Worker<TilesJob, TilesResult>>,
     tiles_revision: Option<u64>,
     tiles_info: Option<TilesResult>,
+    /// Draw the image the tilemap draws instead of the document (R24).
+    pub show_reconstructed: bool,
+    pub adjust: AdjustState,
+    /// The editor's clipboard (R30).
+    pub clipboard: Option<Clip>,
+    /// The source reference panel is shown (when there is a source).
+    pub show_source_panel: bool,
+    /// The keyboard shortcuts window is open.
+    pub show_shortcuts: bool,
+    /// Text for the system clipboard, set when copying (see [`CLIP_MARKER`]).
+    copied_text: Option<String>,
     /// The user chose to close despite unsaved changes.
     allow_close: bool,
     title: String,
@@ -151,6 +350,12 @@ impl EditorApp {
             tiles,
             tiles_revision: None,
             tiles_info: None,
+            show_reconstructed: false,
+            adjust: AdjustState::new(ctx),
+            clipboard: None,
+            show_source_panel: true,
+            show_shortcuts: false,
+            copied_text: None,
             allow_close: false,
             title: String::new(),
             save_as_pending: false,
@@ -197,18 +402,148 @@ impl EditorApp {
             Effect::None => {}
             Effect::Preview(changes) => self.canvas.preview(&self.session.doc, &changes),
             Effect::Cancel(changes) => self.canvas.restore(&self.session.doc, &changes),
+            Effect::Repreview { old, new } => {
+                self.canvas.restore(&self.session.doc, &old);
+                self.canvas.preview(&self.session.doc, &new);
+            }
             Effect::Commit(op) => {
-                let touched: Vec<_> = match &op {
-                    Op::Pixels { changes, .. } => changes.clone(),
-                    _ => Vec::new(),
-                };
-                if !self.apply(op) {
-                    // Refused or empty: drop any preview of it.
-                    self.canvas.restore(&self.session.doc, &touched);
+                self.commit(op);
+            }
+            Effect::Move(op, moved) => {
+                // The selection follows its contents (unless the move was refused).
+                let empty = op.is_empty();
+                if self.commit(op) || empty {
+                    self.session.selection = moved;
                 }
             }
+            Effect::Select(sel) => self.session.selection = sel,
             Effect::Pick(button, index) => self.tools.set_color(button, index),
         }
+    }
+
+    /// Apply an op whose pixels may be previewed on the canvas; a refused or empty op drops
+    /// its preview. `true` when it was applied.
+    fn commit(&mut self, op: Op) -> bool {
+        let touched: Vec<_> = match &op {
+            Op::Pixels { changes, .. } => changes.clone(),
+            _ => Vec::new(),
+        };
+        let applied = self.apply(op);
+        if !applied {
+            self.canvas.restore(&self.session.doc, &touched);
+        }
+        applied
+    }
+
+    /// Apply the change list of a command on the selection as one op named `tool`.
+    fn apply_changes(&mut self, tool: &str, changes: Vec<PixelChange>, what: &str) {
+        if changes.is_empty() {
+            self.info(format!("{what}: nothing to change"));
+        } else if self.apply(Op::pixels(tool, changes)) {
+            let n = match self.session.history.next_undo() {
+                Some(Op::Pixels { changes, .. }) => changes.len(),
+                _ => 0,
+            };
+            self.info(format!(
+                "{what}: {n} pixel{} changed",
+                if n == 1 { "" } else { "s" }
+            ));
+        }
+    }
+
+    /// Copy the selection (or the image) to the editor's clipboard.
+    pub fn copy(&mut self) {
+        let sel = self.session.selection;
+        let clip = edit_tools::copy(&self.session.doc, sel.as_ref());
+        let text = format!("{CLIP_MARKER} {}x{}", clip.w, clip.h);
+        self.info(format!("copied {}x{} pixels", clip.w, clip.h));
+        self.clipboard = Some(clip);
+        self.copied_text = Some(text);
+    }
+
+    /// Paste the clipboard at the selection's top-left corner (or the image's); the pasted
+    /// rectangle becomes the selection, so it can be moved with the selection tool.
+    pub fn paste(&mut self) {
+        let Some(clip) = self.clipboard.as_ref() else {
+            return self.info("nothing to paste");
+        };
+        let at = self
+            .session
+            .selection
+            .map_or((0, 0), |s| (s.x as i64, s.y as i64));
+        let (changes, placed) = edit_tools::paste(&self.session.doc, clip, at);
+        let op = Op::pixels("paste", changes);
+        if op.is_empty() || self.apply(op) {
+            self.session.selection = placed;
+            self.tools.tool = Tool::Select;
+        }
+    }
+
+    /// Recompute the adjust preview when the sliders, the selection or the document
+    /// changed, and pick up the worker's preview.
+    fn update_adjust(&mut self) {
+        let revision = self.session.revision();
+        let sel = self.session.selection;
+        let params = self.adjust.params;
+        let key = (revision, sel, params);
+        if let Some((rev, s, p, changes)) = self.adjust.worker.poll() {
+            if (rev, s, p) == key && self.adjust.active() {
+                self.show_adjust_preview(changes);
+            }
+        }
+        if self.adjust.requested == Some(key) {
+            return;
+        }
+        self.adjust.requested = Some(key);
+        if !self.adjust.active() {
+            self.show_adjust_preview(Vec::new());
+            return;
+        }
+        let input = match &self.adjust.snapshot {
+            Some((r, s, input)) if (*r, *s) == (revision, sel) => input.clone(),
+            _ => {
+                let input = Arc::new(AdjustInput::new(&self.session.doc, sel.as_ref()));
+                self.adjust.snapshot = Some((revision, sel, input.clone()));
+                input
+            }
+        };
+        if input.len() <= ADJUST_SYNC_PIXELS {
+            let changes = adjust::adjust_input(&input, &params);
+            self.show_adjust_preview(changes);
+        } else {
+            // The canvas keeps the latest finished preview meanwhile.
+            self.adjust.worker.submit((revision, sel, input, params));
+        }
+    }
+
+    fn show_adjust_preview(&mut self, changes: Vec<PixelChange>) {
+        let old = std::mem::replace(&mut self.adjust.preview, changes);
+        self.canvas.restore(&self.session.doc, &old);
+        self.canvas.preview(&self.session.doc, &self.adjust.preview);
+    }
+
+    /// Apply (`apply`) or drop the adjust preview, and reset the sliders.
+    fn finish_adjust(&mut self, apply: bool) {
+        let params = self.adjust.params;
+        let active = self.adjust.active();
+        self.adjust.params = self.adjust.identity();
+        self.show_adjust_preview(Vec::new());
+        self.adjust.requested = None;
+        if apply && active {
+            // Computed afresh: the preview may be from the worker or a frame old.
+            let sel = self.session.selection;
+            let changes = adjust::adjust(&self.session.doc, sel.as_ref(), &params);
+            self.apply_changes("adjust", changes, "adjust");
+        }
+    }
+
+    /// Hand the reconstruction to the canvas while it is shown.
+    fn sync_reconstructed(&mut self) {
+        let rendered = match (&self.tiles_info, self.show_reconstructed) {
+            (Some(Ok(Some(t))), true) => Some(&t.rendered),
+            _ => None,
+        };
+        self.canvas.set_reconstructed(&self.session.doc, rendered);
     }
 
     /// Run a command.
@@ -247,9 +582,98 @@ impl EditorApp {
             Action::ToggleGrid => self.canvas.show_grid = !self.canvas.show_grid,
             Action::ToggleTileGrid => self.canvas.show_tile_grid = !self.canvas.show_tile_grid,
             Action::Cancel => {
+                if self.tools.dragging() {
+                    let cancelled = self.tools.cancel();
+                    self.effect(cancelled);
+                } else {
+                    self.session.selection = None;
+                }
+            }
+            Action::SelectAll => {
+                let doc = &self.session.doc;
+                self.session.selection = Some(Selection::all(doc.width(), doc.height()));
+            }
+            Action::SelectNone => self.session.selection = None,
+            Action::Copy => self.copy(),
+            Action::Paste => {
                 let cancelled = self.tools.cancel();
                 self.effect(cancelled);
+                self.paste();
             }
+            Action::RampDarker | Action::RampLighter => {
+                let lighter = action == Action::RampLighter;
+                let sel = self.session.selection;
+                let changes = adjust::ramp_shift(&self.session.doc, sel.as_ref(), lighter);
+                let what = if lighter {
+                    "ramp shift lighter"
+                } else {
+                    "ramp shift darker"
+                };
+                self.apply_changes("ramp_shift", changes, what);
+            }
+            Action::RemoveOrphans | Action::FixJaggies => {
+                let (pass, tool, what) = if action == Action::RemoveOrphans {
+                    (Cleanup::Orphans, "orphans", "orphan removal")
+                } else {
+                    (Cleanup::Jaggies, "jaggies", "jaggy fix")
+                };
+                let sel = self.session.selection;
+                let changes = adjust::cleanup(&self.session.doc, sel.as_ref(), pass);
+                self.apply_changes(tool, changes, what);
+            }
+            Action::ReplaceColor => {
+                self.dialog = Some(Dialog::Replace {
+                    from: self.tools.primary,
+                    to: self.tools.secondary,
+                    in_selection: self.session.selection.is_some(),
+                    palette: self.session.doc.palette.clone(),
+                });
+            }
+            Action::MergeEntries => {
+                let k = self.session.doc.palette.len();
+                if k < 2 {
+                    return self.error("merging needs two palette entries");
+                }
+                let entry = |c: i64, fallback: usize| {
+                    usize::try_from(c)
+                        .ok()
+                        .filter(|&i| i < k)
+                        .unwrap_or(fallback)
+                };
+                let from = entry(self.tools.primary, 0);
+                let into = entry(self.tools.secondary, usize::from(from == 0));
+                self.dialog = Some(Dialog::Merge {
+                    from,
+                    into,
+                    palette: self.session.doc.palette.clone(),
+                });
+            }
+            Action::AdjustApply => self.finish_adjust(true),
+            Action::AdjustCancel => self.finish_adjust(false),
+            Action::ToggleDiff => {
+                let on = !self.canvas.diff_shown();
+                self.canvas.set_diff(&self.session.doc, on);
+            }
+            Action::ToggleSourceOverlay => {
+                let aligned = self
+                    .session
+                    .doc
+                    .origin
+                    .source
+                    .as_ref()
+                    .is_some_and(|s| s.factor.is_some());
+                if aligned {
+                    self.canvas.show_source = !self.canvas.show_source;
+                } else {
+                    self.info("no aligned source to overlay (open it with convert --edit)");
+                }
+            }
+            Action::ToggleSourcePanel => self.show_source_panel = !self.show_source_panel,
+            Action::ToggleReconstructed => {
+                self.show_reconstructed = !self.show_reconstructed;
+                self.sync_reconstructed();
+            }
+            Action::Shortcuts => self.show_shortcuts = !self.show_shortcuts,
         }
     }
 
@@ -302,7 +726,7 @@ impl EditorApp {
         }
     }
 
-    fn palette_action(&mut self, action: PaletteAction) {
+    fn palette_action(&mut self, action: PaletteAction, ctx: &egui::Context) {
         let doc = &self.session.doc;
         match action {
             PaletteAction::Pick(button, index) => self.tools.set_color(button, index),
@@ -323,6 +747,8 @@ impl EditorApp {
                     .map_or([128, 128, 128], |(rgb, _)| *rgb);
                 self.dialog = Some(Dialog::Color(ColorDialog::new(None, start, choices)));
             }
+            PaletteAction::Merge => self.perform(Action::MergeEntries, ctx),
+            PaletteAction::Replace => self.perform(Action::ReplaceColor, ctx),
             PaletteAction::Remove(i) => {
                 let moved = self.session.counts()[i];
                 match palette::nearest_other(doc, i) {
@@ -343,14 +769,29 @@ impl EditorApp {
 
     fn remove_entry(&mut self, index: usize) {
         let doc = &self.session.doc;
-        let op = match palette::remove_entry(doc, index) {
-            Ok(op) => op,
-            Err(e) => return self.error(e.0),
+        let (op, target) = match (
+            palette::remove_entry(doc, index),
+            palette::nearest_other(doc, index),
+        ) {
+            (Ok(op), Some(target)) => (op, target),
+            (Err(e), _) => return self.error(e.0),
+            (_, None) => return self.error("the last palette entry cannot be removed"),
         };
+        self.remove_with(op, index, target);
+    }
+
+    fn merge_entries(&mut self, from: usize, into: usize) {
+        match palette::merge_entries(&self.session.doc, from, into) {
+            Ok(op) => self.remove_with(op, from, into),
+            Err(e) => self.error(e.0),
+        }
+    }
+
+    /// Apply `op`, which removes entry `index` and moves its pixels to `target`.
+    fn remove_with(&mut self, op: Op, index: usize, target: usize) {
         // The colors keep pointing at the same entries after the shift; one on the removed
-        // entry follows its pixels to the nearest entry.
-        let target = palette::nearest_other(doc, index).map_or(-1, |t| t as i64);
-        let index = index as i64;
+        // entry follows its pixels.
+        let (index, target) = (index as i64, target as i64);
         let follow = |c: i64| {
             let c = if c == index { target } else { c };
             if c > index {
@@ -388,6 +829,12 @@ impl EditorApp {
                 Err(e) => self.error(e.0),
             },
             Outcome::Remove(i) => self.remove_entry(i),
+            Outcome::Replace(from, to) => {
+                let sel = self.session.selection;
+                let changes = edit_tools::replace_color(&self.session.doc, sel.as_ref(), from, to);
+                self.apply_changes("replace_color", changes, "replace color");
+            }
+            Outcome::Merge(from, into) => self.merge_entries(from, into),
             Outcome::SaveAndClose => {
                 if self.save() {
                     self.allow_close = true;
@@ -406,11 +853,26 @@ impl EditorApp {
             return;
         }
         let pressed: Vec<Action> = ctx.input_mut(|i| {
-            SHORTCUTS
+            let mut pressed: Vec<Action> = SHORTCUTS
                 .iter()
                 .filter(|(s, _)| i.consume_shortcut(s))
                 .map(|(_, a)| *a)
-                .collect()
+                .collect();
+            // The window backend turns Cmd/Ctrl+C and V into clipboard events instead of
+            // key presses; V only when the system clipboard holds text, which copying puts
+            // there for that reason (CLIP_MARKER).
+            i.events.retain(|e| match e {
+                egui::Event::Copy => {
+                    pressed.push(Action::Copy);
+                    false
+                }
+                egui::Event::Paste(text) if text.starts_with(CLIP_MARKER) => {
+                    pressed.push(Action::Paste);
+                    false
+                }
+                _ => true,
+            });
+            pressed
         });
         for action in pressed {
             self.perform(action, ctx);
@@ -438,8 +900,10 @@ impl EditorApp {
         let Some(worker) = self.tiles.as_mut() else {
             return;
         };
+        let mut arrived = false;
         if let Some(result) = worker.poll() {
             self.tiles_info = Some(result);
+            arrived = true;
         }
         let revision = self.session.revision();
         if self.tiles_revision != Some(revision) && !worker.busy() {
@@ -451,6 +915,19 @@ impl EditorApp {
             ));
             self.tiles_revision = Some(revision);
         }
+        if arrived && self.show_reconstructed {
+            self.sync_reconstructed();
+        }
+    }
+
+    /// Whether the tiles worker has not delivered the newest result yet.
+    pub fn tiles_busy(&self) -> bool {
+        self.tiles.as_ref().is_some_and(|w| w.busy())
+    }
+
+    /// The latest tiles result (R24).
+    pub fn tiles_info(&self) -> Option<&TilesResult> {
+        self.tiles_info.as_ref()
     }
 
     fn menu_item(&mut self, ui: &mut Ui, label: &str, action: Action, enabled: bool) {
@@ -463,7 +940,23 @@ impl EditorApp {
         }
     }
 
+    fn toggle_item(&mut self, ui: &mut Ui, label: &str, on: bool, action: Action, enabled: bool) {
+        let mut button = egui::Button::selectable(on, label);
+        if let Some(s) = shortcut_of(action) {
+            button = button.shortcut_text(ui.ctx().format_shortcut(s));
+        }
+        if ui.add_enabled(enabled, button).clicked() {
+            self.perform(action, &ui.ctx().clone());
+        }
+    }
+
     fn menu_bar(&mut self, ui: &mut Ui) {
+        let has_clip = self.clipboard.is_some();
+        let k = self.session.doc.palette.len();
+        let source = self.session.doc.origin.source.as_ref();
+        let has_source = source.is_some();
+        let aligned = source.is_some_and(|s| s.factor.is_some());
+        let tileset = self.session.doc.origin.config.tileset;
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 self.menu_item(ui, "Save", Action::Save, true);
@@ -479,28 +972,96 @@ impl EditorApp {
                 self.menu_item(ui, "Undo", Action::Undo, undo);
                 self.menu_item(ui, "Redo", Action::Redo, redo);
                 ui.separator();
+                self.menu_item(ui, "Copy", Action::Copy, true);
+                self.menu_item(ui, "Paste", Action::Paste, has_clip);
+                ui.separator();
                 self.menu_item(ui, "Swap colors", Action::SwapColors, true);
+                self.menu_item(ui, "Replace color…", Action::ReplaceColor, true);
+                self.menu_item(ui, "Merge palette entries…", Action::MergeEntries, k > 1);
             });
             ui.menu_button("View", |ui| {
                 self.menu_item(ui, "Zoom in", Action::ZoomIn, true);
                 self.menu_item(ui, "Zoom out", Action::ZoomOut, true);
                 self.menu_item(ui, "Zoom to fit", Action::ZoomFit, true);
                 ui.separator();
-                let grid = if self.canvas.show_grid {
-                    "Hide pixel grid"
-                } else {
-                    "Show pixel grid"
-                };
-                self.menu_item(ui, grid, Action::ToggleGrid, true);
-                let tiles = if self.canvas.show_tile_grid {
-                    "Hide tile grid"
-                } else {
-                    "Show tile grid"
-                };
-                let tileset = self.session.doc.origin.config.tileset;
-                self.menu_item(ui, tiles, Action::ToggleTileGrid, tileset);
+                let grid = self.canvas.show_grid;
+                self.toggle_item(ui, "Pixel grid", grid, Action::ToggleGrid, true);
+                let tiles = self.canvas.show_tile_grid;
+                self.toggle_item(ui, "Tile grid", tiles, Action::ToggleTileGrid, tileset);
+                let diff = self.canvas.diff_shown();
+                self.toggle_item(ui, "Diff overlay", diff, Action::ToggleDiff, true);
+                ui.separator();
+                let panel = self.show_source_panel;
+                self.toggle_item(
+                    ui,
+                    "Source panel",
+                    panel,
+                    Action::ToggleSourcePanel,
+                    has_source,
+                );
+                let overlay = self.canvas.show_source;
+                self.toggle_item(
+                    ui,
+                    "Source overlay",
+                    overlay,
+                    Action::ToggleSourceOverlay,
+                    aligned,
+                );
+                let rec = self.show_reconstructed;
+                self.toggle_item(
+                    ui,
+                    "What the tilemap draws",
+                    rec,
+                    Action::ToggleReconstructed,
+                    tileset,
+                );
+            });
+            ui.menu_button("Select", |ui| {
+                self.menu_item(ui, "All", Action::SelectAll, true);
+                let any = self.session.selection.is_some();
+                self.menu_item(ui, "None", Action::SelectNone, any);
+            });
+            ui.menu_button("Image", |ui| {
+                self.menu_item(ui, "Ramp shift darker", Action::RampDarker, k > 0);
+                self.menu_item(ui, "Ramp shift lighter", Action::RampLighter, k > 0);
+                ui.separator();
+                self.menu_item(ui, "Remove orphan pixels", Action::RemoveOrphans, k > 0);
+                self.menu_item(ui, "Fix jaggies", Action::FixJaggies, true);
+            });
+            ui.menu_button("Help", |ui| {
+                self.menu_item(ui, "Keyboard shortcuts", Action::Shortcuts, true);
             });
         });
+    }
+
+    /// The shortcuts sheet, generated from [`SHORTCUTS`] and [`POINTER_HELP`].
+    fn shortcuts_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_shortcuts;
+        egui::Window::new("Keyboard shortcuts")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_height(480.0)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::Grid::new("pixelforge-shortcuts")
+                        .striped(true)
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            for (keys, action) in shortcut_sheet(ctx) {
+                                ui.monospace(keys);
+                                ui.label(action);
+                                ui.end_row();
+                            }
+                            for (keys, what) in POINTER_HELP {
+                                ui.monospace(*keys);
+                                ui.label(*what);
+                                ui.end_row();
+                            }
+                        });
+                });
+            });
+        self.show_shortcuts = open;
     }
 
     fn toolbar(&mut self, ui: &mut Ui) {
@@ -592,14 +1153,20 @@ impl EditorApp {
             ui.monospace(format!("{}x{}", doc.width(), doc.height()));
             ui.separator();
             ui.monospace(format!("{} colors", doc.palette.len()));
+            if let Some(sel) = self.session.selection {
+                ui.separator();
+                ui.monospace(format!("sel {},{} {}x{}", sel.x, sel.y, sel.w, sel.h));
+            }
             if let Some(info) = &self.tiles_info {
                 ui.separator();
                 match info {
-                    Ok(Some((n, changed))) => {
-                        ui.monospace(format!("{n} tiles")).on_hover_text(format!(
-                            "Saving re-extracts the tileset; de-duplication changes {changed} \
-                                 pixel(s) of the image."
-                        ));
+                    Ok(Some(t)) => {
+                        ui.monospace(format!("{} tiles", t.tiles))
+                            .on_hover_text(format!(
+                                "Saving re-extracts the tileset; de-duplication changes {} \
+                                 pixel(s) of the image.",
+                                t.changed
+                            ));
                     }
                     Ok(None) => {}
                     Err(e) => {
@@ -633,6 +1200,9 @@ impl EditorApp {
             self.dialog = Some(Dialog::Unsaved);
         }
         self.shortcuts(&ctx);
+        if let Some(text) = self.copied_text.take() {
+            ctx.copy_text(text);
+        }
         if std::mem::take(&mut self.save_as_pending) {
             self.save_as();
         }
@@ -645,11 +1215,71 @@ impl EditorApp {
             .exact_size(92.0)
             .show(ui, |ui| self.toolbar(ui));
         let mut palette_action = None;
+        let mut adjust_request = None;
+        let mut reconstructed_toggled = false;
         Panel::right("pixelforge-palette")
-            .default_size(220.0)
+            .default_size(240.0)
             .show(ui, |ui| {
+                Panel::bottom("pixelforge-side-tools")
+                    .resizable(false)
+                    .show(ui, |ui| {
+                        ui.add_space(4.0);
+                        let active = self.adjust.active();
+                        let busy = self.adjust.busy();
+                        adjust_request = panels::adjust(
+                            ui,
+                            &mut self.adjust.params,
+                            self.session.selection.is_some(),
+                            active,
+                            busy,
+                        );
+                        if self.tiles.is_some() {
+                            ui.separator();
+                            let busy = self.tiles_busy();
+                            reconstructed_toggled = panels::tiles(
+                                ui,
+                                self.tiles_info.as_ref(),
+                                &mut self.show_reconstructed,
+                                busy,
+                            );
+                        }
+                        ui.add_space(4.0);
+                    });
                 palette_action = palette_panel::show(ui, &self.session, &self.tools);
             });
+        if let (true, Some(src)) = (
+            self.show_source_panel,
+            self.session.doc.origin.source.as_ref(),
+        ) {
+            let texture = self.canvas.source_texture(&ctx, src);
+            Panel::bottom("pixelforge-source")
+                .resizable(true)
+                .default_size(180.0)
+                .min_size(80.0)
+                .show(ui, |ui| {
+                    panels::source(
+                        ui,
+                        src,
+                        texture,
+                        &mut self.canvas.show_source,
+                        &mut self.canvas.source_opacity,
+                    );
+                });
+        }
+        if reconstructed_toggled {
+            self.sync_reconstructed();
+        }
+        match adjust_request {
+            Some(AdjustRequest::Apply) => self.perform(Action::AdjustApply, &ctx),
+            Some(AdjustRequest::Cancel) => self.perform(Action::AdjustCancel, &ctx),
+            None => {}
+        }
+        // The overlay outline follows a selection drag; otherwise it is the selection.
+        let doc = &self.session.doc;
+        let selection = self
+            .tools
+            .marquee(doc.width(), doc.height())
+            .unwrap_or(self.session.selection);
         let mut input = CanvasInput::default();
         egui::CentralPanel::no_frame().show(ui, |ui| {
             let brush = if self.tools.tool.uses_brush() {
@@ -657,14 +1287,14 @@ impl EditorApp {
             } else {
                 1
             };
-            let tile_size = self
-                .session
-                .doc
-                .origin
-                .config
-                .tileset
-                .then_some(self.session.doc.origin.config.tile_size as usize);
-            input = self.canvas.show(ui, brush, tile_size);
+            let config = &self.session.doc.origin.config;
+            let overlay = Overlay {
+                brush,
+                tile_size: config.tileset.then_some(config.tile_size as usize),
+                selection,
+                source: self.session.doc.origin.source.as_ref(),
+            };
+            input = self.canvas.show(ui, &overlay);
         });
         self.hover = input.hover;
         if self.dialog.is_none() {
@@ -676,12 +1306,16 @@ impl EditorApp {
             }
         }
         if let Some(action) = palette_action {
-            self.palette_action(action);
+            self.palette_action(action, &ctx);
         }
+        self.update_adjust();
         if let Some(dialog) = self.dialog.as_mut() {
             if let Some(outcome) = dialogs::show(&ctx, dialog) {
                 self.dialog_outcome(outcome, &ctx);
             }
+        }
+        if self.show_shortcuts {
+            self.shortcuts_window(&ctx);
         }
         self.update_title(&ctx);
     }

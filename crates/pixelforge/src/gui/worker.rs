@@ -1,5 +1,5 @@
 //! The editor's worker thread (docs/editor.md, Section 3.13): slow computations (tile
-//! re-extraction now; adjust previews on large selections later) run on one thread so they
+//! re-extraction, adjust previews of large selections) each run on a thread of their own so they
 //! never block a frame.
 //!
 //! The main thread submits a job (a snapshot of what it needs) and gets a generation

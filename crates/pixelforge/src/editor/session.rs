@@ -236,13 +236,12 @@ impl Session {
     }
 
     /// The tiles a save would write, re-extracted from a snapshot of the image (see
-    /// [`save::rerender_indices`]): `(tile count, pixels de-duplication changes)`, `None`
-    /// without `config.tileset`.
+    /// [`save::rerender_indices`]); `None` without `config.tileset`.
     pub fn tiles_summary(
         idx: &pipeline::IndexImage,
         palette_lab: &[f64],
         config: &crate::config::Config,
-    ) -> Result<Option<(usize, usize)>, Error> {
+    ) -> Result<Option<TilesSummary>, Error> {
         Ok(
             save::rerender_indices(idx, palette_lab, config)?.map(|(tiles, rendered)| {
                 let changed = rendered
@@ -251,10 +250,25 @@ impl Session {
                     .zip(&idx.indices)
                     .filter(|(a, b)| a != b)
                     .count();
-                (tiles.n_tiles, changed)
+                TilesSummary {
+                    tiles: tiles.n_tiles,
+                    changed,
+                    rendered,
+                }
             }),
         )
     }
+}
+
+/// What the tiles panel shows (R24, docs/editor.md Section 3.9).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TilesSummary {
+    /// Tiles after de-duplication.
+    pub tiles: usize,
+    /// Pixels of the image the de-duplication changes.
+    pub changed: usize,
+    /// The image the tilemap draws (what a save writes).
+    pub rendered: pipeline::IndexImage,
 }
 
 #[cfg(test)]

@@ -14,7 +14,8 @@
 //! - `op`: [`Op`] and [`PixelChange`]; applying, checking and reverting ops.
 //! - `history`: [`History`], undo and redo with a savepoint.
 //! - `selection`: the rectangular [`Selection`].
-//! - `tools`: pencil, eraser, fill, line, rectangle, replace color, move, eyedropper.
+//! - `tools`: pencil, eraser, fill, line, rectangle, replace color, move, copy and paste,
+//!   eyedropper.
 //! - `adjust`: brightness/contrast/saturation, ramp shift, cleanup.
 //! - `palette`: palette entry edits and the named-palette rules.
 //! - `log`: [`EditLog`], its JSON form, hash and replay.
@@ -40,7 +41,7 @@ pub use history::History;
 pub use log::EditLog;
 pub use op::{Op, PixelChange};
 pub use selection::Selection;
-pub use session::{Dirty, Session};
+pub use session::{Dirty, Session, TilesSummary};
 
 /// An edit that cannot be applied, a log that does not fit the document, or a file the
 /// editor cannot open. The CLI reports it as a config error (exit 2).

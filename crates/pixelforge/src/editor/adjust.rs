@@ -72,42 +72,79 @@ fn used(pixels: &[(usize, usize, i64)], k: usize) -> Vec<usize> {
     (0..k).filter(|&i| seen[i]).collect()
 }
 
+/// What [`adjust`] reads from the document: the opaque pixels of the region and the LAB
+/// palette. A snapshot of it is what the editor's worker thread previews on, so moving a
+/// slider does not copy the image.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AdjustInput {
+    /// The opaque pixels inside the region, row-major: `(x, y, index)`.
+    pub pixels: Vec<(usize, usize, i64)>,
+    /// The document's `palette_lab` (`K * 3`).
+    pub palette_lab: Vec<f64>,
+}
+
+impl AdjustInput {
+    /// The selection's (or the image's) opaque pixels and the palette of `doc`.
+    pub fn new(doc: &Document, sel: Option<&Selection>) -> AdjustInput {
+        AdjustInput {
+            pixels: opaque(doc, sel),
+            palette_lab: doc.palette_lab.clone(),
+        }
+    }
+
+    /// How many pixels an adjust of this input looks at.
+    pub fn len(&self) -> usize {
+        self.pixels.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pixels.is_empty()
+    }
+}
+
 /// Brightness, contrast and saturation in CIELAB on the selection (or the image), snapped
 /// to the palette (R15). The contrast pivot is the mean L of the selected pixels after the
 /// brightness shift; L is clamped to 0..100 last.
 pub fn adjust(doc: &Document, sel: Option<&Selection>, params: &Adjust) -> Vec<PixelChange> {
-    let pixels = opaque(doc, sel);
+    adjust_input(&AdjustInput::new(doc, sel), params)
+}
+
+/// [`adjust`] of a snapshot taken with [`AdjustInput::new`] (the same change list).
+pub fn adjust_input(input: &AdjustInput, params: &Adjust) -> Vec<PixelChange> {
+    let pixels = &input.pixels;
     if pixels.is_empty() {
         return Vec::new();
     }
+    let palette = &input.palette_lab;
+    let lab = |i: i64| {
+        let i = i as usize;
+        [palette[i * 3], palette[i * 3 + 1], palette[i * 3 + 2]]
+    };
     let b = params.brightness.clamp(-50.0, 50.0);
     let c = params.contrast.clamp(0.5, 2.0);
     let s = params.saturation.clamp(0.0, 2.0);
     let mut sum = 0.0;
-    for &(_, _, i) in &pixels {
-        sum += lab(doc, i)[0];
+    for &(_, _, i) in pixels {
+        sum += lab(i)[0];
     }
     let mean = sum / pixels.len() as f64 + b;
-    let k = doc.palette.len();
-    let entries = used(&pixels, k);
+    let k = palette.len() / 3;
+    let entries = used(pixels, k);
     let candidates: Vec<usize> = if params.only_selection_colors {
         entries.clone()
     } else {
         (0..k).collect()
     };
-    let candidate_lab: Vec<f64> = candidates
-        .iter()
-        .flat_map(|&j| lab(doc, j as i64))
-        .collect();
+    let candidate_lab: Vec<f64> = candidates.iter().flat_map(|&j| lab(j as i64)).collect();
     let mut map: Vec<i64> = (0..k as i64).collect();
     for &i in &entries {
-        let [l, a, bb] = lab(doc, i as i64);
+        let [l, a, bb] = lab(i as i64);
         let l = (mean + c * (l + b - mean)).clamp(0.0, 100.0);
         let target = [l, a * s, bb * s];
         let j = color::nearest_index(&target, &candidate_lab)[0] as usize;
         map[i] = candidates[j] as i64;
     }
-    remap(&pixels, &map)
+    remap(pixels, &map)
 }
 
 /// Ramp shift (R16): every selected pixel moves to the entry of the same hue ramp (within
@@ -216,8 +253,11 @@ mod tests {
         let once = applied(&d, changes.clone());
         // Snapping a snapped result again changes nothing.
         assert!(adjust(&once, None, &Adjust::default()).is_empty());
-        // Deterministic: the same input gives the same list.
+        // Deterministic: the same input gives the same list, also from a snapshot.
         assert_eq!(adjust(&d, None, &params), changes);
+        let snapshot = AdjustInput::new(&d, None);
+        assert_eq!(snapshot.len(), 11);
+        assert_eq!(adjust_input(&snapshot, &params), changes);
         // Same index in, same index out; transparency untouched.
         assert_eq!(once.get(1, 1), -1);
         assert_eq!(once.get(0, 0), once.get(3, 2));

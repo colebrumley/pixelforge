@@ -513,14 +513,24 @@ impl Document {
         io::indices_to_rgba(&self.indices.indices, &self.palette).expect("indices are checked")
     }
 
+    /// Whether pixel `(x, y)`'s color or transparency differs from the conversion result.
+    pub fn differs_at(&self, x: usize, y: usize) -> bool {
+        let p = y * self.indices.w + x;
+        self.differs(self.indices.indices[p], self.baseline.indices[p])
+    }
+
+    fn differs(&self, now: i64, base: i64) -> bool {
+        let color = |i: i64, palette: &[[u8; 3]]| (i >= 0).then(|| palette[i as usize]);
+        color(now, &self.palette) != color(base, &self.baseline_palette)
+    }
+
     /// Per pixel: its color or transparency differs from the conversion result.
     pub fn diff_mask(&self) -> Vec<bool> {
-        let color = |i: i64, palette: &[[u8; 3]]| (i >= 0).then(|| palette[i as usize]);
         self.indices
             .indices
             .iter()
             .zip(&self.baseline.indices)
-            .map(|(&a, &b)| color(a, &self.palette) != color(b, &self.baseline_palette))
+            .map(|(&a, &b)| self.differs(a, b))
             .collect()
     }
 
@@ -653,6 +663,7 @@ pub(crate) mod tests {
         d.apply(&mut op).unwrap();
         assert_eq!(d.indices.indices, vec![0, 0]);
         assert_eq!(d.diff_mask(), vec![true, false]);
+        assert!(d.differs_at(0, 0) && !d.differs_at(1, 0));
         assert!(d.palette_changed());
     }
 }

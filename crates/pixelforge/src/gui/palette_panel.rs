@@ -22,6 +22,10 @@ pub enum PaletteAction {
     Add,
     /// Remove this entry (asks first when pixels use it).
     Remove(usize),
+    /// Merge two entries (R9; the dialog asks which).
+    Merge,
+    /// Replace one color with another (R14; the dialog asks which).
+    Replace,
 }
 
 const ROW: f32 = 20.0;
@@ -116,7 +120,7 @@ pub fn show(ui: &mut Ui, session: &Session, tools: &ToolBox) -> Option<PaletteAc
             *action = Some(PaletteAction::Pick(Button::Secondary, index));
         }
     };
-    let bottom = 2.0 * ui.spacing().interact_size.y + 3.0 * ui.spacing().item_spacing.y;
+    let bottom = 3.0 * ui.spacing().interact_size.y + 4.0 * ui.spacing().item_spacing.y;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .max_height((ui.available_height() - bottom).max(ROW))
@@ -173,6 +177,22 @@ pub fn show(ui: &mut Ui, session: &Session, tools: &ToolBox) -> Option<PaletteAc
             .clicked()
         {
             action = entry.map(PaletteAction::Remove);
+        }
+    });
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(k > 1, egui::Button::new("Merge…"))
+            .on_hover_text("Merge one entry into another (the first is removed).")
+            .clicked()
+        {
+            action = Some(PaletteAction::Merge);
+        }
+        if ui
+            .button("Replace…")
+            .on_hover_text("Replace one color with another, in the selection or the image.")
+            .clicked()
+        {
+            action = Some(PaletteAction::Replace);
         }
     });
     action

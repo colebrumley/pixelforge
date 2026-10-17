@@ -272,6 +272,54 @@ pub fn move_selection(
     (normalize(out), moved)
 }
 
+/// A copied rectangle of indices (`-1` transparent), row-major (R30).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Clip {
+    pub w: usize,
+    pub h: usize,
+    pub indices: Vec<i64>,
+}
+
+/// Copy the selection's indices (the whole image without one).
+pub fn copy(doc: &Document, sel: Option<&Selection>) -> Clip {
+    let region = region(sel, doc.width(), doc.height());
+    Clip {
+        w: region.w,
+        h: region.h,
+        indices: region.positions().map(|(x, y)| doc.get(x, y)).collect(),
+    }
+}
+
+/// Paste `clip` with its top-left corner at `at`: every pixel of the rectangle, transparent
+/// ones included (as moving a selection does), clipped to the image. Returns the changes and
+/// the pasted rectangle as the new selection (`None` when nothing of it is inside).
+pub fn paste(doc: &Document, clip: &Clip, at: (i64, i64)) -> (Vec<PixelChange>, Option<Selection>) {
+    if clip.w == 0 || clip.h == 0 {
+        return (Vec::new(), None);
+    }
+    let mut out = Vec::new();
+    for cy in 0..clip.h {
+        for cx in 0..clip.w {
+            let (x, y) = (at.0 + cx as i64, at.1 + cy as i64);
+            if let Some(old) = doc.get_at(x, y) {
+                out.push(PixelChange {
+                    x: x as usize,
+                    y: y as usize,
+                    old,
+                    new: clip.indices[cy * clip.w + cx],
+                });
+            }
+        }
+    }
+    let placed = Selection::from_corners(
+        at,
+        (at.0 + clip.w as i64 - 1, at.1 + clip.h as i64 - 1),
+        doc.width(),
+        doc.height(),
+    );
+    (normalize(out), placed)
+}
+
 /// Eyedropper: the index at `at` (`-1` transparent), or `None` outside the image.
 pub fn eyedropper(doc: &Document, at: (i64, i64)) -> Option<i64> {
     doc.get_at(at.0, at.1)
@@ -296,6 +344,11 @@ impl Stroke {
     pub fn extend(&mut self, changes: Vec<PixelChange>) {
         self.changes.extend(changes);
         self.changes = normalize(std::mem::take(&mut self.changes));
+    }
+
+    /// The tool name the op is annotated with.
+    pub fn tool(&self) -> &str {
+        &self.tool
     }
 
     /// The stroke so far, for the preview.
@@ -454,6 +507,39 @@ mod tests {
         );
         assert_eq!(eyedropper(&d, (2, 1)), Some(2));
         assert_eq!(eyedropper(&d, (-1, 0)), None);
+    }
+
+    #[test]
+    fn copy_and_paste() {
+        let img = ["012.", "1200", "0000"];
+        let d = doc(&img, &PAL);
+        let sel = Selection {
+            x: 1,
+            y: 0,
+            w: 3,
+            h: 2,
+        };
+        let clip = copy(&d, Some(&sel));
+        assert_eq!((clip.w, clip.h), (3, 2));
+        assert_eq!(clip.indices, vec![1, 2, -1, 2, 0, 0]);
+        assert_eq!(copy(&d, None).indices.len(), 12);
+        // Pasted at (0, 1): transparency included, clipped at the bottom edge.
+        let (changes, placed) = paste(&d, &clip, (0, 1));
+        assert_eq!(applied(&img, changes), ["012.", "12.0", "2000"]);
+        assert_eq!(
+            placed,
+            Some(Selection {
+                x: 0,
+                y: 1,
+                w: 3,
+                h: 2
+            })
+        );
+        let (changes, placed) = paste(&d, &clip, (3, 2));
+        assert_eq!(applied(&img, changes), ["012.", "1200", "0001"]);
+        assert_eq!(placed.map(|s| (s.w, s.h)), Some((1, 1)));
+        let (changes, placed) = paste(&d, &clip, (9, 9));
+        assert!(changes.is_empty() && placed.is_none());
     }
 
     #[test]

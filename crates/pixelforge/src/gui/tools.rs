@@ -7,9 +7,14 @@
 //! one `editor::tools::Stroke`, shown as a preview and committed as one op on release (one
 //! undo step, R11). Alt+press picks the color under the pointer with any tool.
 //!
+//! Line and rectangle follow the pointer: each drag event replaces the shape's preview, and
+//! the release commits it. The selection tool draws a marquee, or, pressed inside the
+//! selection, moves its contents (one op on release, and the selection moves with them).
+//!
 //! Adding a tool: a [`Tool`] variant, its entries in the `Tool` methods (name, label,
-//! shortcut) and in [`Tool::ALL`], and its arm in [`ToolBox::press`] (plus
-//! [`ToolBox::drag`] when it drags).
+//! shortcut, hint) and in [`Tool::ALL`], its arm in [`ToolBox::press`] (and in
+//! [`ToolBox::drag`] and [`ToolBox::release`] when it drags), and an `Action::Tool`
+//! shortcut in `app::SHORTCUTS`.
 
 use eframe::egui;
 use egui::Key;
@@ -24,11 +29,22 @@ pub enum Tool {
     Eraser,
     Eyedropper,
     Fill,
+    Line,
+    Rectangle,
+    Select,
 }
 
 impl Tool {
     /// Every tool, in toolbar order.
-    pub const ALL: [Tool; 4] = [Tool::Pencil, Tool::Eraser, Tool::Eyedropper, Tool::Fill];
+    pub const ALL: [Tool; 7] = [
+        Tool::Pencil,
+        Tool::Eraser,
+        Tool::Eyedropper,
+        Tool::Fill,
+        Tool::Line,
+        Tool::Rectangle,
+        Tool::Select,
+    ];
 
     /// The name ops are annotated with in the edit log.
     pub fn name(self) -> &'static str {
@@ -37,6 +53,9 @@ impl Tool {
             Tool::Eraser => "eraser",
             Tool::Eyedropper => "eyedropper",
             Tool::Fill => "fill",
+            Tool::Line => "line",
+            Tool::Rectangle => "rectangle",
+            Tool::Select => "move",
         }
     }
 
@@ -46,6 +65,9 @@ impl Tool {
             Tool::Eraser => "Eraser",
             Tool::Eyedropper => "Eyedropper",
             Tool::Fill => "Fill",
+            Tool::Line => "Line",
+            Tool::Rectangle => "Rectangle",
+            Tool::Select => "Select",
         }
     }
 
@@ -56,6 +78,9 @@ impl Tool {
             Tool::Eraser => Key::E,
             Tool::Eyedropper => Key::I,
             Tool::Fill => Key::G,
+            Tool::Line => Key::L,
+            Tool::Rectangle => Key::R,
+            Tool::Select => Key::M,
         }
     }
 
@@ -66,12 +91,18 @@ impl Tool {
             Tool::Eraser => "Paints transparency.",
             Tool::Eyedropper => "Left: pick the primary color, right: the secondary.",
             Tool::Fill => "Fill the 4-connected area; Shift fills every pixel of that color.",
+            Tool::Line => "Drag a line with the brush.",
+            Tool::Rectangle => "Drag a rectangle's outline; Shift fills it.",
+            Tool::Select => {
+                "Drag a rectangle to select (Esc clears); drag inside the selection to move \
+                 its contents."
+            }
         }
     }
 
     /// Whether the brush size applies.
     pub fn uses_brush(self) -> bool {
-        matches!(self, Tool::Pencil | Tool::Eraser)
+        matches!(self, Tool::Pencil | Tool::Eraser | Tool::Line)
     }
 }
 
@@ -111,13 +142,38 @@ pub enum Effect {
     Pick(Button, i64),
     /// Drop the preview of these changes (a stroke was cancelled).
     Cancel(Vec<PixelChange>),
+    /// Replace the preview of `old` with the preview of `new` (a shape or a move following
+    /// the pointer).
+    Repreview {
+        old: Vec<PixelChange>,
+        new: Vec<PixelChange>,
+    },
+    /// The selection becomes this (`None` clears it).
+    Select(Option<Selection>),
+    /// Apply this op (moving the selection's contents), then the selection becomes this.
+    Move(Op, Option<Selection>),
+}
+
+/// What a drag does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DragKind {
+    /// Pencil and eraser: every event adds to the stroke.
+    Paint,
+    /// Line and rectangle: the shape from the press to the pointer.
+    Shape,
+    /// The selection tool outside the selection: a new selection.
+    Marquee,
+    /// The selection tool inside this selection: move its contents.
+    Move(Selection),
 }
 
 /// A drag in progress.
 #[derive(Clone, Debug)]
 struct Drag {
+    kind: DragKind,
     button: Button,
     index: i64,
+    start: (i64, i64),
     last: (i64, i64),
     stroke: Stroke,
 }
@@ -198,6 +254,19 @@ impl ToolBox {
         }
     }
 
+    /// The selection outline to draw while the selection tool drags: the marquee, or the
+    /// selection where its contents would land; `None` without such a drag.
+    pub fn marquee(&self, width: usize, height: usize) -> Option<Option<Selection>> {
+        let d = self.drag.as_ref()?;
+        match d.kind {
+            DragKind::Marquee => Some(Selection::from_corners(d.start, d.last, width, height)),
+            DragKind::Move(sel) => {
+                Some(sel.translated(d.last.0 - d.start.0, d.last.1 - d.start.1, width, height))
+            }
+            _ => None,
+        }
+    }
+
     /// Handle one pointer event against the document as it is (a stroke's changes stay
     /// previews until it ends, so the document does not change during a drag).
     pub fn pointer(&mut self, p: Pointer, doc: &Document, sel: Option<&Selection>) -> Effect {
@@ -206,12 +275,43 @@ impl ToolBox {
             Phase::Press => Effect::None,
             Phase::Drag => self.drag(p, doc, sel),
             Phase::Release => match self.drag.take() {
-                Some(d) if d.button == p.button => Effect::Commit(d.stroke.into_op()),
+                Some(d) if d.button == p.button => self.release(d, doc),
                 other => {
                     self.drag = other;
                     Effect::None
                 }
             },
+        }
+    }
+
+    fn release(&mut self, d: Drag, doc: &Document) -> Effect {
+        let (w, h) = (doc.width(), doc.height());
+        match d.kind {
+            DragKind::Paint | DragKind::Shape => Effect::Commit(d.stroke.into_op()),
+            // A click without a drag clears the selection.
+            DragKind::Marquee if d.start == d.last => Effect::Select(None),
+            DragKind::Marquee => Effect::Select(Selection::from_corners(d.start, d.last, w, h)),
+            DragKind::Move(sel) => {
+                let (dx, dy) = (d.last.0 - d.start.0, d.last.1 - d.start.1);
+                let moved = sel.translated(dx, dy, w, h);
+                Effect::Move(d.stroke.into_op(), moved)
+            }
+        }
+    }
+
+    /// The shape of a line or rectangle drag from `start` to `at`.
+    fn shape(
+        &self,
+        doc: &Document,
+        sel: Option<&Selection>,
+        start: (i64, i64),
+        at: (i64, i64),
+        index: i64,
+        shift: bool,
+    ) -> Vec<PixelChange> {
+        match self.tool {
+            Tool::Rectangle => tools::rectangle(doc, sel, start, at, shift, index),
+            _ => tools::line(doc, sel, start, at, self.brush, index),
         }
     }
 
@@ -226,15 +326,23 @@ impl ToolBox {
         match self.tool {
             Tool::Pencil | Tool::Eraser => {
                 let changes = self.paint(doc, sel, &[p.at], index);
-                let mut stroke = Stroke::new(self.tool.name());
-                stroke.extend(changes.clone());
-                self.drag = Some(Drag {
-                    button: p.button,
-                    index,
-                    last: p.at,
-                    stroke,
-                });
+                self.start_drag(DragKind::Paint, p, index, changes.clone());
                 Effect::Preview(changes)
+            }
+            Tool::Line | Tool::Rectangle => {
+                let changes = self.shape(doc, sel, p.at, p.at, index, p.shift);
+                self.start_drag(DragKind::Shape, p, index, changes.clone());
+                Effect::Preview(changes)
+            }
+            Tool::Select => {
+                let kind = match sel {
+                    Some(s) if p.button == Button::Primary && s.contains_i(p.at.0, p.at.1) => {
+                        DragKind::Move(*s)
+                    }
+                    _ => DragKind::Marquee,
+                };
+                self.start_drag(kind, p, index, Vec::new());
+                Effect::None
             }
             Tool::Fill => {
                 let changes = if p.shift {
@@ -248,6 +356,23 @@ impl ToolBox {
         }
     }
 
+    fn start_drag(&mut self, kind: DragKind, p: Pointer, index: i64, changes: Vec<PixelChange>) {
+        let name = match kind {
+            DragKind::Move(_) => "move",
+            _ => self.tool.name(),
+        };
+        let mut stroke = Stroke::new(name);
+        stroke.extend(changes);
+        self.drag = Some(Drag {
+            kind,
+            button: p.button,
+            index,
+            start: p.at,
+            last: p.at,
+            stroke,
+        });
+    }
+
     fn drag(&mut self, p: Pointer, doc: &Document, sel: Option<&Selection>) -> Effect {
         let Some(d) = self.drag.as_ref() else {
             return Effect::None;
@@ -255,12 +380,33 @@ impl ToolBox {
         if d.button != p.button || d.last == p.at {
             return Effect::None;
         }
-        let (last, index) = (d.last, d.index);
-        let changes = self.paint(doc, sel, &[last, p.at], index);
+        let (kind, start, last, index) = (d.kind, d.start, d.last, d.index);
+        let replaced = match kind {
+            DragKind::Paint => {
+                let changes = self.paint(doc, sel, &[last, p.at], index);
+                let d = self.drag.as_mut().expect("checked above");
+                d.last = p.at;
+                d.stroke.extend(changes.clone());
+                return Effect::Preview(changes);
+            }
+            DragKind::Marquee => {
+                self.drag.as_mut().expect("checked above").last = p.at;
+                return Effect::None;
+            }
+            DragKind::Shape => self.shape(doc, sel, start, p.at, index, p.shift),
+            DragKind::Move(moving) => {
+                tools::move_selection(doc, &moving, p.at.0 - start.0, p.at.1 - start.1).0
+            }
+        };
         let d = self.drag.as_mut().expect("checked above");
         d.last = p.at;
-        d.stroke.extend(changes.clone());
-        Effect::Preview(changes)
+        let fresh = Stroke::new(d.stroke.tool());
+        let old = std::mem::replace(&mut d.stroke, fresh);
+        d.stroke.extend(replaced.clone());
+        Effect::Repreview {
+            old: old.changes().to_vec(),
+            new: replaced,
+        }
     }
 
     /// The brush along `points` with `index` (the eraser always paints transparency).
@@ -352,6 +498,119 @@ mod tests {
         assert_eq!(
             t.pointer(at(Phase::Press, Button::Primary, 5, 5), &d, None),
             Effect::None
+        );
+    }
+
+    fn shifted(mut p: Pointer) -> Pointer {
+        p.shift = true;
+        p
+    }
+
+    #[test]
+    fn shapes_follow_the_pointer_and_commit_once() {
+        let blank = ["0000", "0000", "0000"];
+        let mut d = doc(&blank, &PAL);
+        let mut t = ToolBox::new(3);
+        t.primary = 1;
+        t.tool = Tool::Line;
+        let Effect::Preview(first) = t.pointer(at(Phase::Press, Button::Primary, 0, 0), &d, None)
+        else {
+            panic!()
+        };
+        assert_eq!(first.len(), 1);
+        let Effect::Repreview { old, new } =
+            t.pointer(at(Phase::Drag, Button::Primary, 3, 0), &d, None)
+        else {
+            panic!()
+        };
+        assert_eq!((old, new.len()), (first, 4));
+        // Back to a shorter line: the preview shrinks, it does not accumulate.
+        let Effect::Repreview { old, new } =
+            t.pointer(at(Phase::Drag, Button::Primary, 1, 1), &d, None)
+        else {
+            panic!()
+        };
+        assert_eq!((old.len(), new.len()), (4, 2));
+        let Effect::Commit(mut op) = t.pointer(at(Phase::Release, Button::Primary, 1, 1), &d, None)
+        else {
+            panic!()
+        };
+        d.apply(&mut op).unwrap();
+        assert_eq!(rows(&d), ["1000", "0100", "0000"]);
+
+        // Shift fills the rectangle; the selection clips it.
+        let mut d = doc(&blank, &PAL);
+        t.tool = Tool::Rectangle;
+        let sel = Selection {
+            x: 0,
+            y: 0,
+            w: 3,
+            h: 3,
+        };
+        t.pointer(at(Phase::Press, Button::Primary, 0, 0), &d, Some(&sel));
+        t.pointer(
+            shifted(at(Phase::Drag, Button::Primary, 3, 1)),
+            &d,
+            Some(&sel),
+        );
+        let Effect::Commit(mut op) = t.pointer(
+            shifted(at(Phase::Release, Button::Primary, 3, 1)),
+            &d,
+            Some(&sel),
+        ) else {
+            panic!()
+        };
+        d.apply(&mut op).unwrap();
+        assert_eq!(rows(&d), ["1110", "1110", "0000"]);
+    }
+
+    #[test]
+    fn the_selection_tool_selects_and_moves() {
+        let d = doc(&["0120", "0000"], &PAL);
+        let mut t = ToolBox::new(3);
+        t.tool = Tool::Select;
+        assert_eq!(
+            t.pointer(at(Phase::Press, Button::Primary, 1, 0), &d, None),
+            Effect::None
+        );
+        t.pointer(at(Phase::Drag, Button::Primary, 2, 0), &d, None);
+        let sel = Selection {
+            x: 1,
+            y: 0,
+            w: 2,
+            h: 1,
+        };
+        assert_eq!(t.marquee(4, 2), Some(Some(sel)));
+        assert_eq!(
+            t.pointer(at(Phase::Release, Button::Primary, 2, 0), &d, None),
+            Effect::Select(Some(sel))
+        );
+        assert_eq!(t.marquee(4, 2), None);
+        // Pressed inside: the contents move with the pointer.
+        t.pointer(at(Phase::Press, Button::Primary, 2, 0), &d, Some(&sel));
+        let Effect::Repreview { new, .. } =
+            t.pointer(at(Phase::Drag, Button::Primary, 3, 1), &d, Some(&sel))
+        else {
+            panic!()
+        };
+        assert!(!new.is_empty());
+        let moved = Selection { x: 2, y: 1, ..sel };
+        assert_eq!(t.marquee(4, 2), Some(Some(moved)));
+        let Effect::Move(mut op, after) =
+            t.pointer(at(Phase::Release, Button::Primary, 3, 1), &d, Some(&sel))
+        else {
+            panic!()
+        };
+        assert_eq!(after, Some(moved));
+        assert!(matches!(op, Op::Pixels { ref tool, .. } if tool == "move"));
+        let mut d2 = d.clone();
+        d2.apply(&mut op).unwrap();
+        assert_eq!(rows(&d2), ["0..0", "0012"]);
+        // A click without a drag clears the selection.
+        t.pointer(at(Phase::Press, Button::Primary, 0, 1), &d, Some(&sel));
+        assert_eq!(
+            t.pointer(at(Phase::Release, Button::Primary, 0, 1), &d, Some(&sel)),
+            Effect::Select(None)
         );
     }
 
