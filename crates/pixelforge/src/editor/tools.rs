@@ -10,6 +10,7 @@ use super::op::normalize;
 use super::selection::region;
 use super::{Document, Op, PixelChange, Selection};
 use crate::color;
+use crate::tiles::{self, TileConfig};
 
 /// The largest brush (a square of `MAX_BRUSH × MAX_BRUSH` pixels).
 pub const MAX_BRUSH: usize = 8;
@@ -370,6 +371,69 @@ pub fn snap_rgba(doc: &Document, rgba: &[u8], w: usize, h: usize) -> Option<Clip
     })
 }
 
+/// Per-tile editing (docs/editor.md, Section 3.9): `changes` plus the same change at the
+/// corresponding pixel of every other instance of each edited tile, as one change list.
+/// Instances are the cells `tiles::extract` maps to one tileset tile with tolerance 0
+/// (exact copies, flipped copies included: a change on a mirrored instance lands mirrored),
+/// computed on the document before the change. Copies only change inside the selection
+/// (R12), and a pixel the caller changes itself keeps the caller's value. Without
+/// `config.tileset`, or when the tile size does not divide the image, `changes` as they are.
+pub fn mirror_tiles(
+    doc: &Document,
+    sel: Option<&Selection>,
+    changes: &[PixelChange],
+) -> Vec<PixelChange> {
+    let config = &doc.origin.config;
+    if !config.tileset || changes.is_empty() {
+        return changes.to_vec();
+    }
+    let exact = TileConfig {
+        tile_dedupe_tolerance: 0.0,
+        ..TileConfig::from(config)
+    };
+    let (w, h) = (doc.width(), doc.height());
+    let Ok(extracted) = tiles::extract(&doc.indices.indices, h, w, &doc.palette_lab, &exact) else {
+        return changes.to_vec();
+    };
+    let t = extracted.tile_size;
+    let map = &extracted.tilemap.tiles;
+    let columns = w / t;
+    let mut instances: std::collections::BTreeMap<i64, Vec<usize>> = Default::default();
+    for (cell, entry) in map.iter().enumerate() {
+        instances.entry(entry[0]).or_default().push(cell);
+    }
+    let region = region(sel, w, h);
+    // Within a tile, (x, y) of a cell drawn with flips (fh, fv) is the tile's pixel
+    // (t-1-x if fh else x, t-1-y if fv else y); flips are involutions, so the same map
+    // goes back.
+    let flip = |v: usize, f: i64| if f != 0 { t - 1 - v } else { v };
+    let mut out = Vec::new();
+    for c in changes {
+        let cell = (c.y / t) * columns + c.x / t;
+        let [id, fh, fv] = map[cell];
+        let (tx, ty) = (flip(c.x % t, fh), flip(c.y % t, fv));
+        for &other in &instances[&id] {
+            if other == cell {
+                continue;
+            }
+            let [_, oh, ov] = map[other];
+            let x = (other % columns) * t + flip(tx, oh);
+            let y = (other / columns) * t + flip(ty, ov);
+            if region.contains(x, y) {
+                out.push(PixelChange {
+                    x,
+                    y,
+                    old: doc.get(x, y),
+                    new: c.new,
+                });
+            }
+        }
+    }
+    // Last, so the caller's own changes win.
+    out.extend_from_slice(changes);
+    normalize(out)
+}
+
 /// Eyedropper: the index at `at` (`-1` transparent), or `None` outside the image.
 pub fn eyedropper(doc: &Document, at: (i64, i64)) -> Option<i64> {
     doc.get_at(at.0, at.1)
@@ -625,6 +689,54 @@ mod tests {
         assert_eq!(placed.map(|s| (s.x, s.y, s.w, s.h)), Some((1, 1, 3, 1)));
         // A short buffer is refused.
         assert_eq!(snap_rgba(&d, &foreign, 4, 2), None);
+    }
+
+    #[test]
+    fn per_tile_edits_reach_every_instance() {
+        use crate::config::{Config, Value};
+        // Three 2 × 2 cells: a tile, an exact copy, and a mirrored (flip_h) copy.
+        let mut d = doc(&["010110", "222222"], &PAL);
+        let paint = |d: &Document, sel: Option<&Selection>| {
+            let direct = pencil(d, None, &[(0, 1)], 1, 0);
+            applied(&["010110", "222222"], mirror_tiles(d, sel, &direct))
+        };
+        // Without a tileset: only the painted pixel.
+        assert_eq!(paint(&d, None), ["010110", "022222"]);
+        d.origin.config = Config::new(&[
+            ("tileset".into(), Value::Bool(true)),
+            ("tile_size".into(), Value::Int(2)),
+        ])
+        .unwrap();
+        assert_eq!(paint(&d, None), ["010110", "020220"]);
+        // Copies stay inside the selection.
+        let sel = Selection {
+            x: 0,
+            y: 0,
+            w: 4,
+            h: 2,
+        };
+        assert_eq!(paint(&d, Some(&sel)), ["010110", "020222"]);
+        // A cell that is not a copy is untouched; the caller's change wins on overlap.
+        let d2 = Document {
+            origin: d.origin.clone(),
+            ..doc(&["010100", "222222"], &PAL)
+        };
+        let direct = [
+            PixelChange {
+                x: 0,
+                y: 0,
+                old: 0,
+                new: 2,
+            },
+            PixelChange {
+                x: 2,
+                y: 0,
+                old: 0,
+                new: 1,
+            },
+        ];
+        let all = mirror_tiles(&d2, None, &direct);
+        assert_eq!(applied(&["010100", "222222"], all), ["211100", "222222"]);
     }
 
     #[test]

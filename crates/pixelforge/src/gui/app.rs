@@ -87,6 +87,9 @@ pub enum Action {
     ToggleSourcePanel,
     /// Draw the image the tilemap draws instead of the document (R24).
     ToggleReconstructed,
+    /// Per-tile editing (Section 3.9): a tool's edit also reaches every identical instance
+    /// of the tiles it touched.
+    ToggleTileMode,
     /// The keyboard shortcuts window.
     Shortcuts,
 }
@@ -129,6 +132,7 @@ impl Action {
             Action::ToggleSourceOverlay => "Source overlay",
             Action::ToggleSourcePanel => "Source panel",
             Action::ToggleReconstructed => "Show what the tilemap draws",
+            Action::ToggleTileMode => "Per-tile editing (every instance of a tile)",
             Action::Shortcuts => "Keyboard shortcuts",
         };
         text.to_string()
@@ -168,6 +172,7 @@ pub const SHORTCUTS: &[(KeyboardShortcut, Action)] = &[
     (key(NONE, Key::Period), Action::RampLighter),
     (key(NONE, Key::D), Action::ToggleDiff),
     (key(NONE, Key::Tab), Action::ToggleSourceOverlay),
+    (key(NONE, Key::T), Action::ToggleTileMode),
     (key(NONE, Key::OpenBracket), Action::BrushSmaller),
     (key(NONE, Key::CloseBracket), Action::BrushLarger),
     (key(NONE, Key::Plus), Action::ZoomIn),
@@ -322,6 +327,9 @@ pub struct EditorApp {
     tiles_info: Option<TilesResult>,
     /// Draw the image the tilemap draws instead of the document (R24).
     pub show_reconstructed: bool,
+    /// Per-tile editing: the tools' edits are copied to every identical tile instance
+    /// (`editor::tools::mirror_tiles`; only with `config.tileset`).
+    pub tile_mode: bool,
     pub adjust: AdjustState,
     /// The dither dialog's preview: the revision, selection and values it shows, and its
     /// changes (drawn on the canvas, not applied).
@@ -376,6 +384,7 @@ impl EditorApp {
             tiles_revision: None,
             tiles_info: None,
             show_reconstructed: false,
+            tile_mode: false,
             adjust: AdjustState::new(ctx),
             dither_preview: None,
             clipboard: None,
@@ -436,6 +445,15 @@ impl EditorApp {
                 self.canvas.preview(&self.session.doc, &new);
             }
             Effect::Commit(op) => {
+                let op = match op {
+                    Op::Pixels { tool, changes } if self.tile_mode => {
+                        let sel = self.session.selection;
+                        let changes =
+                            edit_tools::mirror_tiles(&self.session.doc, sel.as_ref(), &changes);
+                        Op::Pixels { tool, changes }
+                    }
+                    op => op,
+                };
                 self.commit(op);
             }
             Effect::Move(op, moved) => {
@@ -818,6 +836,18 @@ impl EditorApp {
                 self.show_reconstructed = !self.show_reconstructed;
                 self.sync_reconstructed();
             }
+            Action::ToggleTileMode => {
+                if self.session.doc.origin.config.tileset {
+                    self.tile_mode = !self.tile_mode;
+                    self.info(if self.tile_mode {
+                        "per-tile editing: edits reach every instance of a tile"
+                    } else {
+                        "per-tile editing off"
+                    });
+                } else {
+                    self.info("per-tile editing needs a tileset (config.tileset)");
+                }
+            }
             Action::Shortcuts => self.show_shortcuts = !self.show_shortcuts,
         }
     }
@@ -1179,6 +1209,14 @@ impl EditorApp {
                     Action::ToggleSourceOverlay,
                     aligned,
                 );
+                let mode = self.tile_mode;
+                self.toggle_item(
+                    ui,
+                    "Per-tile editing",
+                    mode,
+                    Action::ToggleTileMode,
+                    tileset,
+                );
                 let rec = self.show_reconstructed;
                 self.toggle_item(
                     ui,
@@ -1347,6 +1385,12 @@ impl EditorApp {
                         ui.colored_label(ui.visuals().error_fg_color, format!("tiles: {e}"));
                     }
                 }
+            }
+            if self.tile_mode {
+                ui.separator();
+                ui.strong("per tile").on_hover_text(
+                    "Edits reach every identical instance of the tiles they touch (T)",
+                );
             }
             if self.session.is_dirty() {
                 ui.separator();

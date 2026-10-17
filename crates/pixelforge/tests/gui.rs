@@ -885,3 +885,58 @@ fn an_image_paste_arrives_as_the_key_release() {
     h.run();
     assert_eq!(h.state().session.history.applied().len(), 1);
 }
+
+#[test]
+fn per_tile_editing_paints_every_instance() {
+    use pixelforge::config::Value;
+    use pixelforge::editor::Origin;
+    use pixelforge::pipeline::IndexImage;
+    // Two identical 8 × 8 tiles side by side, and a different third one.
+    let (w, h) = (24, 8);
+    let indices = (0..w * h)
+        .map(|p| {
+            let (x, y) = (p % w, p / w);
+            if x >= 16 {
+                2
+            } else {
+                ((x % 8 + y) % 2) as i64
+            }
+        })
+        .collect();
+    let config = pixelforge::config::Config::new(&[
+        ("tileset".into(), Value::Bool(true)),
+        ("tile_size".into(), Value::Int(8)),
+    ])
+    .unwrap();
+    let origin = Origin::new(
+        config,
+        String::new(),
+        pixelforge::pyjson::Json::Object(vec![]),
+    );
+    let doc = Document::new(
+        IndexImage { indices, h, w },
+        vec![[0, 0, 0], [255, 255, 255], [200, 0, 0]],
+        origin,
+    )
+    .unwrap();
+    let dir = TempDir::new("gui-tile-mode");
+    let mut h = harness(Session::new(doc, dir.join("tiles")));
+    h.key_press(Key::T);
+    h.run();
+    assert!(h.state().tile_mode);
+    h.state_mut().tools.primary = 2;
+    drag(&mut h, (1, 1), (1, 1), Modifiers::NONE);
+    {
+        let app = h.state();
+        assert_eq!(app.session.history.applied().len(), 1);
+        let doc = &app.session.doc;
+        assert_eq!((doc.get(1, 1), doc.get(9, 1)), (2, 2));
+        assert_eq!(doc.get(17, 1), 2);
+        assert_eq!(app.session.doc.pixels_changed(), 2);
+    }
+    // Off again: one pixel.
+    h.key_press(Key::T);
+    h.run();
+    drag(&mut h, (2, 1), (2, 1), Modifiers::NONE);
+    assert_eq!(h.state().session.doc.pixels_changed(), 3);
+}
