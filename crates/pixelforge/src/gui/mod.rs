@@ -3,8 +3,9 @@
 //! itself is the headless `editor` module; this layer maps input to it and draws.
 //!
 //! - `app`: [`EditorApp`], the window: menus, toolbar, panels, status bar, dialogs, the
-//!   adjust preview and the clipboard; every command is an [`Action`], with the shortcut
-//!   table [`app::SHORTCUTS`] (also the Help menu's shortcuts sheet).
+//!   adjust preview and the clipboard (the editor's own and the system's, as an image);
+//!   every command is an [`Action`], with the shortcut table [`app::SHORTCUTS`] (also the
+//!   Help menu's shortcuts sheet).
 //! - `canvas`: the canvas widget (texture with partial uploads, checkerboard, grids, the
 //!   selection's marquee, the diff, source and tilemap layers, pan and zoom input, pointer
 //!   events in image pixels).
@@ -54,7 +55,12 @@ pub fn run(session: Session) -> Result<(), String> {
     eframe::run_native(
         "pixelforge",
         options,
-        Box::new(|cc| Ok(Box::new(EditorApp::new(session, &cc.egui_ctx)))),
+        Box::new(|cc| {
+            let mut app = EditorApp::new(session, &cc.egui_ctx);
+            // Without one (no display server for it), copy and paste stay in the editor.
+            app.enable_os_clipboard();
+            Ok(Box::new(app))
+        }),
     )
     .map_err(|e| e.to_string())
 }

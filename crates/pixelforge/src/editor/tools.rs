@@ -9,6 +9,7 @@
 use super::op::normalize;
 use super::selection::region;
 use super::{Document, Op, PixelChange, Selection};
+use crate::color;
 
 /// The largest brush (a square of `MAX_BRUSH × MAX_BRUSH` pixels).
 pub const MAX_BRUSH: usize = 8;
@@ -320,6 +321,55 @@ pub fn paste(doc: &Document, clip: &Clip, at: (i64, i64)) -> (Vec<PixelChange>, 
     (normalize(out), placed)
 }
 
+/// Pixels of an image pasted from the OS clipboard with alpha below this are transparent.
+pub const PASTE_ALPHA: u8 = 128;
+
+/// A clip as RGBA8 (transparent pixels `0, 0, 0, 0`): what copying puts on the OS clipboard.
+pub fn clip_rgba(doc: &Document, clip: &Clip) -> Vec<u8> {
+    let mut out = Vec::with_capacity(clip.indices.len() * 4);
+    for &i in &clip.indices {
+        match usize::try_from(i).ok().and_then(|i| doc.palette.get(i)) {
+            Some(&[r, g, b]) => out.extend_from_slice(&[r, g, b, 255]),
+            None => out.extend_from_slice(&[0, 0, 0, 0]),
+        }
+    }
+    out
+}
+
+/// An RGBA8 image of `w × h` (from the OS clipboard) as a clip of the document's palette:
+/// alpha below [`PASTE_ALPHA`] is transparent, every other pixel takes the nearest entry
+/// (`color::nearest_index` on the LAB palette, CIE76, ties to the lowest index; the RGB is
+/// converted with `color::rgb8_to_lab`). Only the top-left part that fits the document is
+/// kept (a paste is clipped to the canvas anyway). Without palette entries every pixel is
+/// transparent. `None` when `rgba` is shorter than `w × h × 4`.
+pub fn snap_rgba(doc: &Document, rgba: &[u8], w: usize, h: usize) -> Option<Clip> {
+    if rgba.len() < w.checked_mul(h)?.checked_mul(4)? {
+        return None;
+    }
+    let (cw, ch) = (w.min(doc.width()), h.min(doc.height()));
+    let mut colors: std::collections::BTreeMap<[u8; 3], i64> = Default::default();
+    let mut indices = Vec::with_capacity(cw * ch);
+    for y in 0..ch {
+        for x in 0..cw {
+            let p = &rgba[(y * w + x) * 4..(y * w + x) * 4 + 4];
+            if p[3] < PASTE_ALPHA || doc.palette.is_empty() {
+                indices.push(-1);
+                continue;
+            }
+            let rgb = [p[0], p[1], p[2]];
+            let i = *colors.entry(rgb).or_insert_with(|| {
+                color::nearest_index(&color::rgb8_to_lab(&rgb), &doc.palette_lab)[0]
+            });
+            indices.push(i);
+        }
+    }
+    Some(Clip {
+        w: cw,
+        h: ch,
+        indices,
+    })
+}
+
 /// Eyedropper: the index at `at` (`-1` transparent), or `None` outside the image.
 pub fn eyedropper(doc: &Document, at: (i64, i64)) -> Option<i64> {
     doc.get_at(at.0, at.1)
@@ -540,6 +590,41 @@ mod tests {
         assert_eq!(placed.map(|s| (s.w, s.h)), Some((1, 1)));
         let (changes, placed) = paste(&d, &clip, (9, 9));
         assert!(changes.is_empty() && placed.is_none());
+    }
+
+    #[test]
+    fn os_clipboard_images_snap_to_the_palette() {
+        let d = doc(&["0120", "0000"], &PAL);
+        // Copying gives the palette colors, transparency as zeros.
+        let clip = copy(&d, None);
+        let rgba = clip_rgba(&d, &clip);
+        assert_eq!(&rgba[4..12], &[255, 255, 255, 255, 255, 0, 0, 255]);
+        // An exact image snaps back to the same indices.
+        let mut img = doc(&["01.2"], &PAL);
+        img.palette = PAL.to_vec();
+        let exact = copy(&img, None);
+        let back = snap_rgba(&d, &clip_rgba(&img, &exact), 4, 1).unwrap();
+        assert_eq!(back, exact);
+        // Foreign colors take the nearest entry; low alpha is transparent.
+        let foreign = [
+            10, 5, 0, 255, // near black
+            240, 250, 250, 200, // near white
+            200, 40, 30, 128, // near red, alpha at the threshold
+            255, 255, 255, 127, // below the threshold
+            250, 10, 0, 255, // only the part that fits is kept
+            9, 9, 9, 255, //
+        ];
+        let clip = snap_rgba(&d, &foreign, 3, 2).unwrap();
+        assert_eq!((clip.w, clip.h), (3, 2));
+        assert_eq!(clip.indices, [0, 1, 2, -1, 2, 0]);
+        let wide: Vec<u8> = [9u8, 9, 9, 255].repeat(6 * 3);
+        let clip = snap_rgba(&d, &wide, 6, 3).unwrap();
+        assert_eq!((clip.w, clip.h, clip.indices.len()), (4, 2, 8));
+        let (changes, placed) = paste(&d, &clip, (1, 1));
+        assert_eq!(applied(&["0120", "0000"], changes), ["0120", "0000"]);
+        assert_eq!(placed.map(|s| (s.x, s.y, s.w, s.h)), Some((1, 1, 3, 1)));
+        // A short buffer is refused.
+        assert_eq!(snap_rgba(&d, &foreign, 4, 2), None);
     }
 
     #[test]

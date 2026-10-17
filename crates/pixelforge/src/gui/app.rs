@@ -57,10 +57,12 @@ pub enum Action {
     Cancel,
     SelectAll,
     SelectNone,
-    /// Copy the selection (or the image) to the editor's clipboard (R30).
+    /// Copy the selection (or the image) to the editor's clipboard and, as an RGBA image, to
+    /// the system clipboard (R30).
     Copy,
-    /// Paste the clipboard at the selection's top-left corner (or the image's), as a new
-    /// selection.
+    /// Paste at the selection's top-left corner (or the image's), as a new selection: the
+    /// system clipboard's image snapped to the palette, or the editor's own copy with its
+    /// exact indices when the image is that copy.
     Paste,
     /// Ramp shift (R16): every selected pixel one step darker or lighter.
     RampDarker,
@@ -215,9 +217,14 @@ pub const POINTER_HELP: &[(&str, &str)] = &[
     ("Cmd/Ctrl+scroll, pinch", "Zoom"),
 ];
 
-/// The start of the text copying puts on the system clipboard, so that the window backend
-/// reports Cmd/Ctrl+V; pasting other text does nothing. The pixels stay in the editor.
+/// The start of the text copying puts on the system clipboard when the editor has no access
+/// to it as an image (see [`EditorApp::enable_os_clipboard`]), so that the window backend
+/// reports Cmd/Ctrl+V; pasting other text does nothing.
 pub const CLIP_MARKER: &str = "pixelforge selection";
+
+/// How far (per channel) the system clipboard's image may be from the editor's own copy and
+/// still count as that copy: the system may convert colors on the way (color management).
+pub const CLIP_MATCH_TOLERANCE: u8 = 8;
 
 /// The tile re-extraction job of the worker: a snapshot of the image and LAB palette.
 type TilesJob = (IndexImage, Vec<f64>, Config);
@@ -321,6 +328,14 @@ pub struct EditorApp {
     dither_preview: Option<(DitherKey, Vec<PixelChange>)>,
     /// The editor's clipboard (R30).
     pub clipboard: Option<Clip>,
+    /// The system clipboard (`None` unless [`enable_os_clipboard`](Self::enable_os_clipboard)
+    /// was called, as the window does; tests leave the user's clipboard alone).
+    os_clipboard: Option<arboard::Clipboard>,
+    /// The RGBA image the last copy put on the system clipboard.
+    clip_image: Option<Vec<u8>>,
+    /// A paste was triggered by the press of Cmd/Ctrl+V, so its release does not paste again
+    /// (the backend reports only the release when the clipboard holds no text).
+    paste_pressed: bool,
     /// The source reference panel is shown (when there is a source).
     pub show_source_panel: bool,
     /// The keyboard shortcuts window is open.
@@ -364,6 +379,9 @@ impl EditorApp {
             adjust: AdjustState::new(ctx),
             dither_preview: None,
             clipboard: None,
+            os_clipboard: None,
+            clip_image: None,
+            paste_pressed: false,
             show_source_panel: true,
             show_shortcuts: false,
             copied_text: None,
@@ -462,31 +480,98 @@ impl EditorApp {
         }
     }
 
-    /// Copy the selection (or the image) to the editor's clipboard.
+    /// Use the system clipboard for images (R30). Without it, copy and paste stay inside
+    /// the editor. `false` when the clipboard cannot be opened (no display server).
+    pub fn enable_os_clipboard(&mut self) -> bool {
+        self.os_clipboard = arboard::Clipboard::new().ok();
+        self.os_clipboard.is_some()
+    }
+
+    /// Copy the selection (or the image) to the editor's clipboard, and as an RGBA image to
+    /// the system clipboard when the editor has it.
     pub fn copy(&mut self) {
         let sel = self.session.selection;
         let clip = edit_tools::copy(&self.session.doc, sel.as_ref());
-        let text = format!("{CLIP_MARKER} {}x{}", clip.w, clip.h);
-        self.info(format!("copied {}x{} pixels", clip.w, clip.h));
+        let (w, h) = (clip.w, clip.h);
+        let rgba = edit_tools::clip_rgba(&self.session.doc, &clip);
+        let image = arboard::ImageData {
+            width: w,
+            height: h,
+            bytes: std::borrow::Cow::Borrowed(&rgba),
+        };
+        let os = self
+            .os_clipboard
+            .as_mut()
+            .map(|c| c.set_image(image).is_ok());
+        match os {
+            Some(true) => {
+                self.info(format!("copied {w}x{h} pixels"));
+                self.clip_image = Some(rgba);
+            }
+            failed => {
+                if failed.is_some() {
+                    self.info(format!(
+                        "copied {w}x{h} pixels (inside the editor: the system clipboard \
+                         refused the image)"
+                    ));
+                } else {
+                    self.info(format!("copied {w}x{h} pixels"));
+                }
+                self.clip_image = None;
+                self.copied_text = Some(format!("{CLIP_MARKER} {w}x{h}"));
+            }
+        }
         self.clipboard = Some(clip);
-        self.copied_text = Some(text);
     }
 
-    /// Paste the clipboard at the selection's top-left corner (or the image's); the pasted
-    /// rectangle becomes the selection, so it can be moved with the selection tool.
+    /// What a paste places: the system clipboard's image (the editor's own copy when it is
+    /// that image, else snapped to the palette), or the editor's copy. `None` with nothing
+    /// to paste. The flag says whether the image was snapped.
+    fn clip_to_paste(&mut self) -> Option<(Clip, bool)> {
+        let image = self.os_clipboard.as_mut().and_then(|c| c.get_image().ok());
+        let Some(image) = image else {
+            return self.clipboard.clone().map(|c| (c, false));
+        };
+        let own = match (&self.clipboard, &self.clip_image) {
+            (Some(clip), Some(rgba)) => {
+                clip.w == image.width
+                    && clip.h == image.height
+                    && rgba.len() == image.bytes.len()
+                    && rgba
+                        .iter()
+                        .zip(image.bytes.iter())
+                        .all(|(a, b)| a.abs_diff(*b) <= CLIP_MATCH_TOLERANCE)
+            }
+            _ => false,
+        };
+        if own {
+            return self.clipboard.clone().map(|c| (c, false));
+        }
+        edit_tools::snap_rgba(&self.session.doc, &image.bytes, image.width, image.height)
+            .map(|c| (c, true))
+    }
+
+    /// Paste at the selection's top-left corner (or the image's), clipped to the canvas; the
+    /// pasted rectangle becomes the selection, so it can be moved with the selection tool.
     pub fn paste(&mut self) {
-        let Some(clip) = self.clipboard.as_ref() else {
+        let Some((clip, snapped)) = self.clip_to_paste() else {
             return self.info("nothing to paste");
         };
         let at = self
             .session
             .selection
             .map_or((0, 0), |s| (s.x as i64, s.y as i64));
-        let (changes, placed) = edit_tools::paste(&self.session.doc, clip, at);
+        let (changes, placed) = edit_tools::paste(&self.session.doc, &clip, at);
         let op = Op::pixels("paste", changes);
         if op.is_empty() || self.apply(op) {
             self.session.selection = placed;
             self.tools.tool = Tool::Select;
+            if snapped {
+                self.info(format!(
+                    "pasted {}x{} pixels from the system clipboard, snapped to the palette",
+                    clip.w, clip.h
+                ));
+            }
         }
     }
 
@@ -925,20 +1010,40 @@ impl EditorApp {
                 .filter(|(s, _)| i.consume_shortcut(s))
                 .map(|(_, a)| *a)
                 .collect();
+            let mut paste_pressed = pressed.contains(&Action::Paste);
             // The window backend turns Cmd/Ctrl+C and V into clipboard events instead of
-            // key presses; V only when the system clipboard holds text, which copying puts
-            // there for that reason (CLIP_MARKER).
+            // key presses: V as a Paste event when the system clipboard holds text (other
+            // text than CLIP_MARKER's is not pasted), and otherwise (an image) only as the
+            // key's release, which pastes unless the press already did.
             i.events.retain(|e| match e {
                 egui::Event::Copy => {
                     pressed.push(Action::Copy);
                     false
                 }
-                egui::Event::Paste(text) if text.starts_with(CLIP_MARKER) => {
-                    pressed.push(Action::Paste);
+                egui::Event::Paste(text) => {
+                    if text.starts_with(CLIP_MARKER) {
+                        pressed.push(Action::Paste);
+                    }
+                    paste_pressed = true;
                     false
+                }
+                egui::Event::Key {
+                    key: Key::V,
+                    pressed: false,
+                    modifiers,
+                    ..
+                } if modifiers.command => {
+                    if !std::mem::take(&mut paste_pressed) && !self.paste_pressed {
+                        pressed.push(Action::Paste);
+                    }
+                    self.paste_pressed = false;
+                    true
                 }
                 _ => true,
             });
+            if paste_pressed {
+                self.paste_pressed = true;
+            }
             pressed
         });
         for action in pressed {
@@ -1018,7 +1123,7 @@ impl EditorApp {
     }
 
     fn menu_bar(&mut self, ui: &mut Ui) {
-        let has_clip = self.clipboard.is_some();
+        let has_clip = self.clipboard.is_some() || self.os_clipboard.is_some();
         let k = self.session.doc.palette.len();
         let source = self.session.doc.origin.source.as_ref();
         let has_source = source.is_some();

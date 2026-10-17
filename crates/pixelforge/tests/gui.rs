@@ -842,3 +842,46 @@ fn plain_doc(indices: &[i64], doc: &Document) -> Document {
     d.indices.indices = indices.to_vec();
     d
 }
+
+#[test]
+fn an_image_paste_arrives_as_the_key_release() {
+    // With an image on the system clipboard the backend reports only the release of
+    // Cmd/Ctrl+V; it pastes once. (The system clipboard stays off in tests: the editor's
+    // own copy is pasted.)
+    let dir = TempDir::new("gui-paste-release");
+    let mut h = harness(opened(&dir));
+    h.state_mut().session.selection = Some(Selection {
+        x: 5,
+        y: 5,
+        w: 3,
+        h: 3,
+    });
+    h.state_mut()
+        .perform(Action::Copy, &egui::Context::default());
+    h.state_mut().session.selection = Some(Selection {
+        x: 0,
+        y: 0,
+        w: 1,
+        h: 1,
+    });
+    let release = |pressed| egui::Event::Key {
+        key: Key::V,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: Modifiers::COMMAND,
+    };
+    h.event(release(false));
+    h.run();
+    assert_eq!(h.state().session.history.applied().len(), 1);
+    assert_eq!(
+        h.state().session.selection.map(|s| (s.w, s.h)),
+        Some((3, 3))
+    );
+    // Text on the clipboard: the press reports it, and the release does not paste again.
+    h.event(egui::Event::Paste("some text".into()));
+    h.run();
+    h.event(release(false));
+    h.run();
+    assert_eq!(h.state().session.history.applied().len(), 1);
+}
