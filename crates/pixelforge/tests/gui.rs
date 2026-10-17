@@ -940,3 +940,139 @@ fn per_tile_editing_paints_every_instance() {
     drag(&mut h, (2, 1), (2, 1), Modifiers::NONE);
     assert_eq!(h.state().session.doc.pixels_changed(), 3);
 }
+
+/// Two conversions with one palette, as `batch --edit` opens them.
+fn batch_frames(dir: &TempDir) -> Vec<Session> {
+    let config = pixelforge::config::Config::new(&[
+        (
+            "preset".into(),
+            pixelforge::config::Value::Str("sprite".into()),
+        ),
+        (
+            "method".into(),
+            pixelforge::config::Value::Str("box".into()),
+        ),
+        ("out_width".into(), pixelforge::config::Value::Int(16)),
+        ("out_height".into(), pixelforge::config::Value::Int(16)),
+        (
+            "denoise".into(),
+            pixelforge::config::Value::Str("none".into()),
+        ),
+        (
+            "palette_name".into(),
+            pixelforge::config::Value::Str("pico8".into()),
+        ),
+    ])
+    .unwrap();
+    ["circle_alpha", "two_color"]
+        .iter()
+        .map(|name| {
+            let out = run_path(&fixture_path(name), &config).unwrap();
+            let doc = Document::from_output(&out).unwrap();
+            Session::new(doc, dir.join(name))
+        })
+        .collect()
+}
+
+#[test]
+fn batch_frames_step_share_the_palette_and_save_together() {
+    use pixelforge::gui::dialogs::{ColorDialog, Dialog};
+    let dir = TempDir::new("gui-frames");
+    let sessions = batch_frames(&dir);
+    let second = sessions[1].doc.indices.clone();
+    let app = EditorApp::with_frames(sessions, &egui::Context::default()).unwrap();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(900.0, 600.0))
+        .build_ui_state(|ui, app: &mut EditorApp| app.show(ui), app);
+    h.run();
+    assert_eq!(h.state().frames.as_ref().map(|f| f.len()), Some(2));
+    assert!(h.state().frames.as_ref().unwrap().shared_palette());
+    h.get_by_label("frame 1/2");
+    // Right arrow: the second frame, with its own document and history.
+    h.key_press(Key::ArrowRight);
+    h.run();
+    assert_eq!(h.state().frames.as_ref().unwrap().current(), 1);
+    assert_eq!(h.state().session.doc.indices, second);
+    h.get_by_label("frame 2/2");
+    h.state_mut().tools.primary = 0;
+    drag(&mut h, (0, 0), (0, 0), Modifiers::NONE);
+    assert_eq!(h.state().session.history.applied().len(), 1);
+    // Wraps around to the first, which has no edits.
+    h.key_press(Key::ArrowRight);
+    h.run();
+    assert_eq!(h.state().frames.as_ref().unwrap().current(), 0);
+    assert!(h.state().session.history.applied().is_empty());
+    assert!(h.state().is_dirty());
+    h.get_by_label("1 other frame unsaved");
+    // A palette entry recolored here is recolored in every frame.
+    let k = h.state().session.doc.palette.len();
+    let fixed = h.state().session.doc.fixed.clone().unwrap();
+    // (A named palette: an entry takes another of its colors.)
+    let unused = *fixed
+        .iter()
+        .find(|&&c| c != h.state().session.doc.palette[0])
+        .unwrap();
+    let choices = pixelforge::editor::palette::fixed_choices(&h.state().session.doc);
+    h.state_mut().dialog = Some(Dialog::Color(ColorDialog::new(Some(0), unused, choices)));
+    h.run();
+    h.get_all_by_label("Apply").last().unwrap().click();
+    h.run();
+    {
+        let app = h.state();
+        assert_eq!(app.session.doc.palette[0], unused);
+        assert_eq!(app.session.history.applied().len(), 1);
+        let frames = app.frames.as_ref().unwrap();
+        assert!(frames
+            .others()
+            .all(|(_, s)| s.doc.palette[0] == unused && s.doc.palette.len() == k));
+    }
+    // A later step in the second frame blocks undoing the shared edit from the first.
+    h.key_press(Key::ArrowLeft);
+    h.run();
+    let here = h.state().session.doc.get(1, 0);
+    h.state_mut().tools.primary = (here + 1).rem_euclid(k as i64);
+    drag(&mut h, (1, 0), (1, 0), Modifiers::NONE);
+    assert_eq!(h.state().session.history.applied().len(), 3);
+    h.key_press(Key::ArrowLeft);
+    h.run();
+    assert_eq!(h.state().frames.as_ref().unwrap().current(), 0);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run();
+    {
+        let app = h.state();
+        assert_eq!(app.session.doc.palette[0], unused);
+        let m = app.message.as_ref().unwrap();
+        assert!(
+            m.error && m.text.contains("frame 2 has later edits"),
+            "{m:?}"
+        );
+    }
+    // Undone there first, it can be undone here, in both frames.
+    h.key_press(Key::ArrowRight);
+    h.run();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run();
+    h.key_press(Key::ArrowLeft);
+    h.run();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run();
+    {
+        let app = h.state();
+        let original = app.session.doc.baseline_palette[0];
+        assert_eq!(app.session.doc.palette[0], original);
+        let frames = app.frames.as_ref().unwrap();
+        assert!(frames.others().all(|(_, s)| s.doc.palette[0] == original));
+        assert_eq!(frames.dirty(&app.session), [1]);
+    }
+    // Redo it, then save: every frame with changes is written.
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    h.run();
+    assert_eq!(h.state().session.doc.palette[0], unused);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::S);
+    h.run();
+    assert!(!h.state().is_dirty());
+    assert!(dir.join("circle_alpha.png").exists());
+    assert!(dir.join("two_color.png").exists());
+    assert!(dir.join("two_color_edits.json").exists());
+    assert!(dir.join("circle_alpha_edits.json").exists());
+}

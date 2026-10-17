@@ -30,7 +30,9 @@ use crate::color;
 use crate::config::Config;
 use crate::editor::adjust::{self, Adjust, AdjustInput, Cleanup};
 use crate::editor::tools::{self as edit_tools, Clip};
-use crate::editor::{palette, Dirty, Op, PixelChange, Selection, Session, TilesSummary};
+use crate::editor::{
+    palette, Dirty, Document, EditError, Frames, Op, PixelChange, Selection, Session, TilesSummary,
+};
 use crate::pipeline::IndexImage;
 
 /// A command of the editor.
@@ -92,6 +94,9 @@ pub enum Action {
     ToggleTileMode,
     /// The keyboard shortcuts window.
     Shortcuts,
+    /// The next or previous frame of a batch (`batch --edit`, R4).
+    NextFrame,
+    PrevFrame,
 }
 
 impl Action {
@@ -134,6 +139,8 @@ impl Action {
             Action::ToggleReconstructed => "Show what the tilemap draws",
             Action::ToggleTileMode => "Per-tile editing (every instance of a tile)",
             Action::Shortcuts => "Keyboard shortcuts",
+            Action::NextFrame => "Next frame (batch)",
+            Action::PrevFrame => "Previous frame (batch)",
         };
         text.to_string()
     }
@@ -173,6 +180,8 @@ pub const SHORTCUTS: &[(KeyboardShortcut, Action)] = &[
     (key(NONE, Key::D), Action::ToggleDiff),
     (key(NONE, Key::Tab), Action::ToggleSourceOverlay),
     (key(NONE, Key::T), Action::ToggleTileMode),
+    (key(NONE, Key::ArrowRight), Action::NextFrame),
+    (key(NONE, Key::ArrowLeft), Action::PrevFrame),
     (key(NONE, Key::OpenBracket), Action::BrushSmaller),
     (key(NONE, Key::CloseBracket), Action::BrushLarger),
     (key(NONE, Key::Plus), Action::ZoomIn),
@@ -312,9 +321,12 @@ pub struct Message {
     pub error: bool,
 }
 
-/// The editor application: one session and the state of its window.
+/// The editor application: one session (the current frame's, with a batch) and the state of
+/// its window.
 pub struct EditorApp {
     pub session: Session,
+    /// The other frames of a batch (`batch --edit`); `None` for one image.
+    pub frames: Option<Frames>,
     pub tools: ToolBox,
     pub canvas: Canvas,
     pub dialog: Option<Dialog>,
@@ -375,6 +387,7 @@ impl EditorApp {
         });
         EditorApp {
             session,
+            frames: None,
             tools,
             canvas,
             dialog: None,
@@ -397,6 +410,83 @@ impl EditorApp {
             allow_close: false,
             title: String::new(),
             save_as_pending: false,
+        }
+    }
+
+    /// The editor on the frames of a batch, the first one shown (`batch --edit`); `None`
+    /// without sessions. Palette edits apply to every frame while they share the palette.
+    pub fn with_frames(sessions: Vec<Session>, ctx: &egui::Context) -> Option<EditorApp> {
+        let (frames, first) = Frames::new(sessions)?;
+        let mut app = EditorApp::new(first, ctx);
+        if frames.len() > 1 {
+            app.frames = Some(frames);
+        }
+        Some(app)
+    }
+
+    /// Whether any frame has unsaved changes.
+    pub fn is_dirty(&self) -> bool {
+        match &self.frames {
+            Some(frames) => !frames.dirty(&self.session).is_empty(),
+            None => self.session.is_dirty(),
+        }
+    }
+
+    /// Show frame `to` of a batch: the tools, the canvas (with its view and overlays), the
+    /// tiles and the adjust preview move to that frame's document; the selection follows
+    /// when it fits. `false` without such a frame.
+    pub fn switch_frame(&mut self, to: usize) -> bool {
+        let Some(frames) = self.frames.as_ref() else {
+            return false;
+        };
+        if to >= frames.len() || to == frames.current() {
+            return false;
+        }
+        let cancelled = self.tools.cancel();
+        self.effect(cancelled);
+        self.finish_adjust(false);
+        let sel = self.session.selection;
+        let frames = self.frames.as_mut().expect("checked above");
+        frames.switch(&mut self.session, to);
+        let (n, len) = (frames.current() + 1, frames.len());
+        let doc = &self.session.doc;
+        if let Some(s) = sel.filter(|s| s.x + s.w <= doc.width() && s.y + s.h <= doc.height()) {
+            self.session.selection = Some(s);
+        }
+        self.canvas = self.canvas.switched(doc);
+        self.tools.fit_palette(doc.palette.len());
+        self.tiles_revision = None;
+        self.tiles_info = None;
+        self.adjust.requested = None;
+        self.adjust.snapshot = None;
+        self.dither_preview = None;
+        let name = self
+            .session
+            .image_path()
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.info(format!("frame {n}/{len}: {name}"));
+        true
+    }
+
+    /// Apply the palette op `build` makes from a document: to every frame of a batch that
+    /// shares its palette, else to this document. `true` when it was applied.
+    fn apply_palette(&mut self, build: impl Fn(&Document) -> Result<Op, EditError>) -> bool {
+        let result = match self.frames.as_mut() {
+            Some(frames) => frames.apply_palette(&mut self.session, build),
+            None => build(&self.session.doc).and_then(|op| self.session.apply(op)),
+        };
+        match result {
+            Ok(Some(dirty)) => {
+                self.changed(dirty);
+                true
+            }
+            Ok(None) => false,
+            Err(e) => {
+                self.error(e.0);
+                false
+            }
         }
     }
 
@@ -693,18 +783,25 @@ impl EditorApp {
             Action::Save => {
                 self.save();
             }
+            Action::SaveAs if self.frames.is_some() => {
+                self.error("a batch saves every frame under its own name (no Save As)");
+            }
             Action::SaveAs => self.save_as_pending = true,
             Action::Close => ctx.send_viewport_cmd(ViewportCommand::Close),
             Action::Undo | Action::Redo => {
                 let cancelled = self.tools.cancel();
                 self.effect(cancelled);
-                let dirty = if action == Action::Undo {
-                    self.session.undo()
-                } else {
-                    self.session.redo()
+                let undo = action == Action::Undo;
+                let stepped = match (self.frames.as_mut(), undo) {
+                    (Some(frames), true) => frames.undo(&mut self.session),
+                    (Some(frames), false) => frames.redo(&mut self.session),
+                    (None, true) => Ok(self.session.undo()),
+                    (None, false) => Ok(self.session.redo()),
                 };
-                if let Some(dirty) = dirty {
-                    self.changed(dirty);
+                match stepped {
+                    Ok(Some(dirty)) => self.changed(dirty),
+                    Ok(None) => {}
+                    Err(e) => self.error(e.0),
                 }
             }
             Action::Tool(tool) => self.tools.tool = tool,
@@ -849,20 +946,47 @@ impl EditorApp {
                 }
             }
             Action::Shortcuts => self.show_shortcuts = !self.show_shortcuts,
+            Action::NextFrame | Action::PrevFrame => match self.frames.as_ref() {
+                Some(frames) => {
+                    let (n, len) = (frames.current(), frames.len());
+                    let to = if action == Action::NextFrame {
+                        (n + 1) % len
+                    } else {
+                        (n + len - 1) % len
+                    };
+                    self.switch_frame(to);
+                }
+                None => self.info("one image: frames are for batch --edit"),
+            },
         }
     }
 
-    /// Save under the session's prefix; `true` on success.
+    /// Save under the session's prefix (with a batch: every frame with unsaved changes,
+    /// so the frames keep one palette); `true` on success.
     pub fn save(&mut self) -> bool {
-        match self.session.save() {
-            Ok(saved) => {
-                let dir = self
-                    .session
-                    .prefix
-                    .parent()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default();
-                self.info(format!("saved {} files to {dir}", saved.outputs.len()));
+        let dir = self
+            .session
+            .prefix
+            .parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let result = match self.frames.as_mut() {
+            Some(frames) => frames.save(&mut self.session).map(|saved| {
+                let files: usize = saved.iter().map(|s| s.outputs.len()).sum();
+                let n = saved.len();
+                format!(
+                    "saved {n} frame{} ({files} files) to {dir}",
+                    if n == 1 { "" } else { "s" }
+                )
+            }),
+            None => self
+                .session
+                .save()
+                .map(|saved| format!("saved {} files to {dir}", saved.outputs.len())),
+        };
+        match result {
+            Ok(message) => {
+                self.info(message);
                 true
             }
             Err(e) => {
@@ -943,27 +1067,26 @@ impl EditorApp {
     }
 
     fn remove_entry(&mut self, index: usize) {
-        let doc = &self.session.doc;
-        let (op, target) = match (
-            palette::remove_entry(doc, index),
-            palette::nearest_other(doc, index),
-        ) {
-            (Ok(op), Some(target)) => (op, target),
-            (Err(e), _) => return self.error(e.0),
-            (_, None) => return self.error("the last palette entry cannot be removed"),
-        };
-        self.remove_with(op, index, target);
-    }
-
-    fn merge_entries(&mut self, from: usize, into: usize) {
-        match palette::merge_entries(&self.session.doc, from, into) {
-            Ok(op) => self.remove_with(op, from, into),
-            Err(e) => self.error(e.0),
+        match palette::nearest_other(&self.session.doc, index) {
+            Some(target) => {
+                self.remove_with(|d| palette::remove_entry(d, index), index, target);
+            }
+            None => self.error("the last palette entry cannot be removed"),
         }
     }
 
-    /// Apply `op`, which removes entry `index` and moves its pixels to `target`.
-    fn remove_with(&mut self, op: Op, index: usize, target: usize) {
+    fn merge_entries(&mut self, from: usize, into: usize) {
+        self.remove_with(|d| palette::merge_entries(d, from, into), from, into);
+    }
+
+    /// Apply the op `build` makes, which removes entry `index` and moves its pixels to
+    /// `target`.
+    fn remove_with(
+        &mut self,
+        build: impl Fn(&Document) -> Result<Op, EditError>,
+        index: usize,
+        target: usize,
+    ) {
         // The colors keep pointing at the same entries after the shift; one on the removed
         // entry follows its pixels.
         let (index, target) = (index as i64, target as i64);
@@ -976,7 +1099,7 @@ impl EditorApp {
             }
         };
         let colors = (follow(self.tools.primary), follow(self.tools.secondary));
-        if self.apply(op) {
+        if self.apply_palette(build) {
             (self.tools.primary, self.tools.secondary) = colors;
         }
     }
@@ -987,22 +1110,14 @@ impl EditorApp {
             Outcome::Cancel => {}
             Outcome::Color(Some(i), rgb) => {
                 if self.session.doc.palette[i] != rgb {
-                    match palette::set_color(&self.session.doc, i, rgb) {
-                        Ok(op) => {
-                            self.apply(op);
-                        }
-                        Err(e) => self.error(e.0),
-                    }
+                    self.apply_palette(|d| palette::set_color(d, i, rgb));
                 }
             }
-            Outcome::Color(None, rgb) => match palette::add_color(&self.session.doc, rgb) {
-                Ok(op) => {
-                    if self.apply(op) {
-                        self.tools.primary = self.session.doc.palette.len() as i64 - 1;
-                    }
+            Outcome::Color(None, rgb) => {
+                if self.apply_palette(|d| palette::add_color(d, rgb)) {
+                    self.tools.primary = self.session.doc.palette.len() as i64 - 1;
                 }
-                Err(e) => self.error(e.0),
-            },
+            }
             Outcome::Remove(i) => self.remove_entry(i),
             Outcome::Replace(from, to) => {
                 let sel = self.session.selection;
@@ -1089,8 +1204,12 @@ impl EditorApp {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let dirty = if self.session.is_dirty() { " *" } else { "" };
-        let title = format!("{name}{dirty} — pixelforge");
+        let dirty = if self.is_dirty() { " *" } else { "" };
+        let frame = match &self.frames {
+            Some(f) => format!(" [{}/{}]", f.current() + 1, f.len()),
+            None => String::new(),
+        };
+        let title = format!("{name}{frame}{dirty} — pixelforge");
         if title != self.title {
             ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
             self.title = title;
@@ -1162,7 +1281,8 @@ impl EditorApp {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 self.menu_item(ui, "Save", Action::Save, true);
-                self.menu_item(ui, "Save As…", Action::SaveAs, true);
+                let single = self.frames.is_none();
+                self.menu_item(ui, "Save As…", Action::SaveAs, single);
                 ui.separator();
                 self.menu_item(ui, "Close", Action::Close, true);
             });
@@ -1240,6 +1360,12 @@ impl EditorApp {
                 ui.separator();
                 self.menu_item(ui, "Dither…", Action::Dither, k > 0);
             });
+            if self.frames.is_some() {
+                ui.menu_button("Frame", |ui| {
+                    self.menu_item(ui, "Next frame", Action::NextFrame, true);
+                    self.menu_item(ui, "Previous frame", Action::PrevFrame, true);
+                });
+            }
             ui.menu_button("Help", |ui| {
                 self.menu_item(ui, "Keyboard shortcuts", Action::Shortcuts, true);
             });
@@ -1392,9 +1518,27 @@ impl EditorApp {
                     "Edits reach every identical instance of the tiles they touch (T)",
                 );
             }
+            if let Some(frames) = &self.frames {
+                ui.separator();
+                ui.monospace(format!("frame {}/{}", frames.current() + 1, frames.len()))
+                    .on_hover_text("Left and right arrows: previous and next frame");
+            }
             if self.session.is_dirty() {
                 ui.separator();
                 ui.strong("unsaved");
+            }
+            let others = self.frames.as_ref().map_or(0, |f| {
+                f.dirty(&self.session)
+                    .iter()
+                    .filter(|&&i| i != f.current())
+                    .count()
+            });
+            if others > 0 {
+                ui.separator();
+                ui.strong(format!(
+                    "{others} other frame{} unsaved",
+                    if others == 1 { "" } else { "s" }
+                ));
             }
             if let Some(m) = &self.message {
                 ui.separator();
@@ -1410,10 +1554,7 @@ impl EditorApp {
     /// One frame of the whole window (also what the GUI tests drive).
     pub fn show(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
-        if ctx.input(|i| i.viewport().close_requested())
-            && self.session.is_dirty()
-            && !self.allow_close
-        {
+        if ctx.input(|i| i.viewport().close_requested()) && self.is_dirty() && !self.allow_close {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.dialog = Some(Dialog::Unsaved);
         }

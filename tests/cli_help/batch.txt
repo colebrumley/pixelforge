@@ -10,6 +10,8 @@ Arguments:
   <INPUT_DIR>  
 
 Options:
+      --edit
+          Open the frames in the editor after saving them (saves there rewrite the outputs; palette edits apply to every frame).
   -o, --outdir <DIRECTORY>
           Output directory. [default: out]
       --force

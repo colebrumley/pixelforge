@@ -147,6 +147,25 @@ impl Canvas {
         canvas
     }
 
+    /// A canvas for another document (the next frame of a batch) with this one's settings:
+    /// the grids, the diff and source overlays, and the zoom and pan when the size is the
+    /// same (else it fits the new image).
+    pub fn switched(&self, doc: &Document) -> Canvas {
+        let mut canvas = Canvas::new(doc);
+        canvas.show_grid = self.show_grid;
+        canvas.show_tile_grid = self.show_tile_grid;
+        canvas.show_source = self.show_source;
+        canvas.source_opacity = self.source_opacity;
+        if (canvas.w, canvas.h) == (self.w, self.h) {
+            canvas.view = self.view;
+            canvas.fit_pending = self.fit_pending;
+            canvas.origin = self.origin;
+            canvas.size = self.size;
+        }
+        canvas.set_diff(doc, self.diff_shown());
+        canvas
+    }
+
     fn mark(&mut self, dirty: Dirty) {
         self.upload = Some(match self.upload {
             Some(d) => d.union(dirty),

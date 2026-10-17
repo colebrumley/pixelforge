@@ -40,7 +40,14 @@ use crate::editor::Session;
 /// Open the editor window on `session` and return when it is closed. Errors when no window
 /// can be opened (no display, no OpenGL).
 pub fn run(session: Session) -> Result<(), String> {
-    let name = session
+    run_frames(vec![session])
+}
+
+/// Open the editor window on the frames of a batch (`batch --edit`), the first one shown, and
+/// return when it is closed. Errors without sessions or when no window can be opened.
+pub fn run_frames(sessions: Vec<Session>) -> Result<(), String> {
+    let first = sessions.first().ok_or("no frames to edit")?;
+    let name = first
         .image_path()
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -56,7 +63,7 @@ pub fn run(session: Session) -> Result<(), String> {
         "pixelforge",
         options,
         Box::new(|cc| {
-            let mut app = EditorApp::new(session, &cc.egui_ctx);
+            let mut app = EditorApp::with_frames(sessions, &cc.egui_ctx).expect("not empty");
             // Without one (no display server for it), copy and paste stay in the editor.
             app.enable_os_clipboard();
             Ok(Box::new(app))

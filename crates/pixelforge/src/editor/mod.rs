@@ -22,11 +22,14 @@
 //! - `save`: the output files of `convert` written from a document.
 //! - `session`: [`Session`], a document with its history and save prefix, as the GUI uses
 //!   it (every change reports the [`Dirty`] part of the image).
+//! - `frames`: [`Frames`], the frames of a batch (`batch --edit`): one session each, palette
+//!   edits shared while the frames share the palette.
 
 use std::fmt;
 
 pub mod adjust;
 pub mod document;
+pub mod frames;
 pub mod history;
 pub mod log;
 pub mod op;
@@ -37,6 +40,7 @@ pub mod session;
 pub mod tools;
 
 pub use document::{Document, Origin, SourceRef};
+pub use frames::Frames;
 pub use history::History;
 pub use log::EditLog;
 pub use op::{Op, PixelChange};

@@ -1,17 +1,20 @@
 //! `pixelforge batch INPUT_DIR`: every image of a directory with one shared palette, one
 //! scale and canvas, and (with `--enhance` / `--ink`) one pair of levels, so animation
-//! frames stay consistent.
+//! frames stay consistent. With `--edit`, the editor then steps through the frames
+//! (docs/editor.md R4).
 
 use std::path::{Path, PathBuf};
 
 use clap::{Arg, ArgMatches, Command};
 
+use crate::cli::commands::edit;
 use crate::cli::{
     args, build_config, check_collisions, config_args, config_args_from, emit, output_args,
     outputs_json, paths, show_warnings, subcommand, warn, CliError,
 };
 use crate::color;
 use crate::config::{Config, Value, PRESET_LONGEST_EDGE};
+use crate::editor::{Document, Session};
 use crate::enhance;
 use crate::io::{self, Loaded};
 use crate::layout::outline_margin;
@@ -38,12 +41,19 @@ Every image in INPUT_DIR is converted with ONE shared palette and ONE scale
 consistent.";
 
 pub fn command() -> Command {
-    let cmd = subcommand("batch", DOC).arg(
-        Arg::new("input_dir")
-            .value_name("INPUT_DIR")
-            .required(true)
-            .value_parser(args::dir_path()),
-    );
+    let cmd = subcommand("batch", DOC)
+        .arg(
+            Arg::new("input_dir")
+                .value_name("INPUT_DIR")
+                .required(true)
+                .value_parser(args::dir_path()),
+        )
+        .arg(args::flag(
+            "edit",
+            "edit",
+            "Open the frames in the editor after saving them (saves there rewrite the \
+             outputs; palette edits apply to every frame).",
+        ));
     config_args(output_args(cmd))
 }
 
@@ -285,6 +295,10 @@ pub fn run(matches: &ArgMatches) -> Result<(), CliError> {
         );
     }
     check_collisions(&images, &outputs, force)?;
+    let open_editor = matches.get_flag("edit");
+    if open_editor && !cfg!(feature = "gui") {
+        return Err(edit::not_built());
+    }
     std::fs::create_dir_all(outdir).map_err(|e| CliError::os(e, outdir))?;
     let mut header: Vec<(String, Json)> = Vec::new();
     // DEVIATION: Section 10 — one scale and canvas for the whole set (not per frame), so that
@@ -325,17 +339,44 @@ pub fn run(matches: &ArgMatches) -> Result<(), CliError> {
     if !header.is_empty() {
         emit(&Json::Object(header))?;
     }
+    // The editor's frames, one per output prefix (with --force, a later input of the same
+    // stem replaced the earlier one's files, and so its frame).
+    let mut frames: Vec<(PathBuf, Session)> = Vec::new();
     for path in &images {
-        let result = pipeline::run(Input::Path(path), &config, Some(budget))?;
+        let prefix = outdir.join(paths::stem(path));
+        let (result, kept) = if open_editor {
+            let (result, loaded, pre) =
+                pipeline::run_keeping(Input::Path(path), &config, Some(budget))?;
+            (result, Some((loaded, pre)))
+        } else {
+            (
+                pipeline::run(Input::Path(path), &config, Some(budget))?,
+                None,
+            )
+        };
         show_warnings(&result.warnings);
-        let saved = result.save(&outdir.join(paths::stem(path)))?;
+        let saved = result.save(&prefix)?;
         emit(&Json::Object(vec![
             ("input".into(), Json::Str(paths::display(path))),
             ("outputs".into(), outputs_json(&saved)),
             ("stats".into(), result.stats.clone()),
         ]))?;
+        if let Some((loaded, pre)) = kept {
+            let mut doc = Document::from_output(&result).map_err(|e| CliError::config(e.0))?;
+            // The input aligned for reference, as convert --edit shows it.
+            let factor = pipeline::source_reference_factor(&pre, result.indices.w);
+            doc.origin.source = Some(pipeline::source_reference(&loaded, &pre, factor));
+            if !force {
+                doc.origin.input_path = Some(path.clone());
+            }
+            frames.retain(|(p, _)| *p != prefix);
+            frames.push((prefix.clone(), Session::new(doc, prefix)));
+        }
     }
-    Ok(())
+    if !open_editor {
+        return Ok(());
+    }
+    edit::open_frames(frames.into_iter().map(|(_, s)| s).collect())
 }
 
 #[cfg(test)]

@@ -2010,7 +2010,7 @@ fn edit_reports_files_it_cannot_open() {
 }
 
 /// Without the `gui` feature, `edit` opens the file and then says the editor is not built
-/// in; `convert --edit` refuses before converting.
+/// in; `convert --edit` and `batch --edit` refuse before converting.
 #[cfg(not(feature = "gui"))]
 #[test]
 fn headless_build_explains_the_missing_editor() {
@@ -2038,4 +2038,16 @@ fn headless_build_explains_the_missing_editor() {
         r.stderr
     );
     assert!(std::fs::read_dir(tmp.path()).unwrap().next().is_none());
+    let (src, out) = (tmp.join("in"), tmp.join("out"));
+    std::fs::create_dir(&src).unwrap();
+    std::fs::copy(fixture("two_color"), src.join("a.png")).unwrap();
+    let r = invoke!("batch", &src, FAST, "--edit", "-o", &out);
+    assert_eq!(r.code, 1);
+    assert!(r.stdout.is_empty());
+    assert!(
+        r.stderr.contains("built without the editor"),
+        "{}",
+        r.stderr
+    );
+    assert!(!out.exists());
 }

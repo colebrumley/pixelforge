@@ -1,7 +1,7 @@
 //! `pixelforge edit OUTPUT.png`: open a pixelforge output (or any PNG with at most 256
-//! colors) in the editor (docs/editor.md R1, R3), and the window `convert --edit` opens
-//! (R2). Without the `gui` feature the command exists but only checks that the file opens,
-//! then says the editor is not built in.
+//! colors) in the editor (docs/editor.md R1, R3), and the windows `convert --edit` (R2) and
+//! `batch --edit` (R4) open. Without the `gui` feature the command exists but only checks
+//! that the file opens, then says the editor is not built in.
 
 use std::path::PathBuf;
 
@@ -61,6 +61,19 @@ pub fn open(session: Session) -> Result<(), CliError> {
 
 #[cfg(not(feature = "gui"))]
 pub fn open(_session: Session) -> Result<(), CliError> {
+    Err(not_built())
+}
+
+/// Open the editor window on the frames of a batch (`batch --edit`); returns when it is
+/// closed.
+#[cfg(feature = "gui")]
+pub fn open_frames(sessions: Vec<Session>) -> Result<(), CliError> {
+    crate::gui::run_frames(sessions)
+        .map_err(|e| CliError::runtime(format!("cannot open the editor window: {e}")))
+}
+
+#[cfg(not(feature = "gui"))]
+pub fn open_frames(_sessions: Vec<Session>) -> Result<(), CliError> {
     Err(not_built())
 }
 
