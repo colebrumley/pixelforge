@@ -16,7 +16,7 @@
 //! - `selection`: the rectangular [`Selection`].
 //! - `tools`: pencil, eraser, fill, line, rectangle, replace color, move, copy and paste,
 //!   eyedropper.
-//! - `adjust`: brightness/contrast/saturation, ramp shift, cleanup.
+//! - `adjust`: brightness/contrast/saturation, ramp shift, ordered dither, cleanup.
 //! - `palette`: palette entry edits and the named-palette rules.
 //! - `log`: [`EditLog`], its JSON form, hash and replay.
 //! - `save`: the output files of `convert` written from a document.

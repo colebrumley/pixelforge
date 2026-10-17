@@ -755,3 +755,90 @@ fn tab_toggles_the_aligned_source_overlay() {
     assert!(!h.state().canvas.show_source);
     assert!(h.state().session.history.applied().is_empty());
 }
+
+#[test]
+fn dither_previews_then_applies_as_one_step() {
+    let dir = TempDir::new("gui-dither");
+    let mut h = harness(plain_ramp(&dir, 8, 8));
+    h.state_mut().session.selection = Some(Selection {
+        x: 0,
+        y: 0,
+        w: 4,
+        h: 4,
+    });
+    h.state_mut().tools.primary = 0;
+    h.state_mut().tools.secondary = 3;
+    let before = indices(h.state());
+    let shown = h.state().canvas.pixels().to_vec();
+    h.state_mut()
+        .perform(Action::Dither, &egui::Context::default());
+    h.run();
+    {
+        // The dialog's result is drawn, not applied.
+        let app = h.state();
+        assert!(matches!(
+            app.dialog,
+            Some(pixelforge::gui::dialogs::Dialog::Dither {
+                a: 0,
+                b: 3,
+                density: 32,
+                ..
+            })
+        ));
+        assert_eq!(indices(app), before);
+        assert_ne!(app.canvas.pixels(), &shown[..]);
+        assert!(app.session.history.applied().is_empty());
+    }
+    h.get_by_label("Dither").click();
+    h.run();
+    let app = h.state();
+    assert!(app.dialog.is_none());
+    assert_eq!(app.session.history.applied().len(), 1);
+    assert_eq!(
+        app.session.history.applied()[0],
+        pixelforge::editor::Op::pixels(
+            "dither",
+            pixelforge::editor::adjust::dither(
+                &plain_doc(&before, &app.session.doc),
+                app.session.selection.as_ref(),
+                0,
+                3,
+                32
+            )
+        )
+    );
+    let w = app.session.doc.width();
+    for (p, (&a, &b)) in before.iter().zip(&indices(app)).enumerate() {
+        if a != b {
+            assert!(p % w < 4 && p / w < 4, "pixel {p} changed outside");
+        }
+        if p % w < 4 && p / w < 4 {
+            assert!(b == 0 || b == 3);
+        }
+    }
+
+    // Closing the dialog drops the preview.
+    let shown = h.state().canvas.pixels().to_vec();
+    h.state_mut()
+        .perform(Action::Dither, &egui::Context::default());
+    h.run();
+    if let Some(pixelforge::gui::dialogs::Dialog::Dither { density, .. }) =
+        h.state_mut().dialog.as_mut()
+    {
+        *density = 60;
+    }
+    h.run();
+    assert_ne!(h.state().canvas.pixels(), &shown[..]);
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(h.state().dialog.is_none());
+    assert_eq!(h.state().canvas.pixels(), &shown[..]);
+    assert_eq!(h.state().session.history.applied().len(), 1);
+}
+
+/// `doc` with the indices `indices` (the document before an edit).
+fn plain_doc(indices: &[i64], doc: &Document) -> Document {
+    let mut d = doc.clone();
+    d.indices.indices = indices.to_vec();
+    d
+}

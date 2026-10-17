@@ -72,6 +72,8 @@ pub enum Action {
     ReplaceColor,
     /// Open the merge entries dialog (R9).
     MergeEntries,
+    /// Open the ordered dither dialog (R18).
+    Dither,
     /// Apply or drop the adjust preview (R15).
     AdjustApply,
     AdjustCancel,
@@ -118,6 +120,7 @@ impl Action {
             Action::FixJaggies => "Fix jaggies",
             Action::ReplaceColor => "Replace color",
             Action::MergeEntries => "Merge palette entries",
+            Action::Dither => "Ordered dither",
             Action::AdjustApply => "Apply the adjustment",
             Action::AdjustCancel => "Cancel the adjustment",
             Action::ToggleDiff => "Diff overlay",
@@ -227,6 +230,10 @@ type AdjustJob = (u64, Option<Selection>, Arc<AdjustInput>, Adjust);
 /// Its result: the job's revision, selection and values with the change list.
 type AdjustResult = (u64, Option<Selection>, Adjust, Vec<PixelChange>);
 
+/// What the dither preview was computed for: the revision, the selection, entries A and B
+/// and the density.
+type DitherKey = (u64, Option<Selection>, usize, usize, usize);
+
 /// Selections up to this many pixels preview within the frame; larger ones on the worker
 /// thread (N5).
 pub const ADJUST_SYNC_PIXELS: usize = 200_000;
@@ -309,6 +316,9 @@ pub struct EditorApp {
     /// Draw the image the tilemap draws instead of the document (R24).
     pub show_reconstructed: bool,
     pub adjust: AdjustState,
+    /// The dither dialog's preview: the revision, selection and values it shows, and its
+    /// changes (drawn on the canvas, not applied).
+    dither_preview: Option<(DitherKey, Vec<PixelChange>)>,
     /// The editor's clipboard (R30).
     pub clipboard: Option<Clip>,
     /// The source reference panel is shown (when there is a source).
@@ -352,6 +362,7 @@ impl EditorApp {
             tiles_info: None,
             show_reconstructed: false,
             adjust: AdjustState::new(ctx),
+            dither_preview: None,
             clipboard: None,
             show_source_panel: true,
             show_shortcuts: false,
@@ -537,6 +548,33 @@ impl EditorApp {
         }
     }
 
+    /// Show the dither dialog's result on the canvas while it is open, recomputed when its
+    /// values, the selection or the document change; drop it when the dialog closes.
+    fn update_dither(&mut self) {
+        let want = match &self.dialog {
+            Some(Dialog::Dither { a, b, density, .. }) => Some((
+                self.session.revision(),
+                self.session.selection,
+                *a,
+                *b,
+                *density,
+            )),
+            _ => None,
+        };
+        if want == self.dither_preview.as_ref().map(|(k, _)| *k) {
+            return;
+        }
+        if let Some((_, old)) = self.dither_preview.take() {
+            self.canvas.restore(&self.session.doc, &old);
+        }
+        if let Some(key) = want {
+            let (_, sel, a, b, density) = key;
+            let changes = adjust::dither(&self.session.doc, sel.as_ref(), a, b, density);
+            self.canvas.preview(&self.session.doc, &changes);
+            self.dither_preview = Some((key, changes));
+        }
+    }
+
     /// Hand the reconstruction to the canvas while it is shown.
     fn sync_reconstructed(&mut self) {
         let rendered = match (&self.tiles_info, self.show_reconstructed) {
@@ -645,6 +683,28 @@ impl EditorApp {
                 self.dialog = Some(Dialog::Merge {
                     from,
                     into,
+                    palette: self.session.doc.palette.clone(),
+                });
+            }
+            Action::Dither => {
+                let k = self.session.doc.palette.len();
+                if k == 0 {
+                    return self.error("dithering needs a palette entry");
+                }
+                self.finish_adjust(false);
+                let entry = |c: i64, fallback: usize| {
+                    usize::try_from(c)
+                        .ok()
+                        .filter(|&i| i < k)
+                        .unwrap_or(fallback)
+                };
+                let a = entry(self.tools.primary, 0);
+                let b = entry(self.tools.secondary, usize::from(a == 0 && k > 1));
+                self.dialog = Some(Dialog::Dither {
+                    a,
+                    b,
+                    density: adjust::DITHER_LEVELS / 2,
+                    in_selection: self.session.selection.is_some(),
                     palette: self.session.doc.palette.clone(),
                 });
             }
@@ -835,6 +895,13 @@ impl EditorApp {
                 self.apply_changes("replace_color", changes, "replace color");
             }
             Outcome::Merge(from, into) => self.merge_entries(from, into),
+            Outcome::Dither(a, b, density) => {
+                // The preview goes first: it is drawn over the pixels the op changes.
+                self.update_dither();
+                let sel = self.session.selection;
+                let changes = adjust::dither(&self.session.doc, sel.as_ref(), a, b, density);
+                self.apply_changes("dither", changes, "dither");
+            }
             Outcome::SaveAndClose => {
                 if self.save() {
                     self.allow_close = true;
@@ -1027,6 +1094,8 @@ impl EditorApp {
                 ui.separator();
                 self.menu_item(ui, "Remove orphan pixels", Action::RemoveOrphans, k > 0);
                 self.menu_item(ui, "Fix jaggies", Action::FixJaggies, true);
+                ui.separator();
+                self.menu_item(ui, "Dither…", Action::Dither, k > 0);
             });
             ui.menu_button("Help", |ui| {
                 self.menu_item(ui, "Keyboard shortcuts", Action::Shortcuts, true);
@@ -1314,6 +1383,7 @@ impl EditorApp {
                 self.dialog_outcome(outcome, &ctx);
             }
         }
+        self.update_dither();
         if self.show_shortcuts {
             self.shortcuts_window(&ctx);
         }

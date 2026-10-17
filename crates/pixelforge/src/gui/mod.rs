@@ -12,7 +12,7 @@
 //! - `tools`: the active tool, brush and colors; pointer events to edits.
 //! - `palette_panel`: the palette list and its actions.
 //! - `panels`: the adjust, tiles and source reference panels.
-//! - `dialogs`: entry color, remove confirmation, replace color, merge entries, unsaved
+//! - `dialogs`: entry color, remove confirmation, replace color, merge entries, dither, unsaved
 //!   changes.
 //! - `worker`: the generation-counted worker thread (tile re-extraction, adjust previews of
 //!   large selections).

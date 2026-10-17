@@ -1,6 +1,6 @@
 //! The editor's modal dialogs: a palette entry's color (edit or add, R7, R8), the
-//! confirmation of removing a used entry (R7), replace color (R14), merge entries (R9), and
-//! unsaved changes on close (R29). A dialog only reports the user's answer ([`Outcome`]);
+//! confirmation of removing a used entry (R7), replace color (R14), merge entries (R9),
+//! ordered dither (R18), and unsaved changes on close (R29). A dialog only reports the user's answer ([`Outcome`]);
 //! the app acts on it.
 
 use eframe::egui;
@@ -8,6 +8,7 @@ use egui::color_picker::{color_picker_color32, Alpha};
 use egui::{vec2, Color32, Id, Modal, Sense, Stroke, StrokeKind};
 
 use crate::color;
+use crate::editor::adjust::DITHER_LEVELS;
 
 /// The color dialog's state.
 #[derive(Clone, Debug)]
@@ -63,6 +64,15 @@ pub enum Dialog {
         into: usize,
         palette: Vec<[u8; 3]>,
     },
+    /// Ordered dither between entries `a` and `b` at `density` (0 to `DITHER_LEVELS`), in
+    /// the selection when `in_selection`; the canvas previews it while the dialog is open.
+    Dither {
+        a: usize,
+        b: usize,
+        density: usize,
+        in_selection: bool,
+        palette: Vec<[u8; 3]>,
+    },
 }
 
 /// The user's answer.
@@ -76,6 +86,8 @@ pub enum Outcome {
     DiscardAndClose,
     Replace(i64, i64),
     Merge(usize, usize),
+    /// Dither entries `a` and `b` at a density.
+    Dither(usize, usize, usize),
 }
 
 /// An entry's name in a list: its index and hex, or "transparent" for `-1`.
@@ -285,6 +297,40 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog) -> Option<Outcome> {
                 (*from, *into) = (a as usize, b as usize);
                 ui.separator();
                 buttons(ui, "Merge", from != into, Outcome::Merge(*from, *into))
+            }
+            Dialog::Dither {
+                a,
+                b,
+                density,
+                in_selection,
+                palette,
+            } => {
+                ui.heading("Ordered dither");
+                ui.label(if *in_selection {
+                    "The opaque pixels inside the selection become a Bayer pattern of two \
+                     entries."
+                } else {
+                    "The opaque pixels of the image become a Bayer pattern of two entries."
+                });
+                let (mut ea, mut eb) = (*a as i64, *b as i64);
+                egui::Grid::new("pixelforge-dither").show(ui, |ui| {
+                    ui.label("Entry A");
+                    entry_picker(ui, "pixelforge-dither-a", palette, &mut ea, false);
+                    ui.end_row();
+                    ui.label("Entry B");
+                    entry_picker(ui, "pixelforge-dither-b", palette, &mut eb, false);
+                    ui.end_row();
+                    ui.label("Density of B");
+                    ui.add(
+                        egui::Slider::new(density, 0..=DITHER_LEVELS)
+                            .suffix(format!(" / {DITHER_LEVELS}")),
+                    );
+                    ui.end_row();
+                });
+                (*a, *b) = (ea as usize, eb as usize);
+                ui.weak("The canvas shows the result; nothing changes until Dither.");
+                ui.separator();
+                buttons(ui, "Dither", a != b, Outcome::Dither(*a, *b, *density))
             }
         }
     });
