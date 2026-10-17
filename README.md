@@ -3,8 +3,8 @@
 [![CI](https://github.com/colebrumley/pixelforge/actions/workflows/ci.yml/badge.svg)](https://github.com/colebrumley/pixelforge/actions/workflows/ci.yml)
 
 pixelforge turns raster images into 16-bit-style pixel art (sprites, backgrounds and
-tiles), and its built-in editor lets you touch up the result by hand. The same input and
-config give the same PNG on every run.
+tiles), and its built-in editor lets you touch up the result by hand. Except with
+`--remove-bg`, the same input and config give the same PNG on every run.
 
 ![Convert a knight to a 64 px sprite, fix its shield rim in the editor, then replay the edit log](docs/demo.gif)
 

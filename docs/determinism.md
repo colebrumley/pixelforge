@@ -19,9 +19,15 @@ clock, and it uses float64 throughout.
 
 ## How it is tested
 
-`cargo test` (`crates/pixelforge/tests/determinism.rs` and `cli.rs`) enforces identical
-output bytes for every method and preset, in-process and across fresh processes with
-different thread counts. CI checks `tests/golden.json` (pixel hashes per fixture, method and
+`cargo test` checks for identical output bytes in two ways:
+
+- `crates/pixelforge/tests/cli.rs` converts every method and preset in fresh processes with
+  1, 2, 3 and 8 threads.
+- `crates/pixelforge/tests/determinism.rs` converts twice in-process. box and gerstner run on
+  every preset and fixture. kopf runs a reduced case by default. Its full run is ignored
+  unless you pass `--include-ignored`.
+
+CI checks `tests/golden.json` (pixel hashes per fixture, method and
 preset) on Linux x86-64 and macOS arm64.
 
 ## Telling outputs apart

@@ -31,7 +31,10 @@ fn main() -> Result<(), pipeline::Error> {
     // out.image: RGBA8 (h * w * 4); out.palette: [u8; 3] per entry;
     // out.indices: palette index per pixel, -1 = transparent; out.stats: the stats JSON
 
-    let photo = cfg.replace(&[("enhance".into(), Value::Float(0.5))])?; // ink 0.6 adds lines
+    let photo = cfg.replace(&[
+        ("enhance".into(), Value::Float(0.5)),
+        ("ink".into(), Value::Float(0.6)), // darkens thin features into lines
+    ])?;
     let rgba: Vec<u8> = (0..64 * 64 * 4).map(|i| (i % 251) as u8).collect();
     let array = Input::Array { shape: &[64, 64, 4], data: ArrayData::U8(&rgba) };
     pipeline::run(array, &photo, None)?; // (H, W, 3|4): u8, or f64 in [0, 1]
