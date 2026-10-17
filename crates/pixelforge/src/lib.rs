@@ -4,8 +4,9 @@
 //! canonical JSON), `io` (decoding, indexed PNG output), `preprocess` with `mask`, `layout`,
 //! `filters` and `enhance`, the downscalers (`boxfilter`, `kopf` + `kopf_run`, `gerstner` +
 //! `gerstner_run` + `annealer`), `palette`, `quantize`, `postprocess`, `tiles`, the
-//! `pipeline` that orchestrates them and writes every output file, and, behind the `cli`
-//! feature, the `pixelforge` binary (`cli`, `sheet`). `npsum`, `pyjson`, `pyrepr` and
+//! `pipeline` that orchestrates them and writes every output file, the pixel editor's core
+//! (`editor`: document, ops, history, tools, edit log and replay; no GUI dependency), and,
+//! behind the `cli` feature, the `pixelforge` binary (`cli`, `sheet`). `npsum`, `pyjson`, `pyrepr` and
 //! `pyunicode` reproduce the numpy and Python text forms the outputs were defined by, so
 //! files stay byte-identical to the version this crate replaced. The optional Python
 //! binding (`crates/pixelforge-py`) wraps `pipeline` and `config`.
@@ -22,6 +23,7 @@ pub mod cli;
 pub mod color;
 pub mod config;
 pub mod downscale;
+pub mod editor;
 pub mod enhance;
 pub mod filters;
 pub mod gerstner;

@@ -1,6 +1,7 @@
 # pixelforge editor: requirements and design
 
-Status: accepted 2026-10-12, not yet built. Section 4 records the decisions.
+Status: accepted 2026-10-12. Milestone 1 (the `editor` core and `convert --edits`) is built;
+the GUI is not. Section 4 records the decisions.
 
 pixelforge converts an image and stops. When the result has a stray pixel, a broken outline
 or a muddy patch, the user has to open another program, which loses the palette, the
