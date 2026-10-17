@@ -5,8 +5,9 @@
 //! `filters` and `enhance`, the downscalers (`boxfilter`, `kopf` + `kopf_run`, `gerstner` +
 //! `gerstner_run` + `annealer`), `palette`, `quantize`, `postprocess`, `tiles`, the
 //! `pipeline` that orchestrates them and writes every output file, the pixel editor's core
-//! (`editor`: document, ops, history, tools, edit log and replay; no GUI dependency), and,
-//! behind the `cli` feature, the `pixelforge` binary (`cli`, `sheet`). `npsum`, `pyjson`, `pyrepr` and
+//! (`editor`: document, ops, history, tools, edit log and replay; no GUI dependency), the
+//! editor's window behind the `gui` feature (`gui`), and, behind the `cli` feature, the
+//! `pixelforge` binary (`cli`, `sheet`). `npsum`, `pyjson`, `pyrepr` and
 //! `pyunicode` reproduce the numpy and Python text forms the outputs were defined by, so
 //! files stay byte-identical to the version this crate replaced. The optional Python
 //! binding (`crates/pixelforge-py`) wraps `pipeline` and `config`.
@@ -28,6 +29,8 @@ pub mod enhance;
 pub mod filters;
 pub mod gerstner;
 pub mod gerstner_run;
+#[cfg(feature = "gui")]
+pub mod gui;
 pub mod io;
 pub mod kopf;
 pub mod kopf_run;
