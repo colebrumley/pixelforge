@@ -344,16 +344,7 @@ pub fn run(matches: &ArgMatches) -> Result<(), CliError> {
     let mut frames: Vec<(PathBuf, Session)> = Vec::new();
     for path in &images {
         let prefix = outdir.join(paths::stem(path));
-        let (result, kept) = if open_editor {
-            let (result, loaded, pre) =
-                pipeline::run_keeping(Input::Path(path), &config, Some(budget))?;
-            (result, Some((loaded, pre)))
-        } else {
-            (
-                pipeline::run(Input::Path(path), &config, Some(budget))?,
-                None,
-            )
-        };
+        let result = pipeline::run(Input::Path(path), &config, Some(budget))?;
         show_warnings(&result.warnings);
         let saved = result.save(&prefix)?;
         emit(&Json::Object(vec![
@@ -361,11 +352,11 @@ pub fn run(matches: &ArgMatches) -> Result<(), CliError> {
             ("outputs".into(), outputs_json(&saved)),
             ("stats".into(), result.stats.clone()),
         ]))?;
-        if let Some((loaded, pre)) = kept {
+        if open_editor {
             let mut doc = Document::from_output(&result).map_err(|e| CliError::config(e.0))?;
-            // The input aligned for reference, as convert --edit shows it.
-            let factor = pipeline::source_reference_factor(&pre, result.indices.w);
-            doc.origin.source = Some(pipeline::source_reference(&loaded, &pre, factor));
+            // The input aligned for reference, as convert --edit shows it, built only while
+            // its frame is the current one (editor::Frames).
+            doc.origin.source_input = Some((path.clone(), budget));
             if !force {
                 doc.origin.input_path = Some(path.clone());
             }

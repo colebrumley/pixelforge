@@ -491,3 +491,39 @@ fn edit_source_recovers_the_alignment_of_convert_edit() {
     let session = Session::open(&plain, Some(&input), None).unwrap();
     assert_eq!(session.doc.origin.source.unwrap().factor, None);
 }
+
+#[test]
+fn batch_frames_hold_only_the_current_source() {
+    // batch --edit builds each frame's aligned source only while that frame is current, and
+    // it equals the reference built from the conversion itself.
+    use pixelforge::editor::frames::Frames;
+    use pixelforge::pipeline::{self, Input};
+    let dir = TempDir::new("editor-frame-sources");
+    let config = config(&[
+        ("preset", s("sprite")),
+        ("method", s("box")),
+        ("out_width", int(24)),
+        ("denoise", s("none")),
+    ]);
+    let mut sessions = Vec::new();
+    let mut expected = Vec::new();
+    for name in ["circle_alpha", "two_color"] {
+        let input = fixture_path(name);
+        let (out, loaded, pre) =
+            pipeline::run_keeping(Input::Path(&input), &config, Some(io::MAX_INPUT_PIXELS))
+                .unwrap();
+        let factor = pipeline::source_reference_factor(&pre, out.indices.w);
+        expected.push(pipeline::source_reference(&loaded, &pre, factor));
+        let mut doc = Document::from_output(&out).unwrap();
+        doc.origin.source_input = Some((input, io::MAX_INPUT_PIXELS));
+        sessions.push(Session::new(doc, dir.join(name)));
+    }
+    let (mut frames, mut session) = Frames::new(sessions).unwrap();
+    assert_eq!(session.doc.origin.source.as_ref(), Some(&expected[0]));
+    assert!(frames.others().all(|(_, s)| s.doc.origin.source.is_none()));
+    assert!(frames.switch(&mut session, 1));
+    assert_eq!(session.doc.origin.source.as_ref(), Some(&expected[1]));
+    assert!(frames.others().all(|(_, s)| s.doc.origin.source.is_none()));
+    assert!(frames.switch(&mut session, 0));
+    assert_eq!(session.doc.origin.source.as_ref(), Some(&expected[0]));
+}

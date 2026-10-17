@@ -61,10 +61,22 @@ impl SourceRef {
         w: usize,
         h: usize,
     ) -> Result<Option<SourceRef>, EditError> {
+        SourceRef::aligned_within(path, config, w, h, io::MAX_INPUT_PIXELS)
+    }
+
+    /// [`aligned`](Self::aligned) with the input loaded under `budget` pixels, as the
+    /// conversion loaded it (`batch` passes its `--max-pixels`).
+    pub fn aligned_within(
+        path: &Path,
+        config: &Config,
+        w: usize,
+        h: usize,
+        budget: u64,
+    ) -> Result<Option<SourceRef>, EditError> {
         if config.remove_bg {
             return Ok(None);
         }
-        let loaded = io::load(path, io::MAX_INPUT_PIXELS).map_err(|e| EditError(e.to_string()))?;
+        let loaded = io::load(path, budget).map_err(|e| EditError(e.to_string()))?;
         let Ok(pre) = preprocess::run(&loaded.rgb, &loaded.alpha, loaded.h, loaded.w, config)
         else {
             return Ok(None);
@@ -101,6 +113,10 @@ pub struct Origin {
     /// `config` is the conversion's own (a conversion in memory, or a PNG with the
     /// `pixelforge:config` chunk), not the default of a plain PNG.
     pub converted: bool,
+    /// The input `source` can be rebuilt from, and the pixel budget it was loaded with.
+    /// `batch --edit` sets it so that only the current frame holds its source (see
+    /// [`Origin::load_source`] and [`Origin::drop_source`]).
+    pub source_input: Option<(PathBuf, u64)>,
 }
 
 impl Origin {
@@ -116,6 +132,28 @@ impl Origin {
             prior_ops: Vec::new(),
             prior_log_missing: false,
             converted: false,
+            source_input: None,
+        }
+    }
+
+    /// Build the aligned `source` from `source_input` when it is not held, for an output of
+    /// `w × h`. A source that cannot be rebuilt (the input moved, or it no longer aligns)
+    /// stays `None`; the reference panel then shows nothing.
+    pub fn load_source(&mut self, w: usize, h: usize) {
+        if self.source.is_some() {
+            return;
+        }
+        if let Some((path, budget)) = &self.source_input {
+            self.source = SourceRef::aligned_within(path, &self.config, w, h, *budget)
+                .ok()
+                .flatten();
+        }
+    }
+
+    /// Release `source` when it can be rebuilt from `source_input`.
+    pub fn drop_source(&mut self) {
+        if self.source_input.is_some() {
+            self.source = None;
         }
     }
 }

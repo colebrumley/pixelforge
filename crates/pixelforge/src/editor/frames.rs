@@ -36,6 +36,12 @@ fn palette_key(op: &Op) -> Option<(&'static str, usize, [u8; 3], [u8; 3])> {
     }
 }
 
+/// Build the current frame's source reference (see [`Origin::load_source`]).
+fn load_source(session: &mut Session) {
+    let (w, h) = (session.doc.width(), session.doc.height());
+    session.doc.origin.load_source(w, h);
+}
+
 /// `1, 3 and 4` for frames 0, 2 and 3 (one-based, as the window shows them).
 fn frame_list(frames: &[usize]) -> String {
     let names: Vec<String> = frames.iter().map(|i| (i + 1).to_string()).collect();
@@ -57,7 +63,13 @@ impl Frames {
                 && s.doc.fixed == first.doc.fixed
         });
         let mut slots: Vec<Option<Session>> = sessions.into_iter().map(Some).collect();
-        let session = slots[0].take().expect("not empty");
+        let mut session = slots[0].take().expect("not empty");
+        // Only the current frame holds its source reference (a batch of large inputs would
+        // otherwise keep every one of them in memory).
+        for s in slots.iter_mut().flatten() {
+            s.doc.origin.drop_source();
+        }
+        load_source(&mut session);
         Some((
             Frames {
                 slots,
@@ -115,7 +127,10 @@ impl Frames {
         let next = self.slots[to]
             .take()
             .expect("only the current slot is empty");
-        self.slots[self.current] = Some(std::mem::replace(session, next));
+        let mut previous = std::mem::replace(session, next);
+        previous.doc.origin.drop_source();
+        load_source(session);
+        self.slots[self.current] = Some(previous);
         self.current = to;
         true
     }
