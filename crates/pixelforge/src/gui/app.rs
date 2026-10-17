@@ -455,8 +455,17 @@ impl EditorApp {
         }
         self.canvas = self.canvas.switched(doc);
         self.tools.fit_palette(doc.palette.len());
-        self.tiles_revision = None;
         self.tiles_info = None;
+        self.tiles_revision = None;
+        if let Some(worker) = self.tiles.as_mut() {
+            // Submitted now, so a result for the previous frame still running is dropped.
+            worker.submit((
+                doc.indices.clone(),
+                doc.palette_lab.clone(),
+                doc.origin.config.clone(),
+            ));
+            self.tiles_revision = Some(self.session.revision());
+        }
         self.adjust.requested = None;
         self.adjust.snapshot = None;
         self.dither_preview = None;
