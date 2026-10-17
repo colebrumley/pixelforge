@@ -1843,3 +1843,138 @@ fn stdout_contains_predicate_smoke() {
         .success()
         .stdout(predicate::str::contains("gameboy\t4 colors"));
 }
+
+// ---------------------------------------------------------------------------------------
+// convert --edits (the editor's edit log, docs/editor.md R28)
+
+/// Convert `two_color` (FAST), edit the PNG in the library and save it to `edited/`.
+fn edited_output(tmp: &TempDir, extra: &[&str]) -> PathBuf {
+    use pixelforge::editor::{palette, save, tools, Document, History, Op};
+    let r = invoke!(
+        "convert",
+        &fixture("two_color"),
+        FAST,
+        extra,
+        "-o",
+        &tmp.join("conv")
+    );
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    let mut doc = Document::open(&tmp.join("conv/two_color.png")).unwrap();
+    let mut history = History::new();
+    let pencil = tools::pencil(&doc, None, &[(0, 0), (15, 15)], 2, 0);
+    history
+        .push(&mut doc, Op::pixels("pencil", pencil))
+        .unwrap();
+    let add = palette::add_color(&doc, [0x12, 0x34, 0x56]).unwrap();
+    history.push(&mut doc, add).unwrap();
+    let k = doc.palette.len() as i64 - 1;
+    let rect = tools::rectangle(&doc, None, (2, 2), (9, 6), true, k);
+    history
+        .push(&mut doc, Op::pixels("rectangle", rect))
+        .unwrap();
+    let log = history.edit_log(&doc);
+    save::save(&doc, &log, &tmp.join("edited/two_color")).unwrap();
+    tmp.join("edited/two_color_edits.json")
+}
+
+#[test]
+fn convert_edits_reproduces_the_edited_png() {
+    for extra in [&[][..], &["--preset", "background", "--tile-size", "8"][..]] {
+        let tmp = TempDir::new("edits");
+        let log = edited_output(&tmp, extra);
+        let r = invoke!(
+            "convert",
+            &fixture("two_color"),
+            FAST,
+            extra,
+            "--edits",
+            &log,
+            "-o",
+            &tmp.join("replay")
+        );
+        assert_eq!(r.code, 0, "{}", r.stderr);
+        let line = r.last_json();
+        assert_eq!(
+            line["outputs"]["edits"],
+            tmp.join("replay/two_color_edits.json").to_str().unwrap()
+        );
+        assert_eq!(line["stats"]["edited"]["ops"], 3);
+        for name in [
+            "two_color.png",
+            "two_color_preview.png",
+            "two_color_edits.json",
+        ] {
+            assert_eq!(
+                std::fs::read(tmp.join("edited").join(name)).unwrap(),
+                std::fs::read(tmp.join("replay").join(name)).unwrap(),
+                "{name} {extra:?}"
+            );
+        }
+        let edited = read_json(&tmp.join("edited/two_color_meta.json"));
+        let replayed = read_json(&tmp.join("replay/two_color_meta.json"));
+        assert_eq!(edited["stats"]["edited"], replayed["stats"]["edited"]);
+        assert_ne!(
+            std::fs::read(tmp.join("conv/two_color.png")).unwrap(),
+            std::fs::read(tmp.join("replay/two_color.png")).unwrap()
+        );
+    }
+}
+
+#[test]
+fn convert_edits_refuses_a_mismatching_log() {
+    let tmp = TempDir::new("edits-bad");
+    let log = edited_output(&tmp, &[]);
+    // Another output size: the log does not fit.
+    let r = invoke!(
+        "convert",
+        &fixture("two_color"),
+        "--method",
+        "box",
+        "--out-width",
+        "20",
+        "--out-height",
+        "16",
+        "--edits",
+        &log,
+        "-o",
+        &tmp.join("replay")
+    );
+    assert_eq!(r.code, 2, "{}", r.stderr);
+    assert_eq!(
+        r.stderr.lines().last(),
+        Some("config error: the edit log is for a 16x16 image, the conversion is 20x16")
+    );
+    assert!(!tmp.join("replay").exists());
+    // A value out of range.
+    let text = std::fs::read_to_string(&log).unwrap();
+    let bad = tmp.join("bad_edits.json");
+    std::fs::write(&bad, text.replacen("[0, 0, ", "[0, 99, ", 1)).unwrap();
+    let r = invoke!(
+        "convert",
+        &fixture("two_color"),
+        FAST,
+        "--edits",
+        &bad,
+        "-o",
+        &tmp.join("r")
+    );
+    assert_eq!(r.code, 2);
+    assert!(
+        r.stderr
+            .contains("edit log op 0 (pixels): pixel (0, 99) is outside the 16x16 image"),
+        "{}",
+        r.stderr
+    );
+    // Not a log at all.
+    let r = invoke!(
+        "convert",
+        &fixture("two_color"),
+        FAST,
+        "--edits",
+        &fixture("two_color"),
+        "-o",
+        &tmp.join("r")
+    );
+    assert_eq!(r.code, 2);
+    assert!(r.stderr.starts_with("config error: "), "{}", r.stderr);
+}

@@ -6,6 +6,8 @@ Arguments:
   <INPUT>  
 
 Options:
+      --edits <FILE>
+          Replay an edit log (NAME_edits.json, written by the editor) on the result before saving.
   -o, --outdir <DIRECTORY>
           Output directory. [default: out]
       --force
