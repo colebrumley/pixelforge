@@ -79,8 +79,9 @@ Modules:
   the tools, adjust and cleanup, the edit log and its replay (`convert --edits`), saving,
   and `Session` (a document with its history and save prefix). No GUI dependency.
 - `src/gui/`: the editor window (`pixelforge edit`, `convert --edit`): the eframe app, the
-  canvas, the tools' pointer handling, the palette panel and a worker thread. Its screen
-  math is integer; it never computes an edit's pixels itself.
+  canvas and its layers, the tools' pointer handling, the palette, adjust, tiles and source
+  panels, the dialogs and the worker threads. Its screen math is integer; it never computes
+  an edit's pixels itself (the adjust preview is `editor::adjust`'s change list).
 - `src/npsum.rs`: numpy's float64 summation orders (pairwise `np.sum`, sequential
   leading-axis reductions), for the sums whose comparisons decide median cut, ramps and
   tile de-duplication. `src/pyjson.rs`: Python's `json.dumps` layouts and `round(x, n)` for

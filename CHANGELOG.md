@@ -6,6 +6,30 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A pixel editor for touching up a conversion in place (docs/editor.md):
+  `pixelforge edit OUTPUT.png` opens a pixelforge output (or any PNG with at most 256
+  colors), and `convert ... --edit` opens the editor on the result with the input aligned
+  for reference. Pencil, eraser, eyedropper, fill, line, rectangle, rectangular selection
+  (tools stay inside it; drag to move its contents), copy and paste, palette entry edit,
+  add, remove, merge and replace color (named palettes offer only their own colors),
+  adjust (brightness, contrast, saturation in CIELAB with a live preview), ramp shift,
+  orphan removal and the jaggy fix on the selection, a diff overlay, the source reference
+  panel and overlay, a tiles panel, unlimited undo and redo, and a shortcuts sheet. Saving
+  rewrites every output file of `convert` and keeps the PNG a pixelforge output; the
+  config hash does not change.
+- The edit log: saving writes `NAME_edits.json`, the PNG gains a `pixelforge:edits_sha256`
+  text chunk and `_meta.json` an `edited` object. `convert ... --edits NAME_edits.json`
+  replays the log on the conversion and reproduces the edited PNG byte for byte; it
+  refuses (exit 2) a log that does not fit the conversion.
+- The editor is the `gui` Cargo feature (eframe/egui, OpenGL), on by default.
+  `--no-default-features --features cli` builds the command-line-only program as before;
+  `--edits` works there too. The library without default features, and with it the Python
+  binding, compiles no GUI dependency.
+- `convert`, `batch` and `compare` without `--edit` or `--edits` write the same bytes as
+  before.
+
 ### Fixed
 
 - A JPEG whose MPF index holds a huge image count, or a BigTIFF header, no longer

@@ -64,6 +64,12 @@ supported. Windows is not: nothing is built or tested there.
 pixelforge uses every core by default. Set `PIXELFORGE_THREADS=N` to limit it. The thread
 count changes speed only, never the output.
 
+The program includes a pixel editor (see [Editor](#editor)). It is the `gui` Cargo feature,
+on by default. For a command-line-only build without the window toolkit, install with
+`--no-default-features --features cli`: every command still works, `--edits` replay
+included, and `edit` and `--edit` explain that the editor is not built in. On Linux the
+editor opens X11 or Wayland at run time and needs no development headers to build.
+
 ### Optional: AI background removal
 
 `--remove-bg` runs the external `rembg` command, which must be on `PATH`:
@@ -97,6 +103,8 @@ pixelforge compare hero.png -o out                          # box, kopf, gerstne
 pixelforge compare photo.png --prepass                      # proof sheet: methods × pre-pass
 pixelforge compare hero.png --sweep palette-size=8,12,16    # proof sheet: methods × one option
 pixelforge palettes                                         # list bundled palettes
+pixelforge convert hero.png --preset sprite --edit          # convert, then touch up
+pixelforge edit out/hero.png                                # edit an earlier output
 ```
 
 ### Options and config files
@@ -261,6 +269,71 @@ or lower the budget with `--max-input-pixels N` (the `max_pixels` argument of th
 config fields have upper bounds (e.g. output edges ≤ 4096, `--scale-preview` ≤ 64), and
 non-finite numbers are rejected.
 
+## Editor
+
+pixelforge converts an image and stops; the editor is for touching up the result in place:
+a stray pixel, a broken outline, a muddy patch. It edits the indexed image and its palette
+and keeps every output file consistent. It is not a general paint program: no layers, no
+animation, no free RGB painting.
+
+```bash
+pixelforge convert hero.png --preset sprite -o out --edit   # convert, then open the editor
+pixelforge edit out/hero.png                                # open an earlier output
+pixelforge edit out/hero.png --source hero.png -o fixed     # with the input for reference
+pixelforge edit any_indexed.png                             # any PNG with at most 256 colors
+```
+
+`convert --edit` writes the outputs and prints the JSON result exactly as without the flag,
+then opens the window with the input image aligned pixel for pixel with the output. `edit`
+reads the palette, config and input hash back from a pixelforge PNG; a PNG with at most 256
+colors that pixelforge did not write opens with a palette built from its colors and the
+default config. Saving (Cmd/Ctrl+S) rewrites the complete output set of `convert` under the
+same name (or another, with Save As), including the tileset files, plus `NAME_edits.json`.
+Closing with unsaved changes asks first.
+
+What it does:
+
+- Pencil (B, sizes 1 to 8), eraser (E), eyedropper (I, or Alt+click with any tool), fill (G;
+  Shift fills every pixel of that color), line (L) and rectangle (R; Shift fills) with a live
+  preview. The right button paints the secondary color; X swaps the two, 1 to 9 pick palette
+  entries.
+- Rectangular selection (M). Every tool stays inside it; drag inside it to move its contents;
+  Esc clears it. Cmd/Ctrl+C and V copy and paste within the editor, and the pasted pixels
+  become the selection, ready to move.
+- The palette panel: pixel counts, edit an entry's color (every pixel of it changes), add,
+  remove (used entries move to the nearest remaining one), merge two entries, replace one
+  color with another. With a named palette (`--palette-name`) entries only take that
+  palette's colors. More entries than `palette_size` shows a warning, not an error.
+- Adjust: brightness, contrast and saturation in CIELAB on the selection, snapped back to the
+  palette, with a live preview; "only colors in selection" keeps pixels within their ramp.
+  Ramp shift (`,` darker, `.` lighter) moves pixels one step along their hue ramp. The Image
+  menu runs orphan removal and the jaggy fix on the selection with the pipeline's own code.
+- Views: zoom 1x to 64x, pixel grid, tile grid, a diff overlay (D) of what differs from the
+  conversion, the source image in a panel and, when aligned, overlaid at an adjustable
+  opacity (Tab). With a tileset the tiles panel shows the tile count after de-duplication,
+  how many pixels de-duplication would change on save, and can draw what the tilemap draws.
+- Unlimited undo and redo. Help > Keyboard shortcuts lists every shortcut.
+
+### The edit log
+
+The saved PNG stays a pixelforge output: it keeps its `pixelforge:config` and
+`pixelforge:input_sha256` text chunks and gains `pixelforge:edits_sha256`. `_meta.json`
+gains an `edited` object (op count, pixels changed, palette changed, the edit log's hash,
+the pixelforge version). The config hash does not change.
+
+`NAME_edits.json` records every edit as the pixels and palette entries it set, not as tool
+invocations, so a later change to a tool cannot change what an old log reproduces. Replay it
+on a fresh conversion with
+
+```bash
+pixelforge convert hero.png --preset sprite -o out --edits out/hero_edits.json
+```
+
+and the edited PNG comes back byte for byte. Replay needs the same input and config: it
+refuses (exit 2) a log whose image size or palette length does not match the conversion.
+`--edits` works in the command-line-only build. Opening an edited output again and saving
+keeps the earlier edits in the new log, so it still replays from the input.
+
 ## Library
 
 The `pixelforge` crate is also a Rust library. Depend on it without the CLI:
@@ -385,6 +458,7 @@ options):
 
 ## More
 
+- [docs/editor.md](docs/editor.md): the editor's requirements and design.
 - [DESIGN.md](DESIGN.md): how each method works, the implementation and its numerics, the
   full determinism contract, timings, and every deliberate deviation from the spec.
 - [REQUIREMENTS.md](REQUIREMENTS.md): the specification the original Python prototype was

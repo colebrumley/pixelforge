@@ -1,8 +1,12 @@
 # pixelforge editor: requirements and design
 
-Status: accepted 2026-10-12. Milestones 1 (the `editor` core and `convert --edits`) and 2
-(the window: `pixelforge edit`, `convert --edit`) are built. Section 4 records the
-decisions.
+Status: accepted 2026-10-12; built. All four milestones of Section 3.15 are in place: the
+`editor` core and `convert --edits`, the window (`pixelforge edit`, `convert --edit`), the
+selection, shape, adjust and cleanup tools with the source reference and diff overlay, and
+the tiles panel, named-palette picker, plain indexed PNGs and the shortcuts sheet. The
+version stays 0.2.0 for now: the version is part of every config hash, so bumping it to
+0.3.0 changes the hashes in `tests/golden.json` and needs its own release commit (N4).
+Section 4 records the decisions.
 
 pixelforge converts an image and stops. When the result has a stray pixel, a broken outline
 or a muddy patch, the user has to open another program, which loses the palette, the
