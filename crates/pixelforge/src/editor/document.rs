@@ -1,4 +1,4 @@
-//! The edited document (docs/editor.md, Section 3.2): an index image (`-1` transparent) and
+//! The edited document (docs/design/editor.md, Section 3.2): an index image (`-1` transparent) and
 //! its palette, plus where it came from.
 //!
 //! Built from a conversion in memory ([`Document::from_output`]), `palette_lab` is the
@@ -50,7 +50,7 @@ impl SourceRef {
     }
 
     /// The input image aligned with an output of `w × h` converted with `config`, for
-    /// `edit --source` (docs/editor.md, Section 3.8): `preprocess::run` with the output's
+    /// `edit --source` (docs/design/editor.md, Section 3.8): `preprocess::run` with the output's
     /// own config recovers the crop and canvas layout the conversion used, and
     /// `pipeline::source_reference` renders it as `convert --edit` does. `Ok(None)` when the
     /// geometry cannot be recovered: `remove_bg` (the external matting is not run again),

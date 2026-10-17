@@ -199,7 +199,7 @@ fn flat_colors(colors: &[[f64; 3]], k: &[usize]) -> Vec<f64> {
     k.iter().flat_map(|&i| colors[i]).collect()
 }
 
-/// Joint superpixel + palette optimization (Gerstner et al. 2013), REQUIREMENTS.md
+/// Joint superpixel + palette optimization (Gerstner et al. 2013), docs/design/requirements.md
 /// Section 7: `pixelforge.downscale.gerstner.run`.
 ///
 /// The input `lab` (h, w, 3) is segmented into exactly out_w·out_h superpixels (one per

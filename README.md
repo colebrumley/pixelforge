@@ -6,7 +6,7 @@ pixelforge turns raster images into 16-bit-style pixel art (sprites, backgrounds
 tiles), and its built-in editor lets you touch up the result by hand. Except with
 `--remove-bg`, the same input and config give the same PNG on every run.
 
-![Convert a knight to a 64 px sprite, fix its shield rim in the editor, then replay the edit log](docs/demo.gif)
+![Convert a knight to a 64 px sprite, fix its shield rim in the editor, then replay the edit log](docs/images/demo.gif)
 
 ## Quick start
 
@@ -116,37 +116,38 @@ longest edge, 17 colors, backdrop keyed out. The canvas is exactly the requested
 the outline is drawn inside it. The outline adds a palette entry. With a named palette it
 snaps to the nearest palette color instead.
 
-![Knight sprite before and after](docs/sample_sprite.png)
+![Knight sprite before and after](docs/images/sample_sprite.png)
 
 `pixelforge convert town.png --preset background --method gerstner`: 1254×1254 → 256×256,
 32 colors, plus a tileset and tilemap.
 
-![Town background before and after](docs/sample_background.png)
+![Town background before and after](docs/images/sample_background.png)
 
 `pixelforge convert portrait.png --preset sprite --outline none --no-key-bg`, without (middle)
 and with `--enhance 1` (right): 1024×1024 → 64×64, 16 colors. The pre-pass keeps the eyes,
 brows and mouth that plain downscaling averages away (see [Photos](docs/cli.md#photos---enhance-and---ink)).
 The source photo is AI-generated.
 
-![Photo portrait: source, without and with the pre-pass](docs/sample_photo.png)
+![Photo portrait: source, without and with the pre-pass](docs/images/sample_photo.png)
 
 ## Documentation
 
 | guide | covers |
 | --- | --- |
 | [Command line](docs/cli.md) | options and config files, output files and sizes, palettes, backdrops, photos, proof sheets, logging, limits |
-| [Editor](docs/editor-guide.md) | opening files, tools and shortcuts, batches, the edit log and replay |
+| [Editor](docs/editor.md) | opening files, tools and shortcuts, batches, the edit log and replay |
 | [Library](docs/library.md) | the Rust crate and the Python binding |
 | [Determinism](docs/determinism.md) | what is guaranteed, how it is tested, differences from the Python version |
 | [Development](docs/development.md) | tests and the `xtask` tooling |
 
-Background for contributors:
+Background for contributors, in [docs/design/](docs/design/):
 
-- [DESIGN.md](DESIGN.md): how each method works, the implementation and its numerics, the
-  full determinism contract, timings, and every deliberate deviation from the spec.
-- [docs/editor.md](docs/editor.md): the editor's requirements and design.
-- [REQUIREMENTS.md](REQUIREMENTS.md): the specification the original Python prototype was
-  built from (historical).
+- [Implementation notes](docs/design/implementation.md): how each method works, the
+  implementation and its numerics, the full determinism contract, timings, and every
+  deliberate deviation from the spec.
+- [Editor design](docs/design/editor.md): the editor's requirements and design.
+- [Requirements](docs/design/requirements.md): the specification the original Python
+  prototype was built from (historical).
 - [crates/pixelforge/README.md](crates/pixelforge/README.md): the crate layout and the
   numerical rules for contributors.
 

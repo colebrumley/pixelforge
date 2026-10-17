@@ -16,7 +16,7 @@ pixelforge convert hero.png --preset sprite --edit          # convert, then touc
 pixelforge edit out/hero.png                                # edit an earlier output
 ```
 
-The editor commands are covered in the [editor guide](editor-guide.md).
+The editor commands are covered in the [editor guide](editor.md).
 
 ## Options and config files
 
@@ -39,7 +39,7 @@ is `--g-t-final`, and the old `--g-T-final` still works.
 | `NAME.tmj` | background preset only: Tiled JSON map (one `background` layer, flips in the GID high bits, tileset embedded and pointing at `NAME_tileset.png`) |
 | `NAME_tilemap.csv` | background preset only: one line per tile row of GIDs (1-based, 0 = empty, no flip bits) |
 
-The editor adds `NAME_edits.json` when it saves (see [the edit log](editor-guide.md#the-edit-log)).
+The editor adds `NAME_edits.json` when it saves (see [the edit log](editor.md#the-edit-log)).
 
 `--tileset-columns N` sets the tileset sheet width in tiles. The default, 0, means
 `ceil(sqrt(tiles))`.

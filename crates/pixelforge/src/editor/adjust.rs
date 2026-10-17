@@ -1,4 +1,4 @@
-//! Adjust, ramp shift, ordered dither and cleanup (docs/editor.md, Section 3.5, R18). Each works on the palette
+//! Adjust, ramp shift, ordered dither and cleanup (docs/design/editor.md, Section 3.5, R18). Each works on the palette
 //! color a pixel currently has, so two pixels of the same index always get the same result,
 //! and snaps back to the palette with `color::nearest_index` (CIE76, ties to the lowest
 //! index). Only `+`, `-`, `*` and `/` are involved besides `color.rs`. Transparent pixels

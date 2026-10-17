@@ -1,5 +1,5 @@
 //! `pixelforge edit OUTPUT.png`: open a pixelforge output (or any PNG with at most 256
-//! colors) in the editor (docs/editor.md R1, R3), and the windows `convert --edit` (R2) and
+//! colors) in the editor (docs/design/editor.md R1, R3), and the windows `convert --edit` (R2) and
 //! `batch --edit` (R4) open. Without the `gui` feature the command exists but only checks
 //! that the file opens, then says the editor is not built in.
 

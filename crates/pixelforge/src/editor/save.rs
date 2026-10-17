@@ -1,4 +1,4 @@
-//! Saving (docs/editor.md, Section 3.10): the document becomes a `pipeline::Output` and is
+//! Saving (docs/design/editor.md, Section 3.10): the document becomes a `pipeline::Output` and is
 //! written by `Output::save_with`, so every file is what `convert` writes, plus the edit log
 //! `<prefix>_edits.json`.
 //!

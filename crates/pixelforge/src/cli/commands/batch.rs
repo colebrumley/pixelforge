@@ -1,7 +1,7 @@
 //! `pixelforge batch INPUT_DIR`: every image of a directory with one shared palette, one
 //! scale and canvas, and (with `--enhance` / `--ink`) one pair of levels, so animation
 //! frames stay consistent. With `--edit`, the editor then steps through the frames
-//! (docs/editor.md R4).
+//! (docs/design/editor.md R4).
 
 use std::path::{Path, PathBuf};
 

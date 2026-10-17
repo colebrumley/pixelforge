@@ -1,4 +1,4 @@
-//! The canvas widget (docs/editor.md, Section 3.7): the image as one RGBA texture with
+//! The canvas widget (docs/design/editor.md, Section 3.7): the image as one RGBA texture with
 //! nearest filtering at a power-of-two zoom, a checkerboard under transparent pixels, the
 //! pixel grid from 8x on, the tile grid with a tileset, the brush outline under the
 //! pointer, the selection's marquee, and three optional layers: the diff overlay (a tint

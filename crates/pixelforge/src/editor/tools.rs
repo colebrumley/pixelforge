@@ -1,4 +1,4 @@
-//! The drawing tools (docs/editor.md, Section 3.4) as pure functions from the document, the
+//! The drawing tools (docs/design/editor.md, Section 3.4) as pure functions from the document, the
 //! selection and pointer positions to a change list. Positions are pixel coordinates and may
 //! lie outside the image (a drag that leaves the canvas); whatever falls outside the image
 //! or the selection is dropped. Each change carries the document's current index as `old`.
@@ -371,7 +371,7 @@ pub fn snap_rgba(doc: &Document, rgba: &[u8], w: usize, h: usize) -> Option<Clip
     })
 }
 
-/// Per-tile editing (docs/editor.md, Section 3.9): `changes` plus the same change at the
+/// Per-tile editing (docs/design/editor.md, Section 3.9): `changes` plus the same change at the
 /// corresponding pixel of every other instance of each edited tile, as one change list.
 /// Instances are the cells `tiles::extract` maps to one tileset tile with tolerance 0
 /// (exact copies, flipped copies included: a change on a mirrored instance lands mirrored),

@@ -42,7 +42,7 @@ Each output PNG carries `tEXt` chunks:
 The config hash covers the config, the version and the palette's colors, so editing a
 palette file changes it. `_meta.json` also records the platform, the thread count and the
 pixelforge version (not hashed), to tell which of these differ when two outputs do. Editor
-saves add their own chunk and metadata (see [the edit log](editor-guide.md#the-edit-log)).
+saves add their own chunk and metadata (see [the edit log](editor.md#the-edit-log)).
 
 ## Differences from the Python version
 
@@ -56,4 +56,4 @@ reported 0.1.0):
 - Seeded gerstner runs (`--seed`) draw from a different random stream.
 - Every config hash changed with the version.
 
-[DESIGN.md](../DESIGN.md#implementation) has the details.
+The [implementation notes](design/implementation.md#implementation) have the details.

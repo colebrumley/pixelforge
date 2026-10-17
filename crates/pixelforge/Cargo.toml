@@ -14,7 +14,7 @@ workspace = true
 # without it (default-features = false), so clap never reaches the extension module.
 default = ["cli", "gui"]
 cli = ["dep:clap"]
-# The pixel editor's window (src/gui/, `pixelforge edit`, `convert --edit`; docs/editor.md).
+# The pixel editor's window (src/gui/, `pixelforge edit`, `convert --edit`; docs/design/editor.md).
 # `--no-default-features --features cli` builds the headless program without it.
 gui = ["cli", "dep:eframe", "dep:rfd", "dep:arboard"]
 

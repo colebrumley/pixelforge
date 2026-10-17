@@ -1,4 +1,4 @@
-//! The side panels below the palette and the canvas (docs/editor.md, Section 3.12): adjust
+//! The side panels below the palette and the canvas (docs/design/editor.md, Section 3.12): adjust
 //! (R15), tiles (R24) and the source reference (R22), and the shortcuts sheet. Like the
 //! palette panel they only show state and report what the user asked for; the app acts on
 //! it.

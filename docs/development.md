@@ -20,8 +20,9 @@ command's options.
 
 Further reading:
 
-- [DESIGN.md](../DESIGN.md): how each method works, the implementation and its numerics, the
-  full determinism contract, timings, and every deliberate deviation from the spec.
+- [Implementation notes](design/implementation.md): how each method works, the
+  implementation and its numerics, the full determinism contract, timings, and every
+  deliberate deviation from the spec.
 - [crates/pixelforge/README.md](../crates/pixelforge/README.md): the crate layout and the
   numerical rules for contributors.
-- [editor.md](editor.md): the editor's requirements and design.
+- [Editor design](design/editor.md): the editor's requirements and design.

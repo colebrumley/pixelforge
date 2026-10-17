@@ -4,7 +4,7 @@
 //! produces its own result (a private accumulator); the caller merges the results in band
 //! order once every band has finished. Threads only decide *when* a band runs, never what it
 //! computes or in which order results are combined, so 1 thread and 16 threads produce the
-//! same bits (DESIGN.md, "Determinism contract").
+//! same bits (docs/design/implementation.md, "Determinism contract").
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;

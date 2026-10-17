@@ -1,9 +1,9 @@
 # pixelforge design notes
 
-Details behind the [README](README.md): how the three downscalers work, how the Rust
+Details behind the [README](../../README.md): how the three downscalers work, how the Rust
 implementation is organised and keeps its numerics reproducible, the determinism contract,
 timings, and where the implementation deliberately deviates from
-[REQUIREMENTS.md](REQUIREMENTS.md).
+[the requirements](requirements.md).
 
 ## Methods
 
@@ -77,7 +77,7 @@ library has no Python and no numerical crates: images are plain slices with expl
 - `tiles`: tileset extraction with near-duplicate merging, the tilemap, Tiled `.tmj` and CSV.
 - `pipeline`: `run` / `run_loaded` (load → preprocess → downscale → palette and quantize →
   post-process → tiles), `Output::save` and every output file, `environment()`.
-- `editor`: the pixel editor's core (docs/editor.md): the document (an index image and its
+- `editor`: the pixel editor's core ([editor design](editor.md)): the document (an index image and its
   palette, from a conversion or a PNG), ops with undo and redo, the tools as change lists,
   adjust, ramp shift and cleanup, the edit log with its replay (`convert --edits`), and
   saving through `Output::save_with`. No GUI dependency.
