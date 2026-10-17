@@ -152,8 +152,9 @@ is recorded so the design leaves room for it.
   The GUI's frame loop, pointer coordinates and timers never enter the numerics. Adjust and
   ramp shift use `color.rs` only (CIELAB conversions, CIE76 nearest index) plus
   arithmetic, so the existing determinism guard applies to the new code unchanged.
-- N4 (must) `convert`, `batch` and `compare` without `--edit` or `--edits` are
-  byte-identical to today. No golden hash changes.
+- N4 (must) `convert`, `batch` and `compare` without `--edit` or `--edits` give the same
+  pixels as today: no `pixels_sha256` in the goldens changes. The version is part of the
+  config hash, so `config_hash` (in `_meta.json` and the goldens) changes with a release.
 - N5 (must) Responsive at the sizes pixelforge produces (up to 4096 on an edge). Pixel
   tools update only the pixels they touched. Adjust previews on large selections and tile
   re-extraction run on a worker thread and never block the frame.
