@@ -281,13 +281,23 @@ pixelforge convert hero.png --preset sprite -o out --edit   # convert, then open
 pixelforge edit out/hero.png                                # open an earlier output
 pixelforge edit out/hero.png --source hero.png -o fixed     # with the input for reference
 pixelforge edit any_indexed.png                             # any PNG with at most 256 colors
+pixelforge batch frames/ -o out --edit                      # a batch, frame by frame
 ```
 
 `convert --edit` writes the outputs and prints the JSON result exactly as without the flag,
 then opens the window with the input image aligned pixel for pixel with the output. `edit`
 reads the palette, config and input hash back from a pixelforge PNG; a PNG with at most 256
 colors that pixelforge did not write opens with a palette built from its colors and the
-default config. Saving (Cmd/Ctrl+S) rewrites the complete output set of `convert` under the
+default config. `edit --source` aligns the input too when the PNG's config and the input's
+size give back the conversion's crop and canvas (not with `--remove-bg`); otherwise the
+input is shown fitted, for reference only.
+
+`batch --edit` does the same for a batch: after its outputs and JSON, the window steps
+through the frames (left and right arrows, or the Frame menu; the status bar shows "frame
+2/5"). Each frame has its own undo history and saves under its own name. The frames share
+the batch's palette, so a palette edit applies to every frame, and undoing it undoes it in
+every frame (the editor asks you to undo later edits of another frame first). Save writes
+every frame with changes; closing asks while any frame is unsaved. Saving (Cmd/Ctrl+S) rewrites the complete output set of `convert` under the
 same name (or another, with Save As), including the tileset files, plus `NAME_edits.json`.
 Closing with unsaved changes asks first.
 
@@ -298,8 +308,10 @@ What it does:
   preview. The right button paints the secondary color; X swaps the two, 1 to 9 pick palette
   entries.
 - Rectangular selection (M). Every tool stays inside it; drag inside it to move its contents;
-  Esc clears it. Cmd/Ctrl+C and V copy and paste within the editor, and the pasted pixels
-  become the selection, ready to move.
+  Esc clears it. Cmd/Ctrl+C copies it, also to the system clipboard as an image; Cmd/Ctrl+V
+  pastes, and the pasted pixels become the selection, ready to move. The editor's own copy
+  pastes with its exact palette indices; an image copied in another program is snapped to
+  the nearest palette entries (alpha below 128 is transparent) and clipped to the canvas.
 - The palette panel: pixel counts, edit an entry's color (every pixel of it changes), add,
   remove (used entries move to the nearest remaining one), merge two entries, replace one
   color with another. With a named palette (`--palette-name`) entries only take that
@@ -307,11 +319,16 @@ What it does:
 - Adjust: brightness, contrast and saturation in CIELAB on the selection, snapped back to the
   palette, with a live preview; "only colors in selection" keeps pixels within their ramp.
   Ramp shift (`,` darker, `.` lighter) moves pixels one step along their hue ramp. The Image
-  menu runs orphan removal and the jaggy fix on the selection with the pipeline's own code.
+  menu runs orphan removal and the jaggy fix on the selection with the pipeline's own code,
+  and Dither… fills the selection's opaque pixels with an ordered (8x8 Bayer) pattern of two
+  entries at a chosen density, previewed live. The pattern is anchored to the image, so
+  dithering neighboring selections gives one seamless pattern.
 - Views: zoom 1x to 64x, pixel grid, tile grid, a diff overlay (D) of what differs from the
   conversion, the source image in a panel and, when aligned, overlaid at an adjustable
   opacity (Tab). With a tileset the tiles panel shows the tile count after de-duplication,
   how many pixels de-duplication would change on save, and can draw what the tilemap draws.
+  Per-tile editing (T, or View > Per-tile editing) makes every edit also reach every
+  identical copy of the tiles it touches, mirrored copies included, inside the selection.
 - Unlimited undo and redo. Help > Keyboard shortcuts lists every shortcut.
 
 ### The edit log

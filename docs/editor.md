@@ -5,8 +5,11 @@ Status: accepted 2026-10-12; built. All four milestones of Section 3.15 are in p
 selection, shape, adjust and cleanup tools with the source reference and diff overlay, and
 the tiles panel, named-palette picker, plain indexed PNGs and the shortcuts sheet, released
 as 0.3.0. The version is part of every config hash, so the release commit regenerated the
-`config_hash` entries of `tests/golden.json`; no pixel hash changed (N4). Section 4 records
-the decisions.
+`config_hash` entries of `tests/golden.json`; no pixel hash changed (N4). The items deferred
+as "later" or "once X exists" are built too, for 0.3.0: `batch --edit` (R4), ordered dither
+(R18), the OS clipboard (R30), the aligned source for `edit --source` (Section 3.8) and
+per-tile editing (Section 3.9). Re-running the pipeline from the editor stays out (Section
+4, decision 5). Section 4 records the decisions.
 
 pixelforge converts an image and stops. When the result has a stray pixel, a broken outline
 or a muddy patch, the user has to open another program, which loses the palette, the
@@ -49,7 +52,10 @@ is recorded so the design leaves room for it.
   the source image already loaded. Saving rewrites the outputs.
 - R3 (should) `pixelforge edit` also opens any PNG with at most 256 distinct colors, with
   the palette built from its colors and a default config. It saves the same file set.
-- R4 (later) `batch --edit` steps through the frames of a batch with their shared palette.
+- R4 (later; built) `batch --edit` steps through the frames of a batch with their shared
+  palette. Each frame keeps its own document, history and save; a palette edit applies to
+  every frame (one undo step in each, undone in all of them, refused while another frame
+  has later steps), and Save writes every changed frame, so the files keep one palette.
 
 ### Document and palette
 
@@ -87,7 +93,9 @@ is recorded so the design leaves room for it.
   way to add a highlight or a shadow.
 - R17 (should) Cleanup on the selection: orphan removal and the jaggy fix, using the
   pipeline's `postprocess` functions with the config's parameters.
-- R18 (later) Ordered dither between two chosen entries inside the selection.
+- R18 (later; built) Ordered dither between two chosen entries inside the selection: an
+  8 × 8 Bayer threshold matrix anchored to image coordinates, density 0 to 64, integer
+  arithmetic only, previewed live and applied as one `dither` op.
 
 ### View
 
@@ -124,7 +132,10 @@ is recorded so the design leaves room for it.
   the config and the log. Replay refuses a log whose image size or palette length does not
   match the conversion.
 - R29 (must) Closing with unsaved changes asks first.
-- R30 (should) Copy and paste of the selection inside the editor. (later) OS clipboard.
+- R30 (should) Copy and paste of the selection inside the editor. (later; built) OS
+  clipboard: copy also puts the selection there as an RGBA image; paste keeps the exact
+  indices of the editor's own copy and snaps any other image to the nearest palette entry
+  (alpha below 128 transparent), clipped to the canvas, as one `paste` op.
 
 ### Non-functional
 
@@ -325,10 +336,12 @@ the canvas padding, the outline margin and the fit mode. A new helper in `pipeli
 `source_reference(&Loaded, &Preprocessed, factor)`, renders the input through the same
 crop and padding at an integer multiple of the output size, so output pixel `(x, y)` covers
 source block `(factor*x .. factor*x+factor, ...)`. The editor shows it in a panel and as an
-overlay with an opacity slider. From `edit --source` the geometry is not known and the
-panel shows the image fitted, with no overlay. Recovering the geometry from the embedded
-config and the source image's size is possible (it is what `preprocess::run` computes) and
-is a "should" once the helper exists.
+overlay with an opacity slider. From `edit --source` the geometry is recovered from the
+embedded config and the source image's size (built): `SourceRef::aligned` runs
+`preprocess::run` with the output's config and, when that gives the output's size, renders
+the reference with `source_reference` at the factor `convert --edit` uses. With
+`remove_bg` (the external matting is not run again), a plain PNG (default config) or
+another size, the panel shows the image fitted, with no overlay.
 
 ### 3.9 Tiles
 
@@ -343,8 +356,11 @@ The editor handles it in two parts:
 - Save uses the reconstructed image, as `convert` does, and rewrites the tileset files from
   it. The `edited` object in `_meta.json` records `tiles_rerender_px_changed` separately.
 
-A per-tile editing mode (paint on every instance of a tile at once) is a later feature; the
-grid overlay and the tile count cover the first release.
+Per-tile editing (built; T or View > Per-tile editing) paints every instance of a tile at
+once: `editor::tools::mirror_tiles` maps each change through `tiles::extract`'s tilemap at
+tolerance 0 (exact copies and flipped copies; a mirrored instance gets the change
+mirrored), keeps the copies inside the selection, and the tool's change list and the copies
+are one `Pixels` op.
 
 ### 3.10 Saving
 
@@ -376,8 +392,10 @@ Rejected: Tauri (needs a JavaScript toolchain and a system WebView), Slint (a se
 language and a license to think about), iced (sound, but custom canvas interaction is
 more work and the ecosystem is thinner), raw SDL or wgpu (would mean writing widgets).
 
-New dependencies, all optional under `gui`: `eframe` (with `egui`), `rfd`. Later, `arboard`
-for the OS clipboard. `Cargo.lock` for the default feature set grows; the library's
+New dependencies, all optional under `gui`: `eframe` (with `egui`), `rfd`, and `arboard`
+(3.7.0, the version egui-winit already uses, without default features but `image-data`;
+X11 through `x11rb`, which winit already builds and which opens libxcb at run time, so no
+headers) for the OS clipboard. `Cargo.lock` for the default feature set grows; the library's
 dependency tree without `gui` does not change, and a CI check builds
 `--no-default-features --features cli` to prove it.
 
@@ -412,7 +430,8 @@ pick palette entries, Alt+click eyedropper, Shift modifies fill, line and rectan
 Space+drag pans, scroll zooms, `+` `-` `0` zoom in, out and fit, Cmd/Ctrl+Z and
 Shift+Cmd/Ctrl+Z undo and redo, Cmd/Ctrl+S save, Cmd/Ctrl+Shift+S save as, Cmd/Ctrl+C
 and Cmd/Ctrl+V copy and paste, Esc clears the selection, `,` `.` ramp shift darker and
-lighter, Tab toggles the source overlay, D toggles the diff overlay.
+lighter, Tab toggles the source overlay, D toggles the diff overlay, T toggles per-tile
+editing, and the left and right arrows step through the frames of `batch --edit`.
 
 ### 3.13 Threading
 

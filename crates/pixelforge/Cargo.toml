@@ -48,9 +48,9 @@ clap = { version = "=4.5.61", features = ["string"], optional = true }
 eframe = { version = "=0.36.2", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"], optional = true }
 # Save As: the native file dialog (the XDG desktop portal on Linux, so no GTK to build).
 rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal"], optional = true }
-# Copy and paste with other programs (R30): the selection as an RGBA image. X11 through the
-# pure-Rust x11rb on Linux (no headers; Wayland sessions reach it through XWayland), AppKit
-# on macOS. The version egui-winit already uses, so no new crate.
+# Copy and paste with other programs (R30): the selection as an RGBA image. X11 through
+# x11rb on Linux (winit's, libxcb opened at run time: no headers; Wayland sessions reach it
+# through XWayland), AppKit on macOS. The version egui-winit already uses: no new crate.
 arboard = { version = "=3.7.0", default-features = false, features = ["image-data"], optional = true }
 
 [dev-dependencies]
