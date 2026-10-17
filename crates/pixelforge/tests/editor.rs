@@ -426,3 +426,39 @@ fn session_opens_a_plain_png_with_a_source() {
     assert!(err.contains("would overwrite input"), "{err}");
     assert_eq!(session.prefix, tmp.join("two_color"));
 }
+
+#[test]
+fn edit_source_recovers_the_alignment_of_convert_edit() {
+    // convert --edit: the source rendered through the conversion's own preprocessing.
+    let dir = TempDir::new("editor-source-align");
+    let input = fixture_path("circle_alpha");
+    let config = config(&[
+        ("preset", s("sprite")),
+        ("method", s("box")),
+        ("out_width", int(24)),
+        ("denoise", s("none")),
+    ]);
+    let (out, loaded, pre) =
+        pixelforge::pipeline::run_keeping(pixelforge::pipeline::Input::Path(&input), &config, None)
+            .unwrap();
+    let factor = pixelforge::pipeline::source_reference_factor(&pre, out.indices.w);
+    let expected = pixelforge::pipeline::source_reference(&loaded, &pre, factor);
+    assert!(expected.factor.is_some());
+    out.save(&dir.join("circle")).unwrap();
+    // edit --source: the same reference, recovered from the PNG's config.
+    let png = dir.join("circle.png");
+    let session = Session::open(&png, Some(&input), None).unwrap();
+    assert_eq!(session.doc.origin.source.as_ref(), Some(&expected));
+    // An image of another shape does not give the output's size: shown fitted, unaligned.
+    let other = dir.join("wide.png");
+    io::save_rgba_png(&other, &[200, 40, 40, 255].repeat(60 * 10), 10, 60).unwrap();
+    let session = Session::open(&png, Some(&other), None).unwrap();
+    let src = session.doc.origin.source.unwrap();
+    assert_eq!(src.factor, None);
+    assert_eq!(src, pixelforge::editor::SourceRef::load(&other).unwrap());
+    // A plain PNG has no conversion config to recover the geometry from.
+    let plain = dir.join("plain.png");
+    io::save_rgba_png(&plain, &[9, 9, 9, 255].repeat(4), 2, 2).unwrap();
+    let session = Session::open(&plain, Some(&input), None).unwrap();
+    assert_eq!(session.doc.origin.source.unwrap().factor, None);
+}

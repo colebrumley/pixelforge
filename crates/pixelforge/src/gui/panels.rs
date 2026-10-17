@@ -146,7 +146,12 @@ pub fn source(
                 egui::Slider::new(opacity, 0.0..=1.0).text("opacity"),
             );
         } else {
-            ui.weak("unaligned (opened with --source)");
+            ui.weak("unaligned (the conversion's geometry is not known for it)")
+                .on_hover_text(
+                    "edit --source aligns the source when the output's config and the \
+                     image's size give the conversion's crop and canvas; not with remove_bg, \
+                     a plain PNG or another image.",
+                );
         }
     });
     let avail = ui.available_size();

@@ -111,8 +111,10 @@ impl Session {
     }
 
     /// `pixelforge edit PNG [--source INPUT] [-o OUTDIR]` (R1, R3): the PNG opened with
-    /// [`Document::open`], the source image as an unaligned reference (saving also refuses to
-    /// overwrite it), saves to `<OUTDIR or the PNG's directory>/<stem>`.
+    /// [`Document::open`], the source image as the reference (saving also refuses to
+    /// overwrite it), saves to `<OUTDIR or the PNG's directory>/<stem>`. The reference is
+    /// aligned with the output when the geometry can be recovered from the PNG's config
+    /// ([`SourceRef::aligned`]), else shown fitted, unaligned.
     pub fn open(
         png: &Path,
         source: Option<&Path>,
@@ -120,7 +122,15 @@ impl Session {
     ) -> Result<Session, EditError> {
         let mut doc = Document::open(png)?;
         if let Some(source) = source {
-            doc.origin.source = Some(SourceRef::load(source)?);
+            let aligned = if doc.origin.converted {
+                SourceRef::aligned(source, &doc.origin.config, doc.width(), doc.height())?
+            } else {
+                None
+            };
+            doc.origin.source = Some(match aligned {
+                Some(aligned) => aligned,
+                None => SourceRef::load(source)?,
+            });
             doc.origin.input_path = Some(source.to_path_buf());
         }
         Ok(Session::new(doc, prefix_of(png, outdir)))

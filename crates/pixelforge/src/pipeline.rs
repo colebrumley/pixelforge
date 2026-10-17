@@ -370,6 +370,15 @@ pub fn run_keeping(
 /// stays at or below it).
 pub const SOURCE_REFERENCE_MAX_SIDE: usize = 8192;
 
+/// The factor `convert --edit` renders [`source_reference`] at for an output `out_w` pixels
+/// wide: the input pixels of the crop per output pixel, 1 to 8.
+pub fn source_reference_factor(pre: &Preprocessed, out_w: usize) -> usize {
+    (pre.crop.3 - pre.crop.2)
+        .checked_div(out_w.max(1))
+        .unwrap_or(1)
+        .clamp(1, 8)
+}
+
 /// The input image aligned with the output for the editor's reference panel (docs/editor.md,
 /// Section 3.8): the part of the input the pipeline used (`pre.crop`), resampled (nearest
 /// neighbor, integer arithmetic) to `factor` times the inner output size and padded with

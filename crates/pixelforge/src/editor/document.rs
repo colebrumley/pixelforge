@@ -17,7 +17,8 @@ use super::{err, EditError, Op};
 use crate::color;
 use crate::config::{Config, Value};
 use crate::io;
-use crate::pipeline::{IndexImage, Output};
+use crate::pipeline::{self, IndexImage, Output};
+use crate::preprocess;
 use crate::pyjson::loads::{self, Json as Loaded};
 use crate::pyjson::Json;
 
@@ -33,8 +34,8 @@ pub struct SourceRef {
 }
 
 impl SourceRef {
-    /// An image file as an unaligned reference (`edit --source`: the geometry that would
-    /// align it with the output is not known).
+    /// An image file as an unaligned reference (`edit --source` when the geometry that would
+    /// align it with the output cannot be recovered, see [`aligned`](Self::aligned)).
     pub fn load(path: &Path) -> Result<SourceRef, EditError> {
         let bytes = io::read_regular(path).map_err(|e| EditError(e.to_string()))?;
         let name = path.display().to_string();
@@ -46,6 +47,34 @@ impl SourceRef {
             w: image.w,
             factor: None,
         })
+    }
+
+    /// The input image aligned with an output of `w × h` converted with `config`, for
+    /// `edit --source` (docs/editor.md, Section 3.8): `preprocess::run` with the output's
+    /// own config recovers the crop and canvas layout the conversion used, and
+    /// `pipeline::source_reference` renders it as `convert --edit` does. `Ok(None)` when the
+    /// geometry cannot be recovered: `remove_bg` (the external matting is not run again),
+    /// a config the input does not preprocess with, or an output size other than `w × h`.
+    pub fn aligned(
+        path: &Path,
+        config: &Config,
+        w: usize,
+        h: usize,
+    ) -> Result<Option<SourceRef>, EditError> {
+        if config.remove_bg {
+            return Ok(None);
+        }
+        let loaded = io::load(path, io::MAX_INPUT_PIXELS).map_err(|e| EditError(e.to_string()))?;
+        let Ok(pre) = preprocess::run(&loaded.rgb, &loaded.alpha, loaded.h, loaded.w, config)
+        else {
+            return Ok(None);
+        };
+        let g = &pre.geometry;
+        if (g.out_width, g.out_height) != (w as i64, h as i64) {
+            return Ok(None);
+        }
+        let factor = pipeline::source_reference_factor(&pre, w);
+        Ok(Some(pipeline::source_reference(&loaded, &pre, factor)))
     }
 }
 
@@ -69,6 +98,9 @@ pub struct Origin {
     /// The opened PNG names an edit log that is missing or does not match: a saved log then
     /// holds this session's edits only and does not replay on the conversion.
     pub prior_log_missing: bool,
+    /// `config` is the conversion's own (a conversion in memory, or a PNG with the
+    /// `pixelforge:config` chunk), not the default of a plain PNG.
+    pub converted: bool,
 }
 
 impl Origin {
@@ -83,6 +115,7 @@ impl Origin {
             opened_from: None,
             prior_ops: Vec::new(),
             prior_log_missing: false,
+            converted: false,
         }
     }
 }
@@ -355,11 +388,12 @@ impl Document {
 
     /// The document of a conversion in memory (`convert --edit`, `convert --edits`).
     pub fn from_output(out: &Output) -> Result<Document, EditError> {
-        let origin = Origin::new(
+        let mut origin = Origin::new(
             out.config.clone(),
             out.input_sha256.clone(),
             out.stats.clone(),
         );
+        origin.converted = true;
         Document::with_lab(
             out.indices.clone(),
             out.palette.clone(),
@@ -384,6 +418,7 @@ impl Document {
                 .find(|(k, _)| k == key)
                 .map(|(_, v)| v.clone())
         };
+        let converted = chunk(io::META_CONFIG_KEY).is_some();
         let (config, input_sha256, (indices, palette)) = match chunk(io::META_CONFIG_KEY) {
             Some(json) => {
                 let config = parse_config(&json).map_err(|e| open_error(path, e))?;
@@ -419,6 +454,7 @@ impl Document {
         };
         let mut origin = Origin::new(config, input_sha256, stats);
         origin.opened_from = Some(path.to_path_buf());
+        origin.converted = converted;
         let mut doc = Document::new(indices, palette, origin)?;
         if let Some(sha) = chunk(io::META_EDITS_KEY) {
             doc.attach_prior_log(&sibling(path, EDITS_SUFFIX), &sha);

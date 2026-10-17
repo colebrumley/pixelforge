@@ -99,10 +99,7 @@ pub fn run(matches: &ArgMatches) -> Result<(), CliError> {
     };
     // The editor: the result as saved, with the input aligned for reference.
     let mut doc = doc;
-    let factor = (pre.crop.3 - pre.crop.2)
-        .checked_div(result.indices.w.max(1))
-        .unwrap_or(1)
-        .clamp(1, 8);
+    let factor = pipeline::source_reference_factor(&pre, result.indices.w);
     doc.origin.source = Some(pipeline::source_reference(&loaded, &pre, factor));
     if !force {
         doc.origin.input_path = Some(input.clone());

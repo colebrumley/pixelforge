@@ -810,7 +810,7 @@ impl EditorApp {
                 if aligned {
                     self.canvas.show_source = !self.canvas.show_source;
                 } else {
-                    self.info("no aligned source to overlay (open it with convert --edit)");
+                    self.info("no aligned source to overlay (its geometry is not known)");
                 }
             }
             Action::ToggleSourcePanel => self.show_source_panel = !self.show_source_panel,
