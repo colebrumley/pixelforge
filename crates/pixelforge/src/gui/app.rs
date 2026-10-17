@@ -1672,6 +1672,11 @@ impl EditorApp {
                         .pointer(event, &self.session.doc, self.session.selection.as_ref());
                 self.effect(effect);
             }
+        } else if self.tools.dragging() {
+            // A dialog opened mid-drag: its release never reaches the tool, so drop the
+            // stroke and its preview now.
+            let effect = self.tools.cancel();
+            self.effect(effect);
         }
         if let Some(action) = palette_action {
             self.palette_action(action, &ctx);

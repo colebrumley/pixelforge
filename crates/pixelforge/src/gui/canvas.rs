@@ -372,7 +372,23 @@ impl Canvas {
     pub fn source_texture(&mut self, ctx: &egui::Context, src: &SourceRef) -> egui::TextureId {
         self.source_texture
             .get_or_insert_with(|| {
-                let image = ColorImage::from_rgba_unmultiplied([src.w, src.h], &src.rgba);
+                // The backend may allow less than the reference's size: keep every n-th
+                // pixel so the texture fits. It is drawn over the same rectangle either way.
+                let max_side = ctx.input(|i| i.max_texture_side).max(1);
+                let n = src.w.max(src.h).div_ceil(max_side).max(1);
+                let image = if n == 1 {
+                    ColorImage::from_rgba_unmultiplied([src.w, src.h], &src.rgba)
+                } else {
+                    let (w, h) = (src.w.div_ceil(n), src.h.div_ceil(n));
+                    let mut rgba = Vec::with_capacity(w * h * 4);
+                    for y in 0..h {
+                        for x in 0..w {
+                            let i = ((y * n) * src.w + x * n) * 4;
+                            rgba.extend_from_slice(&src.rgba[i..i + 4]);
+                        }
+                    }
+                    ColorImage::from_rgba_unmultiplied([w, h], &rgba)
+                };
                 ctx.load_texture("pixelforge-source", image, TextureOptions::LINEAR)
             })
             .id()

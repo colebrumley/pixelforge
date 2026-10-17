@@ -12,7 +12,7 @@ use common::*;
 use pixelforge::config::Config;
 use pixelforge::editor::adjust::{self, Adjust};
 use pixelforge::editor::{palette, save, tools};
-use pixelforge::editor::{Document, EditLog, History, Op, Selection, Session};
+use pixelforge::editor::{Document, EditLog, History, Op, PixelChange, Selection, Session};
 use pixelforge::io;
 use pixelforge::pyjson::Json;
 use sha2::{Digest, Sha256};
@@ -244,6 +244,35 @@ fn save_round_trip() {
         );
         assert!(stat(&opened.origin.stats, "edited").is_some());
     }
+}
+
+#[test]
+fn prior_log_with_out_of_range_old_index_is_treated_as_missing() {
+    // A log whose hash matches the PNG but whose old values are outside the palette: the
+    // reverted baseline would hold an index the diff and the save cannot look up.
+    let doc = conversion("two_color/box/sprite");
+    let here = doc.get(0, 0);
+    let log = EditLog {
+        pixelforge: "test".into(),
+        width: doc.width(),
+        height: doc.height(),
+        palette_len: doc.palette.len(),
+        ops: vec![Op::Pixels {
+            tool: "pencil".into(),
+            changes: vec![PixelChange {
+                x: 0,
+                y: 0,
+                old: 999,
+                new: here,
+            }],
+        }],
+    };
+    let tmp = TempDir::new("badlog");
+    save::save(&doc, &log, &tmp.join("hero")).unwrap();
+    let opened = Document::open(&tmp.join("hero.png")).unwrap();
+    assert!(opened.origin.prior_log_missing);
+    assert!(opened.origin.prior_ops.is_empty());
+    assert_eq!(opened.pixels_changed(), 0);
 }
 
 #[test]

@@ -491,6 +491,13 @@ impl Document {
         }
         let start_palette = base.palette.clone();
         let start = base.indices.clone();
+        // The old values come from the file: a baseline index outside the palette would
+        // break the diff and the save, so such a log is treated as missing.
+        let k0 = start_palette.len() as i64;
+        if start.indices.iter().any(|&i| i < -1 || i >= k0) {
+            self.origin.prior_log_missing = true;
+            return;
+        }
         let replayed = base.palette.len() == log.palette_len
             && log.ops.iter().all(|op| base.replay(op).is_ok())
             && base.palette == self.palette;
