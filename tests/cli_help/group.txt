@@ -9,6 +9,7 @@ Commands:
   batch     Convert a directory's images with a shared palette.
   compare   Compare box, kopf and gerstner side by side.
   convert   Convert one image.
+  edit      Open a pixelforge output in the editor.
   palettes  List the bundled palettes.
 
 Options:

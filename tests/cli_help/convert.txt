@@ -8,6 +8,8 @@ Arguments:
 Options:
       --edits <FILE>
           Replay an edit log (NAME_edits.json, written by the editor) on the result before saving.
+      --edit
+          Open the result in the editor after saving it (saves there rewrite the outputs).
   -o, --outdir <DIRECTORY>
           Output directory. [default: out]
       --force

@@ -1,5 +1,6 @@
 //! The `pixelforge` command line (`pixelforge/cli.py`, Section 10): `convert`, `batch`,
-//! `compare`, `palettes`.
+//! `compare`, `palettes`, and `edit` (the editor's window; without the `gui` feature it
+//! reports that the editor is not built in).
 //!
 //! Behaviour, messages and exit codes are the Python CLI's: results go to stdout as JSON
 //! lines (sorted keys, compact), progress (`-v`, `-vv`), warnings and errors go to stderr
@@ -375,6 +376,7 @@ pub fn command() -> Command {
         .subcommand(commands::batch::command().arg(help_arg()))
         .subcommand(commands::compare::command().arg(help_arg()))
         .subcommand(commands::convert::command().arg(help_arg()))
+        .subcommand(commands::edit::command().arg(help_arg()))
         .subcommand(commands::palettes::command().arg(help_arg()))
 }
 
@@ -434,6 +436,7 @@ pub fn run(args: Vec<OsString>) -> i32 {
         "convert" => commands::convert::run(sub),
         "batch" => commands::batch::run(sub),
         "compare" => commands::compare::run(sub),
+        "edit" => commands::edit::run(sub),
         "palettes" => commands::palettes::run(sub),
         other => unreachable!("unknown subcommand {other}"),
     };

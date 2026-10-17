@@ -20,6 +20,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # The headless program (no editor window): what `--no-default-features --features cli`
+      # installs.
+      - run: cargo clippy -p pixelforge --all-targets --no-default-features --features cli -- -D warnings
+      # The Python binding builds the library without default features: no GUI crate may
+      # reach it.
+      - name: no GUI dependency in the binding
+        run: |
+          if cargo tree -p pixelforge-py -e normal | grep -i -E 'egui|eframe|winit|glutin|rfd'; then
+            echo "pixelforge-py depends on a GUI crate" >&2
+            exit 1
+          fi
 
   test:
     name: test (${{ matrix.os }})
@@ -36,7 +47,12 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # The default features include the editor (eframe/egui with OpenGL); winit opens X11
+      # and Wayland at run time, so Linux needs no extra packages to build or link it, and
+      # the GUI tests (tests/gui.rs) run headlessly without a display.
       - run: cargo test --workspace --all-features -- --include-ignored
+      - run: cargo build -p pixelforge --no-default-features --features cli
+      - run: cargo test -p pixelforge --no-default-features --features cli --test cli
       - run: cargo xtask golden --check
       - run: cargo xtask fixtures --check
       - run: cargo build --release -p pixelforge

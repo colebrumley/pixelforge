@@ -1,15 +1,16 @@
 //! `pixelforge convert INPUT`: one image; with `--edits LOG`, the editor's edit log replayed
-//! on the result before it is saved.
+//! on the result before it is saved; with `--edit`, the editor opened on the saved result.
 
 use std::path::PathBuf;
 
 use clap::{Arg, ArgMatches, Command};
 
+use crate::cli::commands::edit;
 use crate::cli::{
     args, build_config, check_collisions, config_args, config_args_from, emit, output_args,
     outputs_json, paths, show_warnings, subcommand, CliError,
 };
-use crate::editor::{self, Document, EditLog};
+use crate::editor::{self, Document, EditLog, Session};
 use crate::pipeline::{self, Input};
 use crate::pyjson::Json;
 
@@ -31,7 +32,12 @@ pub fn command() -> Command {
                     "Replay an edit log (NAME_edits.json, written by the editor) on the result \
                      before saving.",
                 ),
-        );
+        )
+        .arg(args::flag(
+            "edit",
+            "edit",
+            "Open the result in the editor after saving it (saves there rewrite the outputs).",
+        ));
     config_args(output_args(cmd))
 }
 
@@ -55,21 +61,51 @@ pub fn run(matches: &ArgMatches) -> Result<(), CliError> {
         outputs.push(editor::save::edits_path(&prefix));
     }
     check_collisions(std::slice::from_ref(input), &outputs, force)?;
-    let result = pipeline::run(Input::Path(input), &config, given.max_input_pixels)?;
+    let open_editor = matches.get_flag("edit");
+    if open_editor && !cfg!(feature = "gui") {
+        return Err(edit::not_built());
+    }
+    let (result, loaded, pre) =
+        pipeline::run_keeping(Input::Path(input), &config, given.max_input_pixels)?;
     show_warnings(&result.warnings);
-    let Some(log) = log else {
-        let saved = result.save(&prefix)?;
-        return emit(&Json::Object(vec![
-            ("outputs".into(), outputs_json(&saved)),
-            ("stats".into(), result.stats.clone()),
-        ]));
+    let doc = match log {
+        None => {
+            let saved = result.save(&prefix)?;
+            emit(&Json::Object(vec![
+                ("outputs".into(), outputs_json(&saved)),
+                ("stats".into(), result.stats.clone()),
+            ]))?;
+            if !open_editor {
+                return Ok(());
+            }
+            Document::from_output(&result).map_err(|e| CliError::config(e.0))?
+        }
+        Some(log) => {
+            let mut doc = Document::from_output(&result).map_err(|e| CliError::config(e.0))?;
+            log.replay(&mut doc).map_err(|e| CliError::config(e.0))?;
+            // `check_collisions` (with --force) decided about the input already.
+            let saved = editor::save::save(&doc, &log, &prefix)?;
+            emit(&Json::Object(vec![
+                ("outputs".into(), outputs_json(&saved.outputs)),
+                ("stats".into(), saved.stats),
+            ]))?;
+            if !open_editor {
+                return Ok(());
+            }
+            // The replayed edits stay part of every log the editor saves.
+            doc.origin.prior_ops = log.ops;
+            doc
+        }
     };
-    let mut doc = Document::from_output(&result).map_err(|e| CliError::config(e.0))?;
-    log.replay(&mut doc).map_err(|e| CliError::config(e.0))?;
-    // `check_collisions` (with --force) decided about the input already.
-    let saved = editor::save::save(&doc, &log, &prefix)?;
-    emit(&Json::Object(vec![
-        ("outputs".into(), outputs_json(&saved.outputs)),
-        ("stats".into(), saved.stats),
-    ]))
+    // The editor: the result as saved, with the input aligned for reference.
+    let mut doc = doc;
+    let factor = (pre.crop.3 - pre.crop.2)
+        .checked_div(result.indices.w.max(1))
+        .unwrap_or(1)
+        .clamp(1, 8);
+    doc.origin.source = Some(pipeline::source_reference(&loaded, &pre, factor));
+    if !force {
+        doc.origin.input_path = Some(input.clone());
+    }
+    edit::open(Session::new(doc, prefix))
 }

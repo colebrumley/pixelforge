@@ -1,0 +1,16 @@
+Usage: pixelforge edit [OPTIONS] <OUTPUT>
+
+  Open a pixelforge output in the editor.
+
+  OUTPUT is a PNG written by convert (its palette, config and input hash
+  are read from the file), or any PNG with at most 256 colors (default
+  config). Saving writes every output file of convert under the same
+  name, plus NAME_edits.json (replay it with convert --edits).
+
+Arguments:
+  <OUTPUT>  
+
+Options:
+      --source <FILE>       The original input image, shown for reference.
+  -o, --outdir <DIRECTORY>  Where saves go (default: OUTPUT's directory).
+      --help                Show this message and exit.
