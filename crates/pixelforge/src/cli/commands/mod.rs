@@ -3,4 +3,5 @@
 pub mod batch;
 pub mod compare;
 pub mod convert;
+pub mod edit;
 pub mod palettes;

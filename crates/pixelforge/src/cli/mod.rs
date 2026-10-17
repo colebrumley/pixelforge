@@ -1,5 +1,6 @@
 //! The `pixelforge` command line (`pixelforge/cli.py`, Section 10): `convert`, `batch`,
-//! `compare`, `palettes`.
+//! `compare`, `palettes`, and `edit` (the editor's window; without the `gui` feature it
+//! reports that the editor is not built in).
 //!
 //! Behaviour, messages and exit codes are the Python CLI's: results go to stdout as JSON
 //! lines (sorted keys, compact), progress (`-v`, `-vv`), warnings and errors go to stderr
@@ -10,7 +11,6 @@
 mod args;
 mod commands;
 mod config_load;
-mod json;
 mod logging;
 mod paths;
 
@@ -24,6 +24,9 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use crate::config::ConfigError;
 use crate::io::{os_error_message, IoError};
 use crate::pipeline;
+/// The JSON reader (`json.loads`) lives in the library, which the edit log needs without the
+/// CLI.
+use crate::pyjson::loads as json;
 use crate::pyjson::{dumps, Json, Layout};
 
 pub use args::{config_args, config_args_from, field_help, flag_name, py_int, ConfigArgs};
@@ -373,6 +376,7 @@ pub fn command() -> Command {
         .subcommand(commands::batch::command().arg(help_arg()))
         .subcommand(commands::compare::command().arg(help_arg()))
         .subcommand(commands::convert::command().arg(help_arg()))
+        .subcommand(commands::edit::command().arg(help_arg()))
         .subcommand(commands::palettes::command().arg(help_arg()))
 }
 
@@ -432,6 +436,7 @@ pub fn run(args: Vec<OsString>) -> i32 {
         "convert" => commands::convert::run(sub),
         "batch" => commands::batch::run(sub),
         "compare" => commands::compare::run(sub),
+        "edit" => commands::edit::run(sub),
         "palettes" => commands::palettes::run(sub),
         other => unreachable!("unknown subcommand {other}"),
     };

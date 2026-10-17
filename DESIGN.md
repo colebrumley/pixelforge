@@ -77,11 +77,16 @@ library has no Python and no numerical crates: images are plain slices with expl
 - `tiles`: tileset extraction with near-duplicate merging, the tilemap, Tiled `.tmj` and CSV.
 - `pipeline`: `run` / `run_loaded` (load → preprocess → downscale → palette and quantize →
   post-process → tiles), `Output::save` and every output file, `environment()`.
+- `editor`: the pixel editor's core (docs/editor.md): the document (an index image and its
+  palette, from a conversion or a PNG), ops with undo and redo, the tools as change lists,
+  adjust, ramp shift and cleanup, the edit log with its replay (`convert --edits`), and
+  saving through `Output::save_with`. No GUI dependency.
 - `cli` (`cli/`, `main.rs`): `convert`, `batch`, `compare`, `palettes`, `--config` loading,
   logging and exit codes; `sheet`: `compare`'s side-by-side and proof sheets and `--sweep`
   parsing.
 - `npsum`: numpy's float64 summation orders, for the sums the Python version compared.
-- `pyjson`, `pyrepr`, `pyunicode`: Python's `json.dumps` layouts, `round(x, n)`, float and
+- `pyjson`, `pyrepr`, `pyunicode`: Python's `json.dumps` layouts and `json.loads` (the
+  `--config` and edit-log reader, `pyjson::loads`), `round(x, n)`, float and
   string `repr` and the `str` behaviours the config parser needs, so the JSON files,
   canonical config JSON (and with it every config hash) and error messages are byte-identical
   to the Python version's.

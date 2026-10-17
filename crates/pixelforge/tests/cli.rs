@@ -723,7 +723,7 @@ fn group_help_lists_one_line_summaries() {
     let commands = r.stdout.split("Commands:").nth(1).unwrap();
     let commands = commands.split("\n\n").next().unwrap();
     let lines: Vec<&str> = commands.trim().lines().collect();
-    assert_eq!(lines.len(), 4, "{commands}");
+    assert_eq!(lines.len(), 5, "{commands}");
     for line in lines {
         assert!(!line.trim_end().ends_with("..."), "{line}");
     }
@@ -744,7 +744,7 @@ fn group_help_lists_one_line_summaries() {
 #[test]
 fn help_texts_match_the_records() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cli_help");
-    for command in ["group", "batch", "compare", "convert", "palettes"] {
+    for command in ["group", "batch", "compare", "convert", "edit", "palettes"] {
         let r = if command == "group" {
             invoke!("--help")
         } else {
@@ -1842,4 +1842,212 @@ fn stdout_contains_predicate_smoke() {
         .assert()
         .success()
         .stdout(predicate::str::contains("gameboy\t4 colors"));
+}
+
+// ---------------------------------------------------------------------------------------
+// convert --edits (the editor's edit log, docs/editor.md R28)
+
+/// Convert `two_color` (FAST), edit the PNG in the library and save it to `edited/`.
+fn edited_output(tmp: &TempDir, extra: &[&str]) -> PathBuf {
+    use pixelforge::editor::{palette, save, tools, Document, History, Op};
+    let r = invoke!(
+        "convert",
+        &fixture("two_color"),
+        FAST,
+        extra,
+        "-o",
+        &tmp.join("conv")
+    );
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    let mut doc = Document::open(&tmp.join("conv/two_color.png")).unwrap();
+    let mut history = History::new();
+    let pencil = tools::pencil(&doc, None, &[(0, 0), (15, 15)], 2, 0);
+    history
+        .push(&mut doc, Op::pixels("pencil", pencil))
+        .unwrap();
+    let add = palette::add_color(&doc, [0x12, 0x34, 0x56]).unwrap();
+    history.push(&mut doc, add).unwrap();
+    let k = doc.palette.len() as i64 - 1;
+    let rect = tools::rectangle(&doc, None, (2, 2), (9, 6), true, k);
+    history
+        .push(&mut doc, Op::pixels("rectangle", rect))
+        .unwrap();
+    let log = history.edit_log(&doc);
+    save::save(&doc, &log, &tmp.join("edited/two_color")).unwrap();
+    tmp.join("edited/two_color_edits.json")
+}
+
+#[test]
+fn convert_edits_reproduces_the_edited_png() {
+    for extra in [&[][..], &["--preset", "background", "--tile-size", "8"][..]] {
+        let tmp = TempDir::new("edits");
+        let log = edited_output(&tmp, extra);
+        let r = invoke!(
+            "convert",
+            &fixture("two_color"),
+            FAST,
+            extra,
+            "--edits",
+            &log,
+            "-o",
+            &tmp.join("replay")
+        );
+        assert_eq!(r.code, 0, "{}", r.stderr);
+        let line = r.last_json();
+        assert_eq!(
+            line["outputs"]["edits"],
+            tmp.join("replay/two_color_edits.json").to_str().unwrap()
+        );
+        assert_eq!(line["stats"]["edited"]["ops"], 3);
+        for name in [
+            "two_color.png",
+            "two_color_preview.png",
+            "two_color_edits.json",
+        ] {
+            assert_eq!(
+                std::fs::read(tmp.join("edited").join(name)).unwrap(),
+                std::fs::read(tmp.join("replay").join(name)).unwrap(),
+                "{name} {extra:?}"
+            );
+        }
+        let edited = read_json(&tmp.join("edited/two_color_meta.json"));
+        let replayed = read_json(&tmp.join("replay/two_color_meta.json"));
+        assert_eq!(edited["stats"]["edited"], replayed["stats"]["edited"]);
+        assert_ne!(
+            std::fs::read(tmp.join("conv/two_color.png")).unwrap(),
+            std::fs::read(tmp.join("replay/two_color.png")).unwrap()
+        );
+    }
+}
+
+#[test]
+fn convert_edits_refuses_a_mismatching_log() {
+    let tmp = TempDir::new("edits-bad");
+    let log = edited_output(&tmp, &[]);
+    // Another output size: the log does not fit.
+    let r = invoke!(
+        "convert",
+        &fixture("two_color"),
+        "--method",
+        "box",
+        "--out-width",
+        "20",
+        "--out-height",
+        "16",
+        "--edits",
+        &log,
+        "-o",
+        &tmp.join("replay")
+    );
+    assert_eq!(r.code, 2, "{}", r.stderr);
+    assert_eq!(
+        r.stderr.lines().last(),
+        Some("config error: the edit log is for a 16x16 image, the conversion is 20x16")
+    );
+    assert!(!tmp.join("replay").exists());
+    // A value out of range.
+    let text = std::fs::read_to_string(&log).unwrap();
+    let bad = tmp.join("bad_edits.json");
+    std::fs::write(&bad, text.replacen("[0, 0, ", "[0, 99, ", 1)).unwrap();
+    let r = invoke!(
+        "convert",
+        &fixture("two_color"),
+        FAST,
+        "--edits",
+        &bad,
+        "-o",
+        &tmp.join("r")
+    );
+    assert_eq!(r.code, 2);
+    assert!(
+        r.stderr
+            .contains("edit log op 0 (pixels): pixel (0, 99) is outside the 16x16 image"),
+        "{}",
+        r.stderr
+    );
+    // Not a log at all.
+    let r = invoke!(
+        "convert",
+        &fixture("two_color"),
+        FAST,
+        "--edits",
+        &fixture("two_color"),
+        "-o",
+        &tmp.join("r")
+    );
+    assert_eq!(r.code, 2);
+    assert!(r.stderr.starts_with("config error: "), "{}", r.stderr);
+}
+
+// ---------------------------------------------------------------------------------------
+// edit and convert --edit (docs/editor.md R1 to R3). A window cannot open in a test, so the
+// default build checks what happens before it would; the headless build checks the whole
+// command.
+
+#[test]
+fn edit_reports_files_it_cannot_open() {
+    let tmp = TempDir::new("edit-bad");
+    let text = tmp.join("notes.png");
+    std::fs::write(&text, "not an image").unwrap();
+    let r = invoke!("edit", &text);
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    assert!(
+        r.stderr.starts_with("error: ") && r.stderr.contains("not a PNG file"),
+        "{}",
+        r.stderr
+    );
+    let r = invoke!("edit", &tmp.join("missing.png"));
+    assert_eq!(r.code, 1);
+    assert!(
+        r.stderr.contains("No such file or directory"),
+        "{}",
+        r.stderr
+    );
+    // A source image that does not decode.
+    let r = invoke!("edit", &fixture("two_color"), "--source", &text);
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    assert!(r.stderr.contains("not a supported image"), "{}", r.stderr);
+}
+
+/// Without the `gui` feature, `edit` opens the file and then says the editor is not built
+/// in; `convert --edit` and `batch --edit` refuse before converting.
+#[cfg(not(feature = "gui"))]
+#[test]
+fn headless_build_explains_the_missing_editor() {
+    let tmp = TempDir::new("edit-headless");
+    let r = invoke!("edit", &fixture("two_color"), "-o", tmp.path());
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    assert_eq!(
+        r.stderr.trim_end(),
+        "error: this pixelforge was built without the editor (the gui feature); reinstall it \
+         with the default features"
+    );
+    let r = invoke!(
+        "convert",
+        &fixture("two_color"),
+        FAST,
+        "--edit",
+        "-o",
+        tmp.path()
+    );
+    assert_eq!(r.code, 1);
+    assert!(r.stdout.is_empty());
+    assert!(
+        r.stderr.contains("built without the editor"),
+        "{}",
+        r.stderr
+    );
+    assert!(std::fs::read_dir(tmp.path()).unwrap().next().is_none());
+    let (src, out) = (tmp.join("in"), tmp.join("out"));
+    std::fs::create_dir(&src).unwrap();
+    std::fs::copy(fixture("two_color"), src.join("a.png")).unwrap();
+    let r = invoke!("batch", &src, FAST, "--edit", "-o", &out);
+    assert_eq!(r.code, 1);
+    assert!(r.stdout.is_empty());
+    assert!(
+        r.stderr.contains("built without the editor"),
+        "{}",
+        r.stderr
+    );
+    assert!(!out.exists());
 }

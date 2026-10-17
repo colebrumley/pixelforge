@@ -15,6 +15,7 @@ use std::time::Instant;
 use crate::color;
 use crate::config::{Config, ConfigError, Value};
 use crate::downscale::{Downscaled, StatValue};
+use crate::editor::SourceRef;
 use crate::io::{self, IoError, Loaded, TransparentIndex};
 use crate::mask::PixelforgeError;
 use crate::palette::{self, PaletteError};
@@ -156,6 +157,9 @@ pub struct MetaExtras {
     /// `remove_bg_versions` (written only with `remove_bg`); `None` = the external
     /// command's ([`preprocess::rembg_versions`]).
     pub remove_bg_versions: Option<Json>,
+    /// PNG text chunks written after [`Output::png_text`]'s (the editor's
+    /// `pixelforge:edits_sha256`); empty for a conversion.
+    pub png_text: Vec<(String, String)>,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -338,6 +342,16 @@ fn colors_used(indices: &[i64]) -> usize {
 /// `max_pixels` defaults to [`io::MAX_INPUT_PIXELS`] and applies to both kinds. The load
 /// time is the first entry of `stats.timings`.
 pub fn run(input: Input<'_>, config: &Config, max_pixels: Option<u64>) -> Result<Output, Error> {
+    run_keeping(input, config, max_pixels).map(|(out, _, _)| out)
+}
+
+/// [`run`], also returning the decoded input and its preprocessing: what
+/// [`source_reference`] needs (`convert --edit`). The output is [`run`]'s.
+pub fn run_keeping(
+    input: Input<'_>,
+    config: &Config,
+    max_pixels: Option<u64>,
+) -> Result<(Output, Loaded, Preprocessed), Error> {
     let start = Instant::now();
     let budget = max_pixels.unwrap_or(io::MAX_INPUT_PIXELS);
     let loaded = match input {
@@ -345,11 +359,67 @@ pub fn run(input: Input<'_>, config: &Config, max_pixels: Option<u64>) -> Result
         Input::Array { shape, data } => io::from_image_array(shape, data, budget)?,
     };
     let timings = vec![("load".to_string(), start.elapsed().as_secs_f64())];
-    let mut out = run_loaded(&loaded, config, timings, false)?;
+    let (mut out, pre) = convert_loaded(&loaded, config, timings, false)?;
     let mut warnings = loaded.warnings.clone();
     warnings.append(&mut out.warnings);
     out.warnings = warnings;
-    Ok(out)
+    Ok((out, loaded, pre))
+}
+
+/// The largest side [`source_reference`] renders (each side of the output times the factor
+/// stays at or below it).
+pub const SOURCE_REFERENCE_MAX_SIDE: usize = 8192;
+
+/// The factor `convert --edit` renders [`source_reference`] at for an output `out_w` pixels
+/// wide: the input pixels of the crop per output pixel, 1 to 8.
+pub fn source_reference_factor(pre: &Preprocessed, out_w: usize) -> usize {
+    (pre.crop.3 - pre.crop.2)
+        .checked_div(out_w.max(1))
+        .unwrap_or(1)
+        .clamp(1, 8)
+}
+
+/// The input image aligned with the output for the editor's reference panel (docs/editor.md,
+/// Section 3.8): the part of the input the pipeline used (`pre.crop`), resampled (nearest
+/// neighbor, integer arithmetic) to `factor` times the inner output size and padded with
+/// transparency as the output is (canvas layout, outline margin), so output pixel `(x, y)`
+/// covers the `factor × factor` block at `(factor * x, factor * y)`. `factor` is clamped
+/// to `1..` and so that no side exceeds [`SOURCE_REFERENCE_MAX_SIDE`].
+pub fn source_reference(loaded: &Loaded, pre: &Preprocessed, factor: usize) -> SourceRef {
+    let g = &pre.geometry;
+    let (out_w, out_h) = (g.out_width.max(1) as usize, g.out_height.max(1) as usize);
+    let largest = out_w.max(out_h);
+    let factor = factor.clamp(1, (SOURCE_REFERENCE_MAX_SIDE / largest).max(1));
+    let (inner_w, inner_h) = (
+        g.inner_width().max(1) as usize * factor,
+        g.inner_height().max(1) as usize * factor,
+    );
+    let ((top, _), (left, _)) = g.canvas_pad();
+    let (top, left) = (top.max(0) as usize * factor, left.max(0) as usize * factor);
+    let (w, h) = (out_w * factor, out_h * factor);
+    let (y0, y1, x0, x1) = pre.crop;
+    let (ch, cw) = (y1.saturating_sub(y0).max(1), x1.saturating_sub(x0).max(1));
+    let mut rgba = vec![0u8; w * h * 4];
+    // Loaded's channels are u8 / 255, so this restores the decoded bytes exactly.
+    let byte = |v: f64| (v * 255.0).round_ties_even().clamp(0.0, 255.0) as u8;
+    for y in 0..inner_h.min(h.saturating_sub(top)) {
+        let sy = (y0 + y * ch / inner_h).min(loaded.h - 1);
+        for x in 0..inner_w.min(w.saturating_sub(left)) {
+            let sx = (x0 + x * cw / inner_w).min(loaded.w - 1);
+            let s = sy * loaded.w + sx;
+            let d = ((y + top) * w + x + left) * 4;
+            rgba[d] = byte(loaded.rgb[s * 3]);
+            rgba[d + 1] = byte(loaded.rgb[s * 3 + 1]);
+            rgba[d + 2] = byte(loaded.rgb[s * 3 + 2]);
+            rgba[d + 3] = loaded.alpha[s];
+        }
+    }
+    SourceRef {
+        rgba,
+        h,
+        w,
+        factor: Some(factor),
+    }
 }
 
 /// Add `seconds` to the timing `name` (appended if new, so the insertion order is the order
@@ -396,6 +466,16 @@ pub fn run_loaded(
     timings: Vec<(String, f64)>,
     alpha_matted: bool,
 ) -> Result<Output, Error> {
+    convert_loaded(loaded, config, timings, alpha_matted).map(|(out, _)| out)
+}
+
+/// [`run_loaded`], also returning the preprocessing.
+fn convert_loaded(
+    loaded: &Loaded,
+    config: &Config,
+    timings: Vec<(String, f64)>,
+    alpha_matted: bool,
+) -> Result<(Output, Preprocessed), Error> {
     config.validate_palette()?; // before any expensive stage
     let mut timings = timings;
     let (h, w) = (loaded.h, loaded.w);
@@ -722,7 +802,7 @@ pub fn run_loaded(
         ));
     }
     out.stats = Json::Object(stats);
-    Ok(out)
+    Ok((out, pre))
 }
 
 fn seconds(timings: &[(String, f64)], name: &str) -> f64 {
@@ -816,8 +896,8 @@ fn write_text(path: &Path, text: &str) -> Result<(), Error> {
 
 impl Output {
     /// `Result.png_text()`: the PNG text chunks (config, input hash, and with a named palette
-    /// its hash and lines).
-    pub fn png_text(&self) -> Result<Vec<(String, String)>, Error> {
+    /// its hash and lines), followed by `extra` (empty for a conversion).
+    pub fn png_text(&self, extra: &[(String, String)]) -> Result<Vec<(String, String)>, Error> {
         let mut text = vec![
             (
                 io::META_CONFIG_KEY.to_string(),
@@ -833,6 +913,7 @@ impl Output {
             ));
             text.push((io::META_PALETTE_KEY.to_string(), lines.join("\n")));
         }
+        text.extend_from_slice(extra);
         Ok(text)
     }
 
@@ -971,7 +1052,7 @@ impl Output {
         if let Some(parent) = parent.filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(&parent).map_err(|e| os_error(e, &parent))?;
         }
-        let text = self.png_text()?;
+        let text = self.png_text(&extras.png_text)?;
         let layout = if self.config.transparent_index == "first" {
             TransparentIndex::First
         } else {

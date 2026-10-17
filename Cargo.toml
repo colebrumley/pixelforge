@@ -4,7 +4,7 @@ resolver = "2"
 
 [workspace.package]
 # The single source of the version (`pixelforge --version`, `_meta.json`, `Config::hash`).
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 

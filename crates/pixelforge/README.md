@@ -1,8 +1,12 @@
 # pixelforge (Rust library)
 
 The pixelforge library and the `pixelforge` program (`src/main.rs`, `src/cli/`, behind the
-default `cli` feature): plain Rust, no Python (`libm`, `sha2`, `log`, for image I/O
-`image`, `png`, `gif`, `tiff`, `miniz_oxide`, and `clap` for the CLI). It was ported from
+default `cli` feature) with its pixel editor window (`src/gui/`, behind the default `gui`
+feature): plain Rust, no Python (`libm`, `sha2`, `log`, for image I/O
+`image`, `png`, `gif`, `tiff`, `miniz_oxide`, `clap` for the CLI, and `eframe` (egui,
+OpenGL) and `rfd` for the editor). `--no-default-features --features cli` builds the
+program without the editor; the library without default features (what the Python binding
+uses) compiles no CLI or GUI crate. It was ported from
 the Python implementation stage by stage; the module
 documentation cites the Python files each module came from (`pixelforge/*.py`,
 `tests/test_*.py`), which were removed in 0.2.0 and are in the git history up to 1fff901.
@@ -71,6 +75,13 @@ Modules:
   `preprocess.rs`, `layout.rs`, `mask.rs`, `filters.rs`, `enhance.rs`, `downscale.rs`,
   `boxfilter.rs`, `quantize.rs`, `postprocess.rs`, `tiles.rs`; `sheet.rs` draws the
   `compare` sheets.
+- `src/editor/`: the pixel editor's core (docs/editor.md): `Document`, `Op`, `History`,
+  the tools, adjust and cleanup, the edit log and its replay (`convert --edits`), saving,
+  and `Session` (a document with its history and save prefix). No GUI dependency.
+- `src/gui/`: the editor window (`pixelforge edit`, `convert --edit`): the eframe app, the
+  canvas and its layers, the tools' pointer handling, the palette, adjust, tiles and source
+  panels, the dialogs and the worker threads. Its screen math is integer; it never computes
+  an edit's pixels itself (the adjust preview is `editor::adjust`'s change list).
 - `src/npsum.rs`: numpy's float64 summation orders (pairwise `np.sum`, sequential
   leading-axis reductions), for the sums whose comparisons decide median cut, ramps and
   tile de-duplication. `src/pyjson.rs`: Python's `json.dumps` layouts and `round(x, n)` for

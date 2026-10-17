@@ -1,0 +1,10 @@
+{
+  "circle_alpha/box/background": {
+    "log": "circle_alpha_box_background.json",
+    "png_sha256": "f5abfb9a319e53f0fbc2fed83d515bdb7d1840dd09808a2d960b7144670fed9d"
+  },
+  "two_color/box/sprite": {
+    "log": "two_color_box_sprite.json",
+    "png_sha256": "a3f56d005bfb3f9a2b302bf0344011f4ae36ad5a45ceb9b28648c144862bf1fc"
+  }
+}

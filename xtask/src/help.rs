@@ -16,7 +16,7 @@ use clap::{Arg, ArgMatches, Command};
 use crate::{fail, root, Fail};
 
 /// The group (`group`) and every command, as the records name them.
-pub const COMMANDS: &[&str] = &["group", "batch", "compare", "convert", "palettes"];
+pub const COMMANDS: &[&str] = &["group", "batch", "compare", "convert", "edit", "palettes"];
 
 pub fn command() -> Command {
     Command::new("help-record")
