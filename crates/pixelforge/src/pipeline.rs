@@ -156,6 +156,9 @@ pub struct MetaExtras {
     /// `remove_bg_versions` (written only with `remove_bg`); `None` = the external
     /// command's ([`preprocess::rembg_versions`]).
     pub remove_bg_versions: Option<Json>,
+    /// PNG text chunks written after [`Output::png_text`]'s (the editor's
+    /// `pixelforge:edits_sha256`); empty for a conversion.
+    pub png_text: Vec<(String, String)>,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -816,8 +819,8 @@ fn write_text(path: &Path, text: &str) -> Result<(), Error> {
 
 impl Output {
     /// `Result.png_text()`: the PNG text chunks (config, input hash, and with a named palette
-    /// its hash and lines).
-    pub fn png_text(&self) -> Result<Vec<(String, String)>, Error> {
+    /// its hash and lines), followed by `extra` (empty for a conversion).
+    pub fn png_text(&self, extra: &[(String, String)]) -> Result<Vec<(String, String)>, Error> {
         let mut text = vec![
             (
                 io::META_CONFIG_KEY.to_string(),
@@ -833,6 +836,7 @@ impl Output {
             ));
             text.push((io::META_PALETTE_KEY.to_string(), lines.join("\n")));
         }
+        text.extend_from_slice(extra);
         Ok(text)
     }
 
@@ -971,7 +975,7 @@ impl Output {
         if let Some(parent) = parent.filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(&parent).map_err(|e| os_error(e, &parent))?;
         }
-        let text = self.png_text()?;
+        let text = self.png_text(&extras.png_text)?;
         let layout = if self.config.transparent_index == "first" {
             TransparentIndex::First
         } else {

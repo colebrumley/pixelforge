@@ -63,6 +63,8 @@ pub const META_INPUT_KEY: &str = "pixelforge:input_sha256";
 pub const META_PALETTE_SHA_KEY: &str = "pixelforge:palette_sha256";
 /// PNG text key of the resolved palette, `rrggbb` lines joined by newlines.
 pub const META_PALETTE_KEY: &str = "pixelforge:palette";
+/// PNG text key of the SHA-256 of the edit log an editor save wrote (`editor::EditLog`).
+pub const META_EDITS_KEY: &str = "pixelforge:edits_sha256";
 
 /// Default input pixel budget (width × height), checked before any pixel data is decoded.
 pub const MAX_INPUT_PIXELS: u64 = 24_000_000;
@@ -169,7 +171,8 @@ pub fn open_regular(path: &Path) -> Result<File, IoError> {
     Ok(file)
 }
 
-fn read_regular(path: &Path) -> Result<Vec<u8>, IoError> {
+/// A regular file's bytes ([`open_regular`], then read to the end).
+pub fn read_regular(path: &Path) -> Result<Vec<u8>, IoError> {
     let mut file = open_regular(path)?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
